@@ -2,11 +2,11 @@ import SwiftUI
 import AppKit
 import SwiftTerm
 
-/// Motorun sahip olduğu kalıcı terminal görünümünü SwiftUI içinde barındırır.
+/// Hosts the engine-owned persistent terminal view inside SwiftUI.
 ///
-/// Konteyner BİR KEZ kurulur; sekme değişince içindeki terminal takas edilir.
-/// Representable'ı yeniden yaratmak kaydırma konumunu ve tamponu sıfırlardı —
-/// sekme geçişinin bedelsiz olmasının sebebi bu takas modelidir.
+/// The container is created ONCE; switching tabs swaps the terminal inside it.
+/// Recreating the representable would reset the scroll position and the buffer —
+/// this swap model is why switching tabs costs nothing.
 struct TerminalHost: NSViewRepresentable {
     let key: String
     let engine: TerminalEngine
@@ -23,17 +23,17 @@ struct TerminalHost: NSViewRepresentable {
     }
 }
 
-/// Aynı anda tek terminal barındırır. `attach` idempotenttir — SwiftUI'nin sık
-/// güncelleme çağrıları görünüm ağacını hırpalamaz.
+/// Hosts exactly one terminal at a time. `attach` is idempotent, so SwiftUI's
+/// frequent update calls never churn the view tree.
 final class TerminalContainer: NSView {
     private weak var current: LocalProcessTerminalView?
-    /// Pencere sürüklenirken SwiftTerm'in ağır yeniden boyutlama hattını her
-    /// fare hareketinde koşturmamak için sönümleme.
+    /// Debounce so SwiftTerm's expensive resize path does not run on every mouse
+    /// move while the window is dragged.
     private var resizeDebounce: DispatchWorkItem?
 
     func attach(_ terminal: LocalProcessTerminalView) {
         if current === terminal { return }
-        // Aynı NSView iki hiyerarşide olamaz — ikisini de sök.
+        // The same NSView cannot live in two hierarchies — detach both.
         current?.removeFromSuperview()
         terminal.removeFromSuperview()
         terminal.frame = bounds
@@ -41,9 +41,9 @@ final class TerminalContainer: NSView {
         addSubview(terminal)
         current = terminal
 
-        // Çift tazeleme: t=0 boyut + odak + ilk çizim, t=350 ms Cocoa yerleşim
-        // turu bittikten sonra ikinci çizim. Takas sonrası bayat tuvali
-        // belirlenimci biçimde toparlar.
+        // Double refresh: at t=0 size, focus and first draw; at t=350 ms a second
+        // draw once Cocoa's layout pass has settled. This deterministically fixes a
+        // stale canvas after the swap.
         DispatchQueue.main.async { [weak terminal, weak self] in
             guard let view = terminal, let self, let window = view.window else { return }
             if bounds.width > 0 && bounds.height > 0 { view.setFrameSize(self.bounds.size) }

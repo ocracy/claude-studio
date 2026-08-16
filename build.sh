@@ -1,5 +1,5 @@
 #!/bin/bash
-# Claude Studio'yu release derler ve Claude Studio.app olarak paketler.
+# Builds Claude Studio in release mode and packages it as Claude Studio.app.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -7,16 +7,16 @@ VERSION="$(cat VERSION)"
 APP="Claude Studio.app"
 BIN=".build/release/ClaudeStudio"
 
-echo "→ ikon üretiliyor…"
+echo "→ generating icon…"
 swift scripts/make-icon.swift >/dev/null
 iconutil -c icns AppIcon.iconset -o AppIcon.icns
 
-echo "→ derleniyor (release)…"
+echo "→ building (release)…"
 swift build -c release
 
-[ -f "$BIN" ] || { echo "✗ derleme başarısız: $BIN yok"; exit 1; }
+[ -f "$BIN" ] || { echo "✗ build failed: $BIN missing"; exit 1; }
 
-echo "→ paketleniyor…"
+echo "→ packaging…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ClaudeStudio"
@@ -44,7 +44,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc imza: imzasız paket macOS 15+ üzerinde açılmayabilir.
+# Ad-hoc signature: an unsigned bundle may refuse to open on recent macOS.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 
-echo "✓ hazır: $(pwd)/$APP"
+echo "✓ ready: $(pwd)/$APP"

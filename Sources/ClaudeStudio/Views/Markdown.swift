@@ -1,11 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// Sade markdown görüntüleyici.
+/// A small markdown renderer.
 ///
-/// Dış bağımlılık yok: başlık, madde, numaralı liste, kod bloğu, alıntı, çizgi
-/// ve satır içi biçimlendirme (kalın, italik, `kod`, bağlantı) — bir SKILL.md
-/// dosyasının gerçekte kullandığı her şey.
+/// No dependencies: headings, bullets, numbered lists, code blocks, quotes, rules
+/// and inline formatting (bold, italic, `code`, links) — everything a SKILL.md
+/// file actually uses.
 struct MarkdownView: View {
     let text: String
 
@@ -104,8 +104,8 @@ struct MarkdownView: View {
         }
     }
 
-    /// Satır içi biçimlendirme — `AttributedString`'in markdown çözümleyicisi
-    /// kalın/italik/kod/bağlantıyı zaten anlıyor.
+    /// Inline formatting — `AttributedString`'s markdown parser already handles
+    /// bold, italic, code and links.
     private func inline(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text,
                                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
@@ -113,7 +113,7 @@ struct MarkdownView: View {
     }
 }
 
-/// Satır tabanlı markdown çözümleyici.
+/// Line-based markdown parser.
 enum MarkdownParser {
 
     enum Block {
@@ -148,7 +148,7 @@ enum MarkdownParser {
             lines = lines.dropFirst()
             let line = raw.trimmingCharacters(in: .whitespaces)
 
-            // Kod bloğu: kapanış görülene (ya da metin bitene) kadar ham topla.
+            // Code block: collect raw lines until the closing fence (or the end).
             if line.hasPrefix("```") {
                 flushAll()
                 let language = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
@@ -158,7 +158,7 @@ enum MarkdownParser {
                     body.append(next)
                     lines = lines.dropFirst()
                 }
-                if !lines.isEmpty { lines = lines.dropFirst() }   // kapanış çiti
+                if !lines.isEmpty { lines = lines.dropFirst() }   // closing fence
                 blocks.append(.code(language.isEmpty ? nil : language,
                                     body.joined(separator: "\n")))
                 continue

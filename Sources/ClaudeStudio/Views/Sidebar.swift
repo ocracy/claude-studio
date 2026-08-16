@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Seçili raya göre içerik değiştiren kenar çubuğu.
+/// Sidebar whose content follows the selected rail item.
 struct Sidebar: View {
     @ObservedObject var model: StudioModel
 
@@ -50,17 +50,17 @@ struct Sidebar: View {
         }
     }
 
-    // MARK: - Başlık / altlık
+    // MARK: - Header and footer
 
     private var header: some View {
         HStack(spacing: 2) {
             SectionLabel(text: model.pane.title)
             Spacer()
             if model.pane == .sessions {
-                IconButton(icon: "list.bullet.rectangle", help: "Oturum yöneticisi") {
+                IconButton(icon: "list.bullet.rectangle", help: "Session manager") {
                     sessionManager = true
                 }
-                IconButton(icon: "plus", help: "Yeni oturum / önceki oturumlar") {
+                IconButton(icon: "plus", help: "New session / previous sessions") {
                     sessionMenu = true
                 }
                 .popover(isPresented: $sessionMenu, arrowEdge: .bottom) {
@@ -91,21 +91,21 @@ struct Sidebar: View {
 
     private var footerText: String {
         switch model.pane {
-        case .sessions:  return "\(model.openSessions.count) açık · \(model.pastSessions.count) önceki"
-        case .skills:    return "\(model.skills.skills.count) beceri · .claude/skills"
-        case .cron:      return "\(model.store.activeSchedules.count) aktif zamanlama"
-        case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) çalışıyor"
-        case .terminals: return "\(model.store.config.terminals.count) terminal"
+        case .sessions:  return "\(model.openSessions.count) open · \(model.pastSessions.count) previous"
+        case .skills:    return "\(model.skills.skills.count) skills · .claude/skills"
+        case .cron:      return "\(model.store.activeSchedules.count) active schedules"
+        case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) running"
+        case .terminals: return "\(model.store.config.terminals.count) terminals"
         }
     }
 
     private var addHelp: String {
         switch model.pane {
-        case .sessions:  return "Yeni oturum"
-        case .skills:    return "Claude ile yeni beceri oluştur"
-        case .cron:      return "Beceri zamanla"
-        case .services:  return "Servis ekle"
-        case .terminals: return "Yeni terminal (⌘T)"
+        case .sessions:  return "New session"
+        case .skills:    return "Create a new skill with Claude"
+        case .cron:      return "Schedule a skill"
+        case .services:  return "Add a service"
+        case .terminals: return "New terminal (⌘T)"
         }
     }
 
@@ -114,13 +114,13 @@ struct Sidebar: View {
         case .sessions:
             model.newSession()
         case .skills:
-            model.newSession(name: "yeni beceri", prompt: newSkillPrompt, autoRun: true)
+            model.newSession(name: "new skill", prompt: newSkillPrompt, autoRun: true)
         case .cron:
             guard let first = model.skills.skills.first else { return }
             scheduleSheet = model.store.schedule(for: first.name) ?? Schedule(skill: first.name)
         case .services:
             addingService = true
-            serviceSheet = Service(name: "yeni servis", command: "")
+            serviceSheet = Service(name: "new service", command: "")
         case .terminals:
             model.newTerminal()
         }
@@ -128,23 +128,23 @@ struct Sidebar: View {
 
     private var newSkillPrompt: String {
         """
-        Bu projeye yeni bir Claude Code becerisi ekle: `.claude/skills/<ad>/SKILL.md`.
-        Önce ne yapmasını istediğimi sor, sonra frontmatter'ında `name` ve `description` \
-        alanları olan sade bir SKILL.md yaz.
+        Add a new Claude Code skill to this project: `.claude/skills/<name>/SKILL.md`.
+        Ask me what it should do first, then write a short SKILL.md with `name` and
+        `description` in its frontmatter.
         """
     }
 
-    // MARK: - Oturumlar
+    // MARK: - Sessions
 
     @ViewBuilder private var sessionsList: some View {
         if model.openSessions.isEmpty {
-            emptyHint("Açık oturum yok.", action: "Claude oturumu başlat") { model.newSession() }
+            emptyHint("No open sessions.", action: "Start a Claude session") { model.newSession() }
         }
         ForEach(model.openSessions) { record in
             if renaming == record.tmux {
                 renameField(record)
             } else {
-                // Tek tık açar, çift tık adı düzenler — Finder/VS Code refleksi.
+                // Single click opens, double click renames — the Finder/VS Code reflex.
                 HoverRow(selected: model.activeTabID == record.tabKey,
                          padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 6)) {
                     HStack(spacing: 8) {
@@ -160,7 +160,7 @@ struct Sidebar: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
-                        IconButton(icon: "xmark", help: "Oturumu kapat") {
+                        IconButton(icon: "xmark", help: "Close session") {
                             model.closeSession(record)
                         }
                     }
@@ -168,16 +168,16 @@ struct Sidebar: View {
                 .onTapGesture(count: 2) { beginRename(record) }
                 .onTapGesture { model.openSession(record) }
                 .contextMenu {
-                    Button("Yeniden adlandır") { beginRename(record) }
-                    Button("Oturumu kapat") { model.closeSession(record) }
+                    Button("Rename") { beginRename(record) }
+                    Button("Close session") { model.closeSession(record) }
                     Divider()
-                    Button("Kaydı sil") { model.deleteSession(record) }
+                    Button("Delete record") { model.deleteSession(record) }
                 }
             }
         }
 
         if !model.pastSessions.isEmpty {
-            SectionLabel(text: "önceki oturumlar")
+            SectionLabel(text: "previous sessions")
                 .padding(.horizontal, 8)
                 .padding(.top, 14)
                 .padding(.bottom, 4)
@@ -185,12 +185,12 @@ struct Sidebar: View {
                 row(selected: false,
                     dot: Theme.idle,
                     title: record.name,
-                    meta: model.canResume(record) ? "konuşma sürdürülür · \(record.lastUsed.relative)"
-                                                  : "yeni başlar · \(record.lastUsed.relative)",
+                    meta: model.canResume(record) ? "resumes conversation · \(record.lastUsed.relative)"
+                                                  : "starts fresh · \(record.lastUsed.relative)",
                     action: { model.openSession(record) })
                     .contextMenu {
-                        Button("Geri aç") { model.openSession(record) }
-                        Button("Kaydı sil") { model.deleteSession(record) }
+                        Button("Reopen") { model.openSession(record) }
+                        Button("Delete record") { model.deleteSession(record) }
                     }
             }
         }
@@ -202,9 +202,9 @@ struct Sidebar: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { renameFocused = true }
     }
 
-    /// Alan açılır açılmaz odaklanır; yoksa tuşlar terminale gider.
+    /// Focuses as soon as it appears; otherwise keystrokes go to the terminal.
     private func renameField(_ record: SessionRecord) -> some View {
-        TextField("oturum adı", text: $renameText)
+        TextField("session name", text: $renameText)
             .textFieldStyle(.plain)
             .font(Theme.ui(12.5))
             .focused($renameFocused)
@@ -228,12 +228,12 @@ struct Sidebar: View {
         }
     }
 
-    // MARK: - Beceriler
+    // MARK: - Skills
 
     @ViewBuilder private var skillsList: some View {
         if model.skills.skills.isEmpty {
-            emptyHint("`.claude/skills` boş.", action: "Claude ile beceri oluştur") {
-                model.newSession(name: "yeni beceri", prompt: newSkillPrompt, autoRun: true)
+            emptyHint("`.claude/skills` is empty.", action: "Create a skill with Claude") {
+                model.newSession(name: "new skill", prompt: newSkillPrompt, autoRun: true)
             }
         }
         ForEach(model.skills.skills) { skill in
@@ -245,7 +245,7 @@ struct Sidebar: View {
                 meta: skillMeta(skill: skill, schedule: schedule, last: last),
                 trailing: {
                     if skill.scope == .global {
-                        Text("genel")
+                        Text("global")
                             .font(.system(size: 9.5))
                             .foregroundStyle(Theme.text3)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
@@ -258,19 +258,19 @@ struct Sidebar: View {
                 },
                 action: { model.openSkill(skill) })
                 .contextMenu {
-                    Button("Oturumda çalıştır") { model.runSkillVisible(skill) }
-                    Button("Arka planda çalıştır") { model.runSkillBackground(skill) }
+                    Button("Run in a session") { model.runSkillVisible(skill) }
+                    Button("Run in background") { model.runSkillBackground(skill) }
                     Divider()
-                    Button("Zamanla…") {
+                    Button("Schedule…") {
                         scheduleSheet = model.store.schedule(for: skill.name) ?? Schedule(skill: skill.name)
                     }
-                    Button("SKILL.md'yi aç") { NSWorkspace.shared.open(skill.url) }
+                    Button("Open SKILL.md") { NSWorkspace.shared.open(skill.url) }
                 }
         }
     }
 
     private func skillMeta(skill: Skill, schedule: Schedule?, last: SkillRun?) -> String {
-        if model.runs.isRunning(skill.name) { return "çalışıyor…" }
+        if model.runs.isRunning(skill.name) { return "running…" }
         var parts: [String] = []
         if let schedule, schedule.enabled { parts.append(schedule.summary) }
         if let last, let at = last.startedAt { parts.append(at.relative) }
@@ -278,11 +278,11 @@ struct Sidebar: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - Zamanlamalar
+    // MARK: - Schedulelar
 
     @ViewBuilder private var cronList: some View {
         if model.store.config.schedules.isEmpty {
-            emptyHint("Zamanlanmış çalışma yok.", action: "Beceri zamanla") {
+            emptyHint("No scheduled runs.", action: "Schedule a skill") {
                 guard let first = model.skills.skills.first else { return }
                 scheduleSheet = Schedule(skill: first.name)
             }
@@ -293,11 +293,11 @@ struct Sidebar: View {
                 dot: schedule.enabled ? (last?.status.color ?? Theme.accent) : Theme.idle,
                 title: schedule.skill,
                 meta: schedule.enabled
-                      ? "\(schedule.summary) · sonraki \(schedule.nextFire?.shortStamp ?? "—")"
-                      : "duraklatıldı",
+                      ? "\(schedule.summary) · next \(schedule.nextFire?.shortStamp ?? "—")"
+                      : "paused",
                 trailing: {
                     IconButton(icon: schedule.enabled ? "pause" : "play",
-                               help: schedule.enabled ? "Duraklat" : "Sürdür") {
+                               help: schedule.enabled ? "Pause" : "Resume") {
                         var updated = schedule
                         updated.enabled.toggle()
                         model.store.setSchedule(updated)
@@ -305,21 +305,21 @@ struct Sidebar: View {
                 },
                 action: { model.openCron(schedule) })
                 .contextMenu {
-                    Button("Düzenle…") { scheduleSheet = schedule }
-                    Button("Şimdi çalıştır") { model.runs.runInBackground(skill: schedule.skill) }
+                    Button("Edit…") { scheduleSheet = schedule }
+                    Button("Run now") { model.runs.runInBackground(skill: schedule.skill) }
                     Divider()
-                    Button("Zamanlamayı sil") { model.store.removeSchedule(skill: schedule.skill) }
+                    Button("Delete schedule") { model.store.removeSchedule(skill: schedule.skill) }
                 }
         }
     }
 
-    // MARK: - Servisler
+    // MARK: - Serviceler
 
     @ViewBuilder private var servicesList: some View {
         if model.store.config.services.isEmpty {
-            emptyHint("Servis tanımlı değil.", action: "Servis ekle") {
+            emptyHint("No services defined.", action: "Add a service") {
                 addingService = true
-                serviceSheet = Service(name: "yeni servis", command: "")
+                serviceSheet = Service(name: "new service", command: "")
             }
         }
         ForEach(model.store.config.services) { service in
@@ -331,7 +331,7 @@ struct Sidebar: View {
                         .compactMap { $0 }.joined(separator: " · "),
                 trailing: {
                     IconButton(icon: status.isLive ? "stop.fill" : "play.fill",
-                               help: status.isLive ? "Durdur" : "Başlat") {
+                               help: status.isLive ? "Stop" : "Start") {
                         model.toggleService(service)
                     }
                 },
@@ -340,10 +340,10 @@ struct Sidebar: View {
                     if !status.isLive { model.engine.startService(service, project: model.project) }
                 })
                 .contextMenu {
-                    Button("Yeniden başlat") { model.engine.restartService(service, project: model.project) }
-                    Button("Ayarlar…") { serviceSheet = service }
+                    Button("Restart") { model.engine.restartService(service, project: model.project) }
+                    Button("Settings…") { serviceSheet = service }
                     Divider()
-                    Button("Servisi sil") {
+                    Button("Delete service") {
                         model.engine.stopService(service)
                         model.store.removeService(service.id)
                     }
@@ -351,11 +351,11 @@ struct Sidebar: View {
         }
     }
 
-    // MARK: - Terminaller
+    // MARK: - Terminals
 
     @ViewBuilder private var terminalsList: some View {
         if model.store.config.terminals.isEmpty {
-            emptyHint("Terminal yok.", action: "Terminal aç") { model.newTerminal() }
+            emptyHint("No terminals.", action: "Open a terminal") { model.newTerminal() }
         }
         ForEach(model.store.config.terminals) { terminal in
             let key = "terminal:\(terminal.id.uuidString)"
@@ -365,12 +365,12 @@ struct Sidebar: View {
                 meta: terminal.cwd.nilIfEmpty ?? model.project.displayPath,
                 action: { model.openTerminal(terminal) })
                 .contextMenu {
-                    Button("Kapat ve sil") { model.removeTerminal(terminal) }
+                    Button("Close and delete") { model.removeTerminal(terminal) }
                 }
         }
     }
 
-    // MARK: - Ortak satır
+    // MARK: - Shared row
 
     private func row<Trailing: View>(
         selected: Bool, dot: Color, title: String, meta: String,
@@ -416,10 +416,10 @@ struct Sidebar: View {
     }
 }
 
-// MARK: - Yeni / önceki oturum açıcı
+// MARK: - New / previous session opener
 
-/// "+" düğmesinin açtığı liste: yeni oturum ya da kapatılmış bir oturumu
-/// aynı isimle geri getirme.
+/// The list behind the "+" button: start a new session, or bring a closed one
+/// back under the same name.
 private struct SessionOpener: View {
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
@@ -427,25 +427,25 @@ private struct SessionOpener: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "yeni oturum")
+            SectionLabel(text: "new session")
                 .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 6)
 
             HStack(spacing: 6) {
-                TextField("oturum adı (isteğe bağlı)", text: $name)
+                TextField("session name (optional)", text: $name)
                     .textFieldStyle(.plain)
                     .font(Theme.ui(12.5))
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field)
                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.separator)))
                     .onSubmit(create)
-                SmallButton(title: "Aç", prominent: true, action: create)
+                SmallButton(title: "Open", prominent: true, action: create)
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
 
             if !model.pastSessions.isEmpty {
                 Divider()
-                SectionLabel(text: "önceki oturumlar")
+                SectionLabel(text: "previous sessions")
                     .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
 
                 ScrollView {
@@ -467,8 +467,8 @@ private struct SessionOpener: View {
                                                 .font(Theme.ui(12.5))
                                                 .foregroundStyle(Theme.text)
                                             Text(model.canResume(record)
-                                                 ? "konuşma sürdürülür · \(record.lastUsed.relative)"
-                                                 : "yeni başlar · \(record.lastUsed.relative)")
+                                                 ? "resumes conversation · \(record.lastUsed.relative)"
+                                                 : "starts fresh · \(record.lastUsed.relative)")
                                                 .font(Theme.ui(10.5))
                                                 .foregroundStyle(Theme.text3)
                                         }

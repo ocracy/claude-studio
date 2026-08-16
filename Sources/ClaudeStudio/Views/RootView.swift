@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Pencere içeriği: proje yoksa karşılama ekranı, varsa stüdyo.
+/// Window content: the welcome screen without a project, the studio with one.
 struct RootView: View {
     let model: StudioModel?
     let onOpen: (Project) -> Void

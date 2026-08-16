@@ -1,79 +1,117 @@
 <h1 align="center">Claude Studio</h1>
 
 <p align="center">
-  <b>Projelerin için tek ekran — Claude oturumları, beceriler, zamanlanmış çalışmalar, servisler ve terminaller.</b><br>
-  Visual Studio gibi klasör açarsın; gerisi tek pencerede.
+  <b>One screen for every project — persistent Claude Code sessions, skills, scheduled runs, dev services and terminals.</b><br>
+  Open a folder the way you would in an IDE; everything else lives in the same window.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014%2B-blue" alt="macOS 14+">
   <img src="https://img.shields.io/badge/swift-6-orange" alt="Swift 6">
   <img src="https://img.shields.io/badge/UI-SwiftUI-purple" alt="SwiftUI">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
 ---
 
-## Ne yapar
+Claude Studio is a native macOS workspace for people who run several Claude Code
+sessions across several projects all day. Instead of a graveyard of terminal tabs,
+each project gets one window: its sessions, its skills, its scheduled runs, its dev
+services and its shells — all one keystroke away.
 
-**Klasör aç, çalışmaya başla.** Açılışta son projelerin listelenir; birini seçersin, pencere o projenin stüdyosuna dönüşür. Her proje kendi penceresinde yaşar.
+No Electron, no telemetry, no background service. One small native app on your own
+machine.
 
-| Panel | İçerik |
-|---|---|
-| **claude** | Claude Code oturumların. tmux ile kalıcı — uygulamayı kapat, yarın aç, oturum kaldığı yerden devam eder. Oturumu üstten çift tıklayıp adlandırırsın; kapattığında bile kaydı kalır ve **+ → önceki oturumlar** altından aynı isimle, aynı konuşmayla (`claude --resume`) geri gelir. Claude sırayı sana verdiğinde nokta yanar ve tek bir yumuşak ton duyulur. |
-| **beceriler** | Projenin `.claude/skills` klasöründeki beceriler (skills) (ve gölgelenmeyen genel skill'ler). Tanımını okur, oturumda ya da arka planda çalıştırır, zamanlarsın. |
-| **cron** | Zamanlanmış beceri çalışmaları; her koşunun tarihi, durumu ve **ürettiği çıktı**. launchd'ye bağlıdır: uygulama kapalıyken de çalışır. |
-| **servis** | `npm run dev`, `php artisan serve`, worker'lar… Başlat/durdur/yeniden başlat, port farkındalıklı durum, açılışta otomatik başlatma. |
-| **terminal** | Elle açtığın kabuklar. Bunlar da tmux destekli; geçmişleri kaybolmaz. |
+## Features
 
-Sekmeler arası geçiş bedelsizdir: terminal görünümleri bellekte yaşar, sekme değiştirmek yalnız hangi görünümün ekleneceğini seçmektir — süreç, kaydırma konumu ve tampon dokunulmaz kalır.
+### Persistent Claude Code sessions
+Sessions run inside a dedicated **tmux** server, so they outlive the app. Quit, come
+back tomorrow, and the conversation is exactly where you left it. Name a session by
+double-clicking its title; close it and the record stays, so reopening it resumes the
+same conversation through `claude --resume`. A session manager lists everything the
+project owns — alive, resumable or disposable.
 
-## Kurulum
+### Attention that reaches you
+Claude Studio installs Claude Code hooks, so the app knows when a session is working
+and when it is waiting for you: a dot lights up on the exact session, one soft tone
+plays, the Dock icon gets a badge. All of it is configurable, including which system
+sound.
 
-Hazır paketi [Releases](https://github.com/ocracy/claude-studio/releases) sayfasından indir,
-`Claude Studio.app`'i `/Applications`'a taşı ve karantinayı temizle (ad-hoc imzalı):
+### Skills, read the way Claude writes them
+The sidebar lists the project's `.claude/skills` — plus your global ones, shadowed by
+project skills exactly as Claude resolves them — with their frontmatter description.
+Skill bodies render as markdown. Run one in a visible session to watch it work, or in
+the background to stay out of its way.
+
+### Scheduled runs that survive a quit
+Any skill can be scheduled hourly, daily or weekly. Schedules are bound to
+**launchd**, so they fire whether or not the app is running. Each run writes a
+markdown report into `.cs/runs/<skill>/`, and the app shows the history with status,
+timestamp and produced output side by side. There is no database: the reports *are*
+the state, so a run that happened while the app was closed simply appears.
+
+### Dev services
+`npm run dev`, `php artisan serve`, workers, queues — start, stop and restart them
+with port-aware status, auto-start on open, crash detection, and detection of
+services already started outside the app.
+
+### Terminals that remember
+Manually opened shells are tmux-backed too: same directory, same history, next time.
+
+### Fast by construction
+Terminal views live in the runtime, not in the view tree. Switching tabs only chooses
+which `NSView` is attached — the process, the scroll position and the buffer are
+never touched. Switching stays instant no matter how much scrollback you have.
+
+## Install
+
+Download the latest build from [Releases](https://github.com/ocracy/claude-studio/releases),
+move `Claude Studio.app` into `/Applications`, then clear the quarantine flag (the app
+is ad-hoc signed):
 
 ```bash
 xattr -cr "/Applications/Claude Studio.app" && open -a "Claude Studio"
 ```
 
-Ya da kaynaktan:
+Or build from source:
 
 ```bash
-brew install tmux          # kalıcı oturumlar için gerekli
+brew install tmux          # required for persistent sessions
 git clone https://github.com/ocracy/claude-studio && cd claude-studio
-./install.sh               # derler ve /Applications'a kurar
+./install.sh               # builds and installs into /Applications
 ```
 
-### Güncelleme
-
-Uygulama açılışta yeni sürüm var mı diye bakar; varsa üst barda **Güncelle** rozeti çıkar.
-**Ayarlar → Hakkında**'dan da elle denetleyebilirsin: indirir, paketi değiştirir ve kendini
-yeniden başlatır.
-
-Bir projeyi doğrudan açmak:
+Open a project straight from the shell, or drop a folder on the app icon:
 
 ```bash
-open -a "Claude Studio" ~/dev/projem
+open -a "Claude Studio" ~/dev/my-project
 ```
 
-## Proje ayarları: `.cs/`
+### Updating
 
-Visual Studio'nun `.vs` klasörü gibi, her projenin ayarları kendi içinde durur:
+The app checks GitHub for a newer release at launch. When one exists an **Update**
+badge appears in the top bar; **Settings → About** downloads it, replaces the bundle
+and restarts the app.
+
+## Project settings: `.cs/`
+
+Like an IDE's project folder, everything Claude Studio knows about a project lives
+inside the project:
 
 ```
-<proje>/
-├── .claude/skills/…        # beceriler (Claude Code'un kendi düzeni; dokunulmaz)
+<project>/
+├── .claude/skills/…        # skills (Claude Code's own layout; untouched)
 └── .cs/
-    ├── services.json       # servisler          ← paylaşılabilir
-    ├── schedules.json      # zamanlanmış çalışmalar ← paylaşılabilir
-    ├── terminals.json      # terminaller        ← paylaşılabilir
-    ├── sessions.json       # Claude oturum kayıtları (makineye özel)
-    ├── settings.json       # arayüz tercihleri  (makineye özel)
-    └── runs/<skill>/       # çalışma raporları (.md) + .state.json
+    ├── services.json       # services            ← share with your team
+    ├── schedules.json      # scheduled runs      ← share with your team
+    ├── terminals.json      # terminals           ← share with your team
+    ├── sessions.json       # session records     (machine specific)
+    ├── settings.json       # interface prefs     (machine specific)
+    └── runs/<skill>/       # run reports (.md) + .state.json
 ```
 
-Her bölüm kendi dosyasında: servis listesini ekiple paylaşırken pencere genişliğin o dosyayı
-kirletmez. Dosyalar insan tarafından okunur ve elle düzenlenebilir.
+Each section is its own file, so resizing your sidebar never dirties a file your team
+shares. Every file is plain, readable JSON you can edit by hand.
 
 ```json
 // .cs/services.json
@@ -89,66 +127,70 @@ kirletmez. Dosyalar insan tarafından okunur ve elle düzenlenebilir.
 ]
 ```
 
-## Beceriler ve çalışma raporları
+## Skills and run reports
 
-Beceriler Claude Code'un kendi biçiminde okunur — dönüştürme yok:
+Skills are read in Claude Code's own format — nothing is converted:
 
 ```
-.claude/skills/<ad>/SKILL.md     ya da     .claude/skills/<ad>.md
+.claude/skills/<name>/SKILL.md     or     .claude/skills/<name>.md
 ```
 
-Bir beceri çalıştırıldığında ortamına şunlar verilir:
+A skill run receives this environment:
 
-| Değişken | Anlamı |
+| Variable | Meaning |
 |---|---|
-| `CS_REPORT_FILE` | Raporun yazılacağı dosya |
-| `CS_RUN_DIR` | Bu becerinin rapor klasörü |
+| `CS_REPORT_FILE` | Where to write the report |
+| `CS_RUN_DIR` | This skill's report directory |
 | `CS_RUN_MODE` | `manual` \| `scheduled` |
-| `CS_LAST_REPORT`, `CS_LAST_STATUS`, `CS_LAST_SUMMARY` | Önceki çalışmanın bağlamı |
+| `CS_LAST_REPORT`, `CS_LAST_STATUS`, `CS_LAST_SUMMARY` | Context from the previous run |
 
-Rapor bir frontmatter ile başlar; uygulama listeyi bundan kurar:
+A report starts with frontmatter, which is what the app builds its table from:
 
 ```markdown
 ---
 run_at: 2026-08-17T02:00:00Z
 status: ok          # ok | warning | failed
-summary: 12 PR özetlendi, uyarı yok
+summary: 12 pull requests summarised, no warnings
 duration_sec: 8
 ---
 ```
 
-Ayrı bir veritabanı yoktur — **raporların kendisi durumdur**. launchd uygulama kapalıyken rapor üretse bile, açılışta hiçbir eşitleme gerekmeden doğru tablo görünür.
-
-## Kısayollar
+## Keyboard
 
 | | |
 |---|---|
-| ⌘O | Klasör aç |
-| ⇧⌘N | Yeni pencere |
-| ⌘N | Yeni Claude oturumu |
-| ⌘T | Yeni sekme (Claude sekmesindeysen oturum, değilse terminal) |
-| ⇧⌘T | Yeni terminal |
-| ⌘, | Ayarlar |
-| ⌘W | Sekmeyi kapat |
-| ⇧⌘] / ⇧⌘[ | Sonraki / önceki sekme |
+| ⌘O | Open folder |
+| ⇧⌘N | New window |
+| ⌘N | New Claude session |
+| ⌘T | New tab (a session on a Claude tab, a terminal otherwise) |
+| ⇧⌘T | New terminal |
+| ⌘, | Settings |
+| ⌘W | Close tab |
+| ⇧⌘] / ⇧⌘[ | Next / previous tab |
 
-## Çok satırlı girdi
+**Multi-line input:** `/terminal-setup` cannot run inside tmux, so the mapping is
+built into the app — **Shift+Enter** and **Option+Enter** insert a newline.
 
-tmux içinde `/terminal-setup` çalışmaz; eşleme uygulamanın kendisinde yapılıdır:
-**Shift+Enter** ve **Option+Enter** yeni satır ekler.
+## Architecture
 
-## Ayarlar (⌘,)
+- **Swift 6 · SwiftUI · [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) · tmux · launchd**
+- `Core/` holds the logic (`TerminalEngine`, `Tmux`, `Scheduler`, `SkillStore`,
+  `ProjectStore`, `Updater`); `Views/` is presentation only.
+- Which sessions are **alive** comes from tmux, the single source of truth; a
+  session's **name and conversation id** live in `.cs/sessions.json`, which is how a
+  closed session comes back under the same name.
+- Windows are managed in AppKit rather than through SwiftUI's `WindowGroup`, so the
+  number and identity of windows stay exact.
+- Notifications go through `osascript`: `UNUserNotificationCenter` is not reliable in
+  an ad-hoc signed app.
 
-Ses açık/kapalı ve hangi ses, çalışma bitince ses, bildirim balonu, Dock rozeti, terminal yazı
-tipi boyutu, açılışta son oturuma bağlanma.
+## Claude Code hooks
 
-## Mimari
+To show whether a session is working or waiting, one hook is merged into
+`~/.claude/settings.json` — idempotently, leaving your existing hooks alone. The
+script is a no-op outside Claude Studio: without `CS_TAB_ID` it exits immediately, so
+it has zero effect on your other Claude sessions.
 
-- **Swift 6 · SwiftUI · [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) · tmux · launchd** — Electron yok, telemetri yok, her şey yerel.
-- `Core/` iş mantığı (`TerminalEngine`, `Tmux`, `Scheduler`, `SkillStore`, `ProjectConfig`), `Views/` yalnız sunum.
-- Hangi oturumun **yaşadığı** tmux'tan okunur (tek doğruluk kaynağı); oturumun **adı ve konuşma kimliği** `.cs/config.json`'da durur, böylece kapattığın oturum ismiyle geri gelir.
-- Bildirim için `osascript` kullanılır: ad-hoc imzalı bir uygulamada `UNUserNotificationCenter` güvenilir değildir.
+## License
 
-## Claude Code hook'ları
-
-Bir oturumun "çalışıyor / seni bekliyor" durumunu görebilmek için `~/.claude/settings.json`'a bir hook eklenir (idempotent, mevcut hook'lara dokunmadan). Script Claude Studio dışında hiçbir şey yapmaz: `CS_TAB_ID` tanımlı değilse anında çıkar — diğer Claude oturumlarına sıfır etki.
+MIT

@@ -1,10 +1,10 @@
 import Foundation
 import SwiftUI
 
-// MARK: - Proje
+// MARK: - Project
 
-/// Açık bir çalışma alanı. Kimlik diskteki yoldur; `.cs/` klasörü bu yolun
-/// altında yaşar, böylece ayarlar projeyle birlikte taşınır/versiyonlanır.
+/// An open workspace. Its identity is the path on disk; the `.cs/` folder lives
+/// underneath it, so settings travel and version with the project.
 struct Project: Identifiable, Hashable, Codable {
     var path: String
     var name: String
@@ -21,17 +21,17 @@ struct Project: Identifiable, Hashable, Codable {
 
     var url: URL { URL(fileURLWithPath: path) }
 
-    /// `~` ile kısaltılmış görüntüleme yolu.
+    /// Display path shortened with `~`.
     var displayPath: String {
         let home = NSHomeDirectory()
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 
-    /// tmux oturum adları ve launchd etiketleri için kısa kimlik.
+    /// Short identifier used for tmux session names and launchd labels.
     ///
-    /// KRİTİK: `hashValue` KULLANILMAZ — Swift onu süreç başına rastgele
-    /// tohumlar, yani uygulama her açılışta farklı bir kimlik üretir ve dünkü
-    /// oturumlar ile launchd job'ları öksüz kalırdı. FNV-1a deterministiktir.
+    /// CRITICAL: never use `hashValue` — Swift seeds it randomly per process, so
+    /// every launch would produce a different identifier and yesterday's sessions
+    /// and launchd jobs would be orphaned. FNV-1a is deterministic.
     var shortID: String {
         var hash: UInt64 = 0xcbf29ce484222325
         for byte in path.utf8 {
@@ -47,17 +47,17 @@ struct Project: Identifiable, Hashable, Codable {
     var exists: Bool { FileManager.default.fileExists(atPath: path) }
 }
 
-// MARK: - Sekmeler
+// MARK: - Tabs
 
-/// Ana alandaki bir sekme. Kimlik kalıcıdır: terminal görünümü önbelleği ve
-/// tmux oturumu bu kimliğe bağlıdır.
+/// A tab in the main area. Its id is stable: the terminal view cache and the
+/// tmux session are both keyed on it.
 struct StudioTab: Identifiable, Hashable, Codable {
     enum Kind: String, Codable { case session, terminal, service, skill, cron }
 
     var id: String
     var kind: Kind
     var title: String
-    /// Kaynağın kimliği: oturum adı, servis id'si, skill adı…
+    /// Identifier of the underlying resource: session name, service id, skill name…
     var ref: String
 
     init(kind: Kind, ref: String, title: String, id: String? = nil) {
@@ -67,26 +67,26 @@ struct StudioTab: Identifiable, Hashable, Codable {
         self.id = id ?? "\(kind.rawValue):\(ref)"
     }
 
-    /// Terminal görünümü önbelleğinin anahtarı.
+    /// Key into the terminal view cache.
     var terminalKey: String { id }
 }
 
-// MARK: - Claude oturumu
+// MARK: - Claude session
 
-/// Bir Claude Code oturumunun kalıcı kaydı — `.cs/config.json`'da durur.
+/// The durable record of a Claude Code session, stored in `.cs/sessions.json`.
 ///
-/// tmux oturumu ölse bile kayıt kalır: kullanıcı aynı isimle geri açtığında
-/// `claude --resume` ile konuşma kaldığı yerden sürer.
+/// The record outlives the tmux session: reopening it by the same name resumes
+/// the conversation via `claude --resume`.
 struct SessionRecord: Identifiable, Hashable, Codable {
     var id: UUID = UUID()
     var name: String
-    /// tmux oturum adı. Kimlikten türer; yeniden adlandırma bunu değiştirmez.
+    /// tmux session name, derived from the id; renaming does not change it.
     var tmux: String
-    /// Claude'un kendi oturum kimliği (`claude --resume` için).
+    /// Claude's own session id (for `claude --resume`).
     var claudeSID: String?
     var lastUsed: Date = Date()
 
-    /// Sekme ve hook kimliği (`CS_TAB_ID`).
+    /// Tab and hook identifier (`CS_TAB_ID`).
     var tabKey: String { "session:\(tmux)" }
 
     static func make(projectShortID: String, name: String) -> SessionRecord {
@@ -96,15 +96,15 @@ struct SessionRecord: Identifiable, Hashable, Codable {
     }
 }
 
-/// Claude'un anlık durumu — hook köprüsünden gelir.
+/// Claude's live state, reported by the hook bridge.
 enum Attention: String, Codable {
     case idle, working, waiting
 
     var label: String {
         switch self {
-        case .working: return "çalışıyor"
-        case .waiting: return "bekliyor"
-        case .idle:    return "hazır"
+        case .working: return "working"
+        case .waiting: return "waiting"
+        case .idle:    return "ready"
         }
     }
 }
@@ -125,17 +125,17 @@ struct Skill: Identifiable, Hashable {
     }
 }
 
-// MARK: - Zamanlama
+// MARK: - Schedule
 
-/// Bir skill'in zamanlanmış çalışması. `.cs/config.json` içinde saklanır.
+/// A scheduled run of a skill, stored in `.cs/schedules.json`.
 struct Schedule: Identifiable, Hashable, Codable {
     enum Frequency: String, Codable, CaseIterable {
         case hourly, daily, weekly
         var label: String {
             switch self {
-            case .hourly: return "saatlik"
-            case .daily:  return "günlük"
-            case .weekly: return "haftalık"
+            case .hourly: return "hourly"
+            case .daily:  return "daily"
+            case .weekly: return "weekly"
             }
         }
     }
@@ -145,43 +145,43 @@ struct Schedule: Identifiable, Hashable, Codable {
     var frequency: Frequency = .daily
     var hour: Int = 9
     var minute: Int = 0
-    var weekday: Int = 1          // 0 = Pazar (launchd sözleşmesi)
+    var weekday: Int = 1          // 0 = Sunday (launchd convention)
     var enabled: Bool = true
-    /// Skill'e verilecek ek yönerge (boşsa skill'in kendi tanımı yeter).
+    /// Extra instruction for the skill (empty means the skill's own definition suffices).
     var prompt: String = ""
 
-    /// "her gün 09:00" gibi insan okunur özet.
+    /// Human-readable summary such as "daily 09:00".
     var summary: String {
         let time = String(format: "%02d:%02d", hour, minute)
         switch frequency {
-        case .hourly: return "her saat :\(String(format: "%02d", minute))"
-        case .daily:  return "her gün \(time)"
+        case .hourly: return "hourly at :\(String(format: "%02d", minute))"
+        case .daily:  return "daily \(time)"
         case .weekly: return "\(Self.weekdayNames[weekday % 7]) \(time)"
         }
     }
 
-    static let weekdayNames = ["paz", "pzt", "sal", "çar", "per", "cum", "cmt"]
+    static let weekdayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 
-    /// Bir sonraki tetikleme zamanı (durum çubuğu ve liste için).
+    /// Next fire date (used by the status bar and the list).
     var nextFire: Date? {
         guard enabled else { return nil }
         var comps = DateComponents()
         comps.minute = minute
         if frequency != .hourly { comps.hour = hour }
-        if frequency == .weekly { comps.weekday = weekday + 1 }  // Calendar: 1 = Pazar
+        if frequency == .weekly { comps.weekday = weekday + 1 }  // Calendar: 1 = Sunday
         return Calendar.current.nextDate(after: Date(), matching: comps,
                                          matchingPolicy: .nextTime)
     }
 }
 
-// MARK: - Servis
+// MARK: - Service
 
-/// Uzun süre çalışan bir geliştirme süreci (`npm run dev`, `php artisan serve`…).
+/// A long-running development process (`npm run dev`, `php artisan serve`…).
 struct Service: Identifiable, Hashable, Codable {
     var id: UUID = UUID()
     var name: String
     var command: String
-    /// Boşsa proje kökü.
+    /// Empty means the project root.
     var cwd: String = ""
     var port: Int?
     var autoStart: Bool = false
@@ -201,12 +201,12 @@ enum ServiceStatus: String, Codable {
 
     var label: String {
         switch self {
-        case .stopped:  return "durdu"
-        case .starting: return "başlıyor"
-        case .running:  return "çalışıyor"
-        case .stopping: return "durduruluyor"
-        case .crashed:  return "hata"
-        case .external: return "dışarıdan"
+        case .stopped:  return "stopped"
+        case .starting: return "starting"
+        case .running:  return "running"
+        case .stopping: return "stopping"
+        case .crashed:  return "crashed"
+        case .external: return "external"
         }
     }
 
@@ -223,7 +223,7 @@ enum ServiceStatus: String, Codable {
     var isLive: Bool { self == .running || self == .starting || self == .external }
 }
 
-// MARK: - Elle açılan terminal
+// MARK: - Manually opened terminal
 
 struct TerminalTab: Identifiable, Hashable, Codable {
     var id: UUID = UUID()
@@ -240,10 +240,10 @@ struct TerminalTab: Identifiable, Hashable, Codable {
     }
 }
 
-// MARK: - Çalışma kaydı
+// MARK: - Run record
 
-/// Zamanlanmış (ya da elle tetiklenmiş) bir skill çalışmasının çıktısı.
-/// Kaynak: `.cs/runs/<skill>/<zaman>.md` — dosyanın kendisi state'tir.
+/// The output of a scheduled (or manually triggered) skill run.
+/// Source: `.cs/runs/<skill>/<timestamp>.md` — the file itself is the state.
 struct SkillRun: Identifiable, Hashable {
     var url: URL
     var startedAt: Date?
@@ -270,9 +270,9 @@ struct SkillRun: Identifiable, Hashable {
 
         var label: String {
             switch self {
-            case .ok:      return "tamam"
-            case .warning: return "uyarı"
-            case .failed:  return "hata"
+            case .ok:      return "ok"
+            case .warning: return "warning"
+            case .failed:  return "failed"
             case .unknown: return "—"
             }
         }
@@ -288,7 +288,7 @@ struct SkillRun: Identifiable, Hashable {
     }
 }
 
-/// Runner script'inin yazdığı anlık durum (`.cs/runs/<skill>/.state.json`).
+/// Live state written by the runner script (`.cs/runs/<skill>/.state.json`).
 struct RunState: Codable {
     var startedAt: Date?
     var finishedAt: Date?
@@ -298,7 +298,7 @@ struct RunState: Codable {
     var isRunning: Bool { startedAt != nil && finishedAt == nil }
 }
 
-// MARK: - Küçük yardımcılar
+// MARK: - Small helpers
 
 extension String {
     var nilIfEmpty: String? {
@@ -308,17 +308,17 @@ extension String {
 }
 
 extension Date {
-    /// "2 sa önce" — liste altyazılarında.
+    /// "2h ago" — used in list subtitles.
     var relative: String {
         let f = RelativeDateTimeFormatter()
-        f.locale = Locale(identifier: "tr_TR")
+        f.locale = Locale(identifier: "en_US")
         f.unitsStyle = .short
         return f.localizedString(for: self, relativeTo: Date())
     }
 
     var shortStamp: String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "tr_TR")
+        f.locale = Locale(identifier: "en_US")
         f.dateFormat = "d MMM HH:mm"
         return f.string(from: self)
     }

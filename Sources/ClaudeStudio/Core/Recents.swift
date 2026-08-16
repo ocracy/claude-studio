@@ -2,8 +2,8 @@ import Foundation
 import SwiftUI
 import AppKit
 
-/// Karşılama ekranındaki "son projeler" listesi. Tek küçük JSON dosyası —
-/// uygulama açılışında disk taraması yapılmaz, liste anında gelir.
+/// The "recent projects" list on the welcome screen. One small JSON file — no
+/// disk scanning at launch, so the list appears instantly.
 @MainActor
 final class Recents: ObservableObject {
     static let shared = Recents()
@@ -31,7 +31,7 @@ final class Recents: ObservableObject {
         save()
     }
 
-    /// Diskte artık olmayan girdileri temizler.
+    /// Drops entries that no longer exist on disk.
     func pruneMissing() {
         let before = projects.count
         projects = projects.filter(\.exists)
@@ -45,17 +45,17 @@ final class Recents: ObservableObject {
         Paths.writeAtomically(data, to: Paths.recentsFile)
     }
 
-    // MARK: - Klasör seçici
+    // MARK: - Folder picker
 
-    /// Sistem klasör seçicisini açar. Seçim yapılmazsa `nil`.
+    /// Opens the system folder picker. Returns `nil` if nothing is chosen.
     static func chooseFolder() -> Project? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Aç"
-        panel.message = "Bir proje klasörü seçin"
+        panel.prompt = "Open"
+        panel.message = "Choose a project folder"
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return Project(path: url.path)
     }

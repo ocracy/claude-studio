@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Sekmenin türüne göre içerik: terminal, beceri kartı ya da çalışma geçmişi.
+/// Content by tab kind: terminal, skill card or run history.
 struct ContentArea: View {
     @ObservedObject var model: StudioModel
 
@@ -26,13 +26,13 @@ struct ContentArea: View {
             if let skill = model.skills.skill(named: tab.ref) {
                 SkillPane(model: model, skill: skill)
             } else {
-                message("Beceri bulunamadı: \(tab.ref)")
+                message("Skill not found: \(tab.ref)")
             }
         case .cron:
             if let schedule = model.store.schedule(for: tab.ref) {
                 CronPane(model: model, schedule: schedule)
             } else {
-                message("Zamanlama kaldırılmış: \(tab.ref)")
+                message("Schedule removed: \(tab.ref)")
             }
         }
     }
@@ -45,7 +45,7 @@ struct ContentArea: View {
     }
 }
 
-// MARK: - Boş durum
+// MARK: - Empty state
 
 private struct EmptyStudio: View {
     @ObservedObject var model: StudioModel
@@ -55,11 +55,11 @@ private struct EmptyStudio: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 30, weight: .ultraLight))
                 .foregroundStyle(Theme.text3)
-            Text("Soldan bir oturum, beceri, zamanlama, servis veya terminal seçin")
+            Text("Pick a session, skill, schedule, service or terminal on the left")
                 .font(Theme.ui(12.5))
                 .foregroundStyle(Theme.text3)
             HStack(spacing: 8) {
-                SmallButton(title: "Claude oturumu", icon: "plus", prominent: true) {
+                SmallButton(title: "Claude session", icon: "plus", prominent: true) {
                     model.newSession()
                 }
                 SmallButton(title: "Terminal", icon: "plus") { model.newTerminal() }
@@ -88,9 +88,9 @@ private struct TerminalPane: View {
     private var header: some View {
         HStack(spacing: 10) {
             if editingTitle {
-                // Alan görünür olur olmaz odaklanmalı; yoksa yazdıkların
-                // terminale gider ve "yeniden adlandırma çalışmıyor" olur.
-                TextField("ad", text: $draftTitle)
+                // The field must take focus the moment it appears; otherwise your
+                // keystrokes go to the terminal and renaming "does not work".
+                TextField("name", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .font(Theme.ui(13, .medium))
                     .frame(maxWidth: 260)
@@ -102,13 +102,14 @@ private struct TerminalPane: View {
                     .onExitCommand { editingTitle = false }
                     .onAppear { titleFocused = true }
             } else {
-                // Başlığa çift tıkla → yeniden adlandır; tmux oturumu bu isimle kaydedilir.
+                // Double-click the title to rename; the tmux session is recorded
+                // under that name.
                 Text(tab.title)
                     .font(Theme.ui(13, .medium))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .onTapGesture(count: 2, perform: beginRename)
-                    .help(renameable ? "Yeniden adlandırmak için çift tıkla" : "")
+                    .help(renameable ? "Double-click to rename" : "")
             }
 
             HStack(spacing: 5) {
@@ -137,20 +138,20 @@ private struct TerminalPane: View {
         case .service:
             if let service = serviceValue {
                 let live = (model.engine.serviceStatus[service.id] ?? .stopped).isLive
-                SmallButton(title: live ? "Durdur" : "Başlat",
+                SmallButton(title: live ? "Stop" : "Start",
                             icon: live ? "stop.fill" : "play.fill") { model.toggleService(service) }
-                IconButton(icon: "arrow.clockwise", help: "Yeniden başlat") {
+                IconButton(icon: "arrow.clockwise", help: "Restart") {
                     model.engine.restartService(service, project: model.project)
                 }
             }
         case .session:
-            IconButton(icon: "pencil", help: "Yeniden adlandır", action: beginRename)
-            IconButton(icon: "xmark.circle", help: "Oturumu kapat") {
+            IconButton(icon: "pencil", help: "Rename", action: beginRename)
+            IconButton(icon: "xmark.circle", help: "Close session") {
                 model.closeTab(id: tab.id)
             }
         case .terminal:
-            IconButton(icon: "pencil", help: "Yeniden adlandır", action: beginRename)
-            IconButton(icon: "clear", help: "Ekranı temizle") {
+            IconButton(icon: "pencil", help: "Rename", action: beginRename)
+            IconButton(icon: "clear", help: "Clear screen") {
                 model.engine.clear(key: tab.terminalKey)
             }
         default:
@@ -193,7 +194,7 @@ private struct TerminalPane: View {
         case .service:
             guard let service = serviceValue else { return "" }
             return (model.engine.serviceStatus[service.id] ?? .stopped).label
-        default: return model.engine.isLive(tab.terminalKey) ? "açık" : "kapalı"
+        default: return model.engine.isLive(tab.terminalKey) ? "open" : "closed"
         }
     }
 
@@ -216,7 +217,7 @@ private struct TerminalPane: View {
     private var meta: String {
         switch tab.kind {
         case .service: return serviceValue?.command ?? ""
-        case .session: return Tmux.isAvailable ? tab.ref : "tmux yok"
+        case .session: return Tmux.isAvailable ? tab.ref : "no tmux"
         case .terminal:
             guard let id = UUID(uuidString: tab.ref), let terminal = model.store.terminal(id)
             else { return "" }
@@ -226,43 +227,43 @@ private struct TerminalPane: View {
     }
 }
 
-// MARK: - Beceri
+// MARK: - Skill
 
 private struct SkillPane: View {
     @ObservedObject var model: StudioModel
     let skill: Skill
-    @State private var section: Section = .tanim
+    @State private var section: Section = .definition
     @State private var body_ = ""
 
     private enum Section: String, CaseIterable, Identifiable {
-        case tanim, calismalar
+        case definition, runs
         var id: String { rawValue }
-        var label: String { self == .tanim ? "Tanım" : "Çalışmalar" }
+        var label: String { self == .definition ? "Definition" : "Runs" }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: skill.name,
-                       state: model.runs.isRunning(skill.name) ? "çalışıyor" : skill.scope.label,
+                       state: model.runs.isRunning(skill.name) ? "running" : skill.scope.label,
                        stateColor: model.runs.isRunning(skill.name) ? Theme.running : Theme.idle,
                        meta: skill.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
-                SmallButton(title: "Çalıştır", icon: "play.fill", prominent: true) {
+                SmallButton(title: "Run", icon: "play.fill", prominent: true) {
                     model.runSkillVisible(skill)
                 }
-                SmallButton(title: "Arka planda") { model.runSkillBackground(skill) }
-                IconButton(icon: "square.and.pencil", help: "SKILL.md'yi aç") {
+                SmallButton(title: "In background") { model.runSkillBackground(skill) }
+                IconButton(icon: "square.and.pencil", help: "Open SKILL.md") {
                     NSWorkspace.shared.open(skill.url)
                 }
             }
 
-            // Alt sekmeler: başlığın hemen altında, sola yaslı — hangi bölümde
-            // olduğun tek bakışta belli olsun.
+            // Sub-tabs sit directly under the header, left aligned, so the current
+            // section is obvious at a glance.
             SubTabs(items: Section.allCases.map { ($0.rawValue, $0.label) },
-                    selected: section.rawValue) { section = Section(rawValue: $0) ?? .tanim }
+                    selected: section.rawValue) { section = Section(rawValue: $0) ?? .definition }
 
             switch section {
-            case .tanim:      definition
-            case .calismalar: RunList(model: model, skill: skill.name)
+            case .definition: definition
+            case .runs:       RunList(model: model, skill: skill.name)
             }
         }
         .onAppear(perform: load)
@@ -273,20 +274,20 @@ private struct SkillPane: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 26) {
-                    fact("kapsam", skill.scope.label)
+                    fact("scope", skill.scope.label)
                     if let schedule = model.store.schedule(for: skill.name) {
-                        fact("zamanlama", schedule.enabled ? schedule.summary : "duraklatıldı")
+                        fact("schedule", schedule.enabled ? schedule.summary : "paused")
                     }
-                    fact("çalışma", "\(model.runs.runs(for: skill.name).count)")
+                    fact("runs", "\(model.runs.runs(for: skill.name).count)")
                     if let last = model.runs.latest(for: skill.name), let at = last.startedAt {
-                        fact("son", at.relative)
+                        fact("last", at.relative)
                     }
                 }
                 .padding(.bottom, 18)
                 .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
                 .padding(.bottom, 20)
 
-                MarkdownView(text: body_.isEmpty ? "_(beceri gövdesi boş)_" : body_)
+                MarkdownView(text: body_.isEmpty ? "_(skill body is empty)_" : body_)
             }
             .padding(.horizontal, 26)
             .padding(.vertical, 20)
@@ -310,7 +311,7 @@ private struct SkillPane: View {
     }
 }
 
-// MARK: - Zamanlama
+// MARK: - Schedule
 
 private struct CronPane: View {
     @ObservedObject var model: StudioModel
@@ -320,19 +321,19 @@ private struct CronPane: View {
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: schedule.skill,
-                       state: schedule.enabled ? schedule.summary : "duraklatıldı",
+                       state: schedule.enabled ? schedule.summary : "paused",
                        stateColor: schedule.enabled ? Theme.accent : Theme.idle,
                        meta: schedule.enabled
-                             ? "sonraki · \(schedule.nextFire?.shortStamp ?? "—")" : "") {
-                SmallButton(title: "Şimdi çalıştır", icon: "play.fill", prominent: true) {
+                             ? "next · \(schedule.nextFire?.shortStamp ?? "—")" : "") {
+                SmallButton(title: "Run now", icon: "play.fill", prominent: true) {
                     model.runs.runInBackground(skill: schedule.skill)
                 }
-                SmallButton(title: schedule.enabled ? "Duraklat" : "Sürdür") {
+                SmallButton(title: schedule.enabled ? "Pause" : "Resume") {
                     var updated = schedule
                     updated.enabled.toggle()
                     model.store.setSchedule(updated)
                 }
-                IconButton(icon: "slider.horizontal.3", help: "Düzenle") { editing = true }
+                IconButton(icon: "slider.horizontal.3", help: "Edit") { editing = true }
             }
 
             RunList(model: model, skill: schedule.skill)
@@ -343,7 +344,7 @@ private struct CronPane: View {
     }
 }
 
-// MARK: - Çalışma listesi + çıktı
+// MARK: - Run list and output
 
 private struct RunList: View {
     @ObservedObject var model: StudioModel
@@ -369,7 +370,7 @@ private struct RunList: View {
                 output(run)
             } else {
                 VStack(spacing: 6) {
-                    Text("Henüz çalışma yok.")
+                    Text("No runs yet.")
                         .font(Theme.ui(12.5)).foregroundStyle(Theme.text3)
                     Text(".cs/runs/\(skill)/")
                         .font(Theme.mono(10.5)).foregroundStyle(Theme.text3)
@@ -386,7 +387,7 @@ private struct RunList: View {
                 if model.runs.isRunning(skill) {
                     HStack(spacing: 8) {
                         StatusDot(color: Theme.running)
-                        Text("çalışıyor…").font(Theme.ui(12)).foregroundStyle(Theme.text2)
+                        Text("running…").font(Theme.ui(12)).foregroundStyle(Theme.text2)
                         Spacer()
                     }
                     .padding(.horizontal, 10).padding(.vertical, 8)
@@ -409,8 +410,8 @@ private struct RunList: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button("Dosyayı aç") { NSWorkspace.shared.open(run.url) }
-                        Button("Sil") {
+                        Button("Open file") { NSWorkspace.shared.open(run.url) }
+                        Button("Delete") {
                             try? FileManager.default.removeItem(at: run.url)
                             model.runs.refresh(skill: skill)
                         }
@@ -434,7 +435,7 @@ private struct RunList: View {
                         Text("· \(trigger)").font(Theme.ui(11)).foregroundStyle(Theme.text3)
                     }
                     Spacer()
-                    IconButton(icon: "arrow.up.forward.square", help: "Dosyayı aç") {
+                    IconButton(icon: "arrow.up.forward.square", help: "Open file") {
                         NSWorkspace.shared.open(run.url)
                     }
                 }
@@ -447,7 +448,7 @@ private struct RunList: View {
                         .padding(.bottom, 16)
                 }
 
-                MarkdownView(text: run.body.isEmpty ? "_(rapor gövdesi boş)_" : run.body)
+                MarkdownView(text: run.body.isEmpty ? "_(report body is empty)_" : run.body)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
@@ -456,7 +457,7 @@ private struct RunList: View {
     }
 }
 
-/// Başlık altındaki bölüm sekmeleri (VS Code'un editör alt sekmeleri gibi).
+/// Section tabs under the header (like VS Code's editor sub-tabs).
 struct SubTabs: View {
     let items: [(String, String)]
     let selected: String
@@ -488,9 +489,9 @@ struct SubTabs: View {
     }
 }
 
-// MARK: - Ortak başlık
+// MARK: - Shared header
 
-/// İçerik alanının üst şeridi: başlık, durum, isteğe bağlı segmentler, eylemler.
+/// The content area's header strip: title, state, optional segments, actions.
 struct PaneHeader<Actions: View>: View {
     let title: String
     var state: String = ""

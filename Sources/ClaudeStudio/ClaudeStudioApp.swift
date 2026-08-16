@@ -6,26 +6,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainMenuBuilder.install()
 
-        // Ağır kurulumlar arka planda: hook köprüsü, tmux config, PATH anlık
-        // görüntüsü. Pencere bunları beklemez.
+        // Heavy setup happens in the background: hook bridge, tmux config, PATH
+        // snapshot. The window never waits for them.
         Task.detached(priority: .utility) {
             HookBridge.installIfNeeded()
             Tmux.ensureConfig()
             _ = Shell.userPath
         }
 
-        // Yeni sürüm var mı? Sessizce bakılır; varsa üst barda rozet çıkar.
+        // Is a new version out? Checked silently; a badge appears in the top bar.
         Updater.shared.check(silent: true)
 
-        // Klasörle açıldıysa `openFiles` zaten pencereyi açtı.
+        // If launched with a folder, `openFiles` already opened the window.
         if WindowManager.shared.isEmpty {
             WindowManager.shared.openWelcome()
         }
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Finder'dan sürüklenen ya da `open -a "Claude Studio" <klasör>` ile gelen
-    /// klasörler. Yalnız klasörler kabul edilir.
+    /// Folders dropped from Finder or passed via `open -a "Claude Studio" <dir>`.
+    /// Only directories are accepted.
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         var opened = false
         for path in filenames {
@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sender.reply(toOpenOrPrint: opened ? .success : .failure)
     }
 
-    /// Dock'tan tıklandığında açık pencere yoksa karşılama ekranını getir.
+    /// Clicking the Dock icon with no open window brings back the welcome screen.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { WindowManager.shared.openWelcome() }
         return true
@@ -47,101 +47,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
 }
 
-// MARK: - Komut kanalı
+// MARK: - Command channel
 
-/// Menüden etkin pencereye giden komutlar; `WindowManager.perform` uygular.
+/// Commands routed from the menu to the key window; applied by `WindowManager.perform`.
 enum StudioCommand {
     case openFolder, newSession, newTerminal, newTab, closeTab, nextTab, previousTab
 }
 
-// MARK: - Menü
+// MARK: - Menu
 
-/// Ana menü. AppKit tarafında elle kurulur; Edit menüsü terminaldeki kopyala /
-/// yapıştır kısayollarının çalışması için şart.
+/// Main menu, built by hand in AppKit. The Edit menu is required for copy and
+/// paste shortcuts to work inside the terminal.
 @MainActor
 enum MainMenuBuilder {
 
     static func install() {
         let main = NSMenu()
 
-        // Uygulama
+        // Application
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Claude Studio Hakkında",
+        appMenu.addItem(withTitle: "About Claude Studio",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
-        appMenu.addItem(action(title: "Güncellemeleri Denetle…", key: "", modifiers: []) {
+        appMenu.addItem(action(title: "Check for Updates…", key: "", modifiers: []) {
             Updater.shared.check()
             SettingsWindow.show()
         })
         appMenu.addItem(.separator())
-        appMenu.addItem(action(title: "Ayarlar…", key: ",", modifiers: .command) {
+        appMenu.addItem(action(title: "Settings…", key: ",", modifiers: .command) {
             SettingsWindow.show()
         })
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Gizle", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Çık", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Hide", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
-        // Dosya
+        // File
         let fileItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "Dosya")
-        fileMenu.addItem(action(title: "Yeni Pencere", key: "n", modifiers: [.command, .shift]) {
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(action(title: "New Window", key: "n", modifiers: [.command, .shift]) {
             WindowManager.shared.openWelcome()
         })
-        fileMenu.addItem(action(title: "Klasör Aç…", key: "o", modifiers: .command) {
+        fileMenu.addItem(action(title: "Open Folder…", key: "o", modifiers: .command) {
             WindowManager.shared.perform(.openFolder)
         })
         fileMenu.addItem(.separator())
-        fileMenu.addItem(action(title: "Yeni Claude Oturumu", key: "n", modifiers: .command) {
+        fileMenu.addItem(action(title: "New Claude Session", key: "n", modifiers: .command) {
             WindowManager.shared.perform(.newSession)
         })
-        fileMenu.addItem(action(title: "Yeni Sekme", key: "t", modifiers: .command) {
+        fileMenu.addItem(action(title: "New Tab", key: "t", modifiers: .command) {
             WindowManager.shared.perform(.newTab)
         })
-        fileMenu.addItem(action(title: "Yeni Terminal", key: "t", modifiers: [.command, .shift]) {
+        fileMenu.addItem(action(title: "New Terminal", key: "t", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.newTerminal)
         })
         fileMenu.addItem(.separator())
-        fileMenu.addItem(action(title: "Sekmeyi Kapat", key: "w", modifiers: .command) {
+        fileMenu.addItem(action(title: "Close Tab", key: "w", modifiers: .command) {
             WindowManager.shared.perform(.closeTab)
         })
-        fileMenu.addItem(withTitle: "Pencereyi Kapat",
+        fileMenu.addItem(withTitle: "Close Window",
                          action: #selector(NSWindow.performClose(_:)), keyEquivalent: "W")
         fileItem.submenu = fileMenu
         main.addItem(fileItem)
 
-        // Düzen — terminalde ⌘C / ⌘V bu menüden gelir.
+        // Edit — ⌘C / ⌘V in the terminal come from this menu.
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Düzen")
-        editMenu.addItem(withTitle: "Geri Al", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "Yinele", action: Selector(("redo:")), keyEquivalent: "Z")
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Kes", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Kopyala", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Yapıştır", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Tümünü Seç", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         main.addItem(editItem)
 
-        // Görünüm
+        // View
         let viewItem = NSMenuItem()
-        let viewMenu = NSMenu(title: "Görünüm")
-        viewMenu.addItem(action(title: "Sonraki Sekme", key: "]", modifiers: [.command, .shift]) {
+        let viewMenu = NSMenu(title: "View")
+        viewMenu.addItem(action(title: "Next Tab", key: "]", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.nextTab)
         })
-        viewMenu.addItem(action(title: "Önceki Sekme", key: "[", modifiers: [.command, .shift]) {
+        viewMenu.addItem(action(title: "Previous Tab", key: "[", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.previousTab)
         })
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
-        // Pencere
+        // Window
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Pencere")
-        windowMenu.addItem(withTitle: "Simge Durumuna Küçült",
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize",
                            action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Tümünü Öne Getir",
+        windowMenu.addItem(withTitle: "Bring All to Front",
                            action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
@@ -150,19 +150,19 @@ enum MainMenuBuilder {
         NSApp.windowsMenu = windowMenu
     }
 
-    /// Blok çalıştıran menü öğesi — hedef/aksiyon zincirine ihtiyaç duymaz.
+    /// A menu item that runs a closure — no target/action plumbing required.
     private static func action(title: String, key: String, modifiers: NSEvent.ModifierFlags,
                                handler: @escaping () -> Void) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(BlockTarget.fire), keyEquivalent: key)
         item.keyEquivalentModifierMask = modifiers
         let target = BlockTarget(handler)
         item.target = target
-        item.representedObject = target   // güçlü referans: hedef menüyle yaşar
+        item.representedObject = target   // strong reference: the target lives with the menu
         return item
     }
 }
 
-/// Menü öğesinin hedefi; bloğu canlı tutar.
+/// Target of a menu item; keeps the closure alive.
 final class BlockTarget: NSObject {
     private let handler: () -> Void
     init(_ handler: @escaping () -> Void) { self.handler = handler }

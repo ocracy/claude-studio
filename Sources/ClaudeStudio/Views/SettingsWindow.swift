@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Tercihler penceresi (⌘,). Tek pencere; ikinci kez çağrılırsa öne gelir.
+/// Preferences window (⌘,). A single window; calling again brings it forward.
 @MainActor
 enum SettingsWindow {
     private static var window: NSWindow?
@@ -15,7 +15,7 @@ enum SettingsWindow {
         let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 460),
                              styleMask: [.titled, .closable, .fullSizeContentView],
                              backing: .buffered, defer: false)
-        panel.title = "Ayarlar"
+        panel.title = "Settings"
         panel.titlebarAppearsTransparent = true
         panel.isReleasedWhenClosed = false
         panel.center()
@@ -26,31 +26,31 @@ enum SettingsWindow {
     }
 }
 
-/// İki sütun: solda bölümler, sağda o bölümün ayarları. Her satır tek bir şey
-/// yapar ve ne yaptığını altında bir cümleyle söyler.
+/// Two columns: sections on the left, that section's settings on the right. Each
+/// row does one thing and says what it does in a sentence underneath.
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var updater = Updater.shared
-    @State private var section: Section = .bildirim
+    @State private var section: Section = .notifications
 
     private enum Section: String, CaseIterable, Identifiable {
-        case bildirim, terminal, oturumlar, hakkinda
+        case notifications, terminal, sessions, about
         var id: String { rawValue }
 
         var title: String {
             switch self {
-            case .bildirim:  return "Bildirim ve ses"
-            case .terminal:  return "Terminal"
-            case .oturumlar: return "Oturumlar"
-            case .hakkinda:  return "Hakkında"
+            case .notifications: return "Notifications & sound"
+            case .terminal:      return "Terminal"
+            case .sessions:      return "Sessions"
+            case .about:         return "About"
             }
         }
         var icon: String {
             switch self {
-            case .bildirim:  return "bell"
-            case .terminal:  return "terminal"
-            case .oturumlar: return "bubble.left.and.bubble.right"
-            case .hakkinda:  return "info.circle"
+            case .notifications: return "bell"
+            case .terminal:      return "terminal"
+            case .sessions:      return "bubble.left.and.bubble.right"
+            case .about:         return "info.circle"
             }
         }
     }
@@ -65,7 +65,7 @@ struct SettingsView: View {
         .background(Theme.bg)
     }
 
-    // MARK: - Sol sütun
+    // MARK: - Left column
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -96,7 +96,7 @@ struct SettingsView: View {
         .background(Theme.chrome)
     }
 
-    // MARK: - Sağ sütun
+    // MARK: - Right column
 
     private var content: some View {
         ScrollView {
@@ -107,10 +107,10 @@ struct SettingsView: View {
                     .padding(.bottom, 18)
 
                 switch section {
-                case .bildirim:  bildirim
-                case .terminal:  terminal
-                case .oturumlar: oturumlar
-                case .hakkinda:  hakkinda
+                case .notifications: notifications
+                case .terminal:      terminal
+                case .sessions:      sessions
+                case .about:         about
                 }
             }
             .padding(.horizontal, 28)
@@ -121,33 +121,33 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Bölümler
+    // MARK: - Sections
 
-    private var bildirim: some View {
+    private var notifications: some View {
         VStack(spacing: 0) {
-            toggleRow("Claude seni beklerken ses çal",
-                      note: "Oturum sırayı sana verdiğinde tek bir ton duyulur.",
+            toggleRow("Play a sound when Claude is waiting",
+                      note: "One soft tone when a session hands the turn back to you.",
                       isOn: $settings.soundEnabled)
-            toggleRow("Çalışma bitince ses çal",
-                      note: "Zamanlanmış ve arka plan çalışmaları için.",
+            toggleRow("Play a sound when a run finishes",
+                      note: "For scheduled and background runs.",
                       isOn: $settings.soundOnRunFinish)
 
-            row("Ses", note: "Seçtiğin sistem sesi her iki durumda da kullanılır.") {
+            row("Sound", note: "The chosen system sound is used in both cases.") {
                 HStack(spacing: 8) {
                     Picker("", selection: $settings.soundName) {
                         ForEach(AppSettings.sounds, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
                     .frame(width: 140)
-                    SmallButton(title: "Dinle") { Notify.play(settings.soundName) }
+                    SmallButton(title: "Preview") { Notify.play(settings.soundName) }
                 }
             }
 
-            toggleRow("Bildirim balonu göster",
-                      note: "Sistem bildirimi olarak kısa bir özet.",
+            toggleRow("Show a notification banner",
+                      note: "A short summary as a system notification.",
                       isOn: $settings.notifyEnabled)
-            toggleRow("Dock simgesinde sayaç",
-                      note: "Seni bekleyen oturum sayısı Dock'ta görünür.",
+            toggleRow("Badge the Dock icon",
+                      note: "The number of sessions waiting for you appears on the Dock.",
                       isOn: $settings.badgeEnabled, last: true)
         }
         .background(card)
@@ -155,8 +155,8 @@ struct SettingsView: View {
 
     private var terminal: some View {
         VStack(spacing: 0) {
-            row("Yazı tipi boyutu",
-                note: "Bundan sonra açılan terminaller bu boyutu kullanır.") {
+            row("Font size",
+                note: "Terminals opened from now on use this size.") {
                 HStack(spacing: 8) {
                     Text(String(format: "%.1f", settings.terminalFontSize))
                         .font(Theme.mono(12))
@@ -166,33 +166,33 @@ struct SettingsView: View {
                 }
             }
 
-            infoRow("Çok satırlı girdi",
-                    note: "Claude Code'da yeni satır için Shift+Enter ya da Option+Enter. Eşleme uygulamada yapılıdır; `/terminal-setup` gerekmez.",
+            infoRow("Multi-line input",
+                    note: "Press Shift+Enter or Option+Enter for a new line in Claude Code. The mapping is built into the app; `/terminal-setup` is not needed.",
                     last: true)
         }
         .background(card)
     }
 
-    private var oturumlar: some View {
+    private var sessions: some View {
         VStack(spacing: 0) {
-            toggleRow("Proje açılınca son oturuma bağlan",
-                      note: "Kapatıp açtığında kaldığın yerden devam edersin.",
+            toggleRow("Reattach to the last session on open",
+                      note: "Close and reopen a project and you continue where you left off.",
                       isOn: $settings.autoAttachLastSession)
 
-            infoRow("Kalıcılık",
-                    note: "Oturumlar tmux'ta yaşar; uygulama kapansa da sürerler. Bir oturumu kapatırsan kaydı kalır ve aynı isimle, aynı konuşmayla geri açılır.",
+            infoRow("Persistence",
+                    note: "Sessions live in tmux and outlive the app. Closing one keeps its record, so it reopens under the same name with the same conversation.",
                     last: true)
         }
         .background(card)
     }
 
-    private var hakkinda: some View {
+    private var about: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Claude Studio")
                     .font(Theme.ui(15, .semibold))
                     .foregroundStyle(Theme.text)
-                Text("Projelerin için tek ekran: Claude oturumları, beceriler, zamanlanmış çalışmalar, servisler ve terminaller.")
+                Text("One screen for your projects: Claude sessions, skills, scheduled runs, services and terminals.")
                     .font(Theme.ui(12))
                     .foregroundStyle(Theme.text2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -201,14 +201,14 @@ struct SettingsView: View {
 
             Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 16)
 
-            row("Sürüm \(updater.currentVersion)", note: updateNote) {
+            row("Version \(updater.currentVersion)", note: updateNote) {
                 updateControl
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                detail("Depo", "github.com/\(Updater.repository)")
-                detail("tmux", Tmux.path ?? "kurulu değil")
-                detail("Ayarlar", Paths.appSupport.path
+                detail("Repository", "github.com/\(Updater.repository)")
+                detail("tmux", Tmux.path ?? "not installed")
+                detail("Support", Paths.appSupport.path
                     .replacingOccurrences(of: NSHomeDirectory(), with: "~"))
             }
             .padding(16)
@@ -219,12 +219,12 @@ struct SettingsView: View {
 
     private var updateNote: String {
         switch updater.state {
-        case .idle:                      return "Yeni sürüm çıktığında buradan kurabilirsin."
-        case .checking:                  return "Denetleniyor…"
-        case .upToDate:                  return "En güncel sürümdesin."
-        case let .available(version, _, _): return "\(version) yayınlandı."
-        case let .downloading(progress): return "İndiriliyor… %\(Int(progress * 100))"
-        case .installing:                return "Kuruluyor, uygulama yeniden başlayacak…"
+        case .idle:                      return "When a new version ships you can install it here."
+        case .checking:                  return "Checking…"
+        case .upToDate:                  return "You are on the latest version."
+        case let .available(version, _, _): return "\(version) is available."
+        case let .downloading(progress): return "Downloading… \(Int(progress * 100))%"
+        case .installing:                return "Installing; the app will restart…"
         case let .failed(reason):        return reason
         }
     }
@@ -232,13 +232,13 @@ struct SettingsView: View {
     @ViewBuilder private var updateControl: some View {
         switch updater.state {
         case .available:
-            SmallButton(title: "Güncelle", icon: "arrow.down.circle", prominent: true) {
+            SmallButton(title: "Update", icon: "arrow.down.circle", prominent: true) {
                 updater.install()
             }
         case .checking, .downloading, .installing:
             ProgressView().controlSize(.small)
         default:
-            SmallButton(title: "Denetle") { updater.check() }
+            SmallButton(title: "Check") { updater.check() }
         }
     }
 
@@ -249,7 +249,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Satır bileşenleri
+    // MARK: - Row components
 
     private var card: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)

@@ -1,15 +1,15 @@
 import Foundation
 import SwiftUI
 
-/// Claude Code skill'lerini keşfeder — hiçbir dönüştürme yapmadan, Claude'un
-/// kendi düzenini olduğu gibi okuyarak:
+/// Discovers Claude Code skills — no conversion, reading Claude's own layout
+/// exactly as it is:
 ///
-///   .claude/skills/<ad>/SKILL.md   → skill adı = klasör adı
-///   .claude/skills/<ad>.md         → skill adı = dosya adı
+///   .claude/skills/<name>/SKILL.md   → skill name = folder name
+///   .claude/skills/<name>.md         → skill name = file name
 ///
-/// Proje skill'leri `~/.claude/skills` altındaki genel skill'lerle birlikte
-/// listelenir; aynı ada sahip proje skill'i geneli gölgeler (Claude'un
-/// önceliğiyle aynı).
+/// Project skills are listed together with the global ones in
+/// `~/.claude/skills`; a project skill shadows a global skill of the same name
+/// (matching Claude's own precedence).
 @MainActor
 final class SkillStore: ObservableObject {
     @Published private(set) var skills: [Skill] = []
@@ -17,8 +17,8 @@ final class SkillStore: ObservableObject {
 
     private var watcher: DirectoryWatcher?
 
-    /// Skill'leri tarar ve `.claude/skills` klasörünü izlemeye alır — dosya
-    /// eklendiğinde/silindiğinde liste kendiliğinden tazelenir.
+    /// Scans skills and watches `.claude/skills` — the list refreshes by itself
+    /// when files are added or removed.
     func start(project: Project, onChange: (@MainActor (Set<String>) -> Void)? = nil) {
         scan(project: project, onChange: onChange)
         let dir = Paths.projectSkillsDir(project)
@@ -45,7 +45,7 @@ final class SkillStore: ObservableObject {
 
     func skill(named name: String) -> Skill? { skills.first { $0.name == name } }
 
-    // MARK: - Keşif
+    // MARK: - Discovery
 
     private nonisolated static func discover(in root: URL, scope: Skill.Scope) -> [Skill] {
         let fm = FileManager.default
@@ -74,7 +74,7 @@ final class SkillStore: ObservableObject {
         }
     }
 
-    /// SKILL.md frontmatter'ındaki `description`. Yalnız baştaki blok okunur.
+    /// The `description` from SKILL.md frontmatter. Only the leading block is read.
     private nonisolated static func frontmatterDescription(_ url: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
@@ -86,9 +86,9 @@ final class SkillStore: ObservableObject {
 
 // MARK: - Frontmatter
 
-/// `---` ile sarılı YAML benzeri başlık bloğu okuyucusu. Tam YAML DEĞİL —
-/// kasıtlı: dış bağımlılık eklemeden `key: value` ve `key: |` bloklarını
-/// karşılamak yeter.
+/// Reader for the YAML-like header block delimited by `---`. NOT full YAML —
+/// deliberately: supporting `key: value` and `key: |` blocks is enough, and it
+/// keeps the dependency list empty.
 enum Frontmatter {
 
     static func split(_ text: String) -> (fields: [String: String]?, body: String) {
@@ -162,10 +162,10 @@ enum Frontmatter {
     }
 }
 
-// MARK: - Klasör izleyici
+// MARK: - Directory watcher
 
-/// Bir klasördeki değişiklikleri izler (yazma/silme/yeniden adlandırma) ve
-/// 300 ms sönümleme ile geri çağırır. Klasör yoksa oluşturulmasını bekler.
+/// Watches a directory for writes, deletes and renames and calls back with a
+/// 300 ms debounce. Returns nil if the directory does not exist.
 final class DirectoryWatcher {
     private var source: DispatchSourceFileSystemObject?
     private var descriptor: CInt = -1

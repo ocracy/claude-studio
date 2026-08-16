@@ -1,11 +1,11 @@
 import Foundation
 
-/// Süreç çalıştırma yardımcıları.
+/// Process helpers.
 ///
-/// KRİTİK: GUI uygulamaları launchd'den minimal bir PATH alır — kullanıcının
-/// `node`, `claude`, `tmux` kurulumları görünmez. Bu yüzden gerçek PATH bir kez
-/// login + interactive zsh'ten alınır (`userPath`) ve spawn edilen her sürece
-/// enjekte edilir. `-i` şart: PATH çoğu kurulumda `.zshrc`'de yazar.
+/// CRITICAL: GUI apps inherit a minimal PATH from launchd — the user's `node`,
+/// `claude` and `tmux` installs are invisible. The real PATH is therefore
+/// captured once from a login + interactive zsh (`userPath`) and injected into
+/// every spawned process. `-i` is required: most setups export PATH in `.zshrc`.
 enum Shell {
 
     static let userPath: String = {
@@ -27,24 +27,24 @@ enum Shell {
         return ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
     }()
 
-    /// Adaylardan ilk çalıştırılabilir olanı.
+    /// First executable candidate.
     static func findExecutable(_ candidates: [String]) -> String? {
         candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// PATH üzerinden arar (kullanıcının gerçek PATH'i ile).
+    /// Looks the binary up on PATH (using the user's real PATH).
     static func which(_ name: String) -> String? {
         let r = run("/usr/bin/env", ["sh", "-c", "command -v \(name)"], env: ["PATH": userPath])
         guard r.status == 0 else { return nil }
         return r.output.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
-    /// Tek tırnakla sarar; içteki `'` → `'\''`.
+    /// Wraps in single quotes; inner `'` becomes `'\''`.
     static func quoted(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Senkron çalıştırır; stdout + stderr birleşik döner.
+    /// Runs synchronously; returns stdout and stderr combined.
     @discardableResult
     static func run(_ launchPath: String, _ args: [String],
                     env: [String: String]? = nil) -> (status: Int32, output: String) {
@@ -60,7 +60,7 @@ enum Shell {
         p.standardOutput = pipe
         p.standardError = pipe
         do { try p.run() } catch { return (-1, "\(error)") }
-        // waitUntilExit'ten ÖNCE oku — pipe dolarsa süreç bloklanır.
+        // Read BEFORE waitUntilExit — a full pipe would block the child.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
@@ -74,7 +74,7 @@ enum Shell {
         }
     }
 
-    /// Çıktısı umursanmayan, beklenmeyen komut.
+    /// Fire-and-forget command; output is discarded.
     static func runDetached(_ command: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -84,13 +84,13 @@ enum Shell {
         try? p.run()
     }
 
-    /// Portu dinleyen bir süreç var mı? (servis hazırlık kontrolü)
+    /// Is something listening on the port? (service readiness check)
     static func portIsListening(_ port: Int) -> Bool {
         let r = run("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"])
         return r.status == 0 && !r.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Portu tutan süreçleri öldürür (dışarıdan başlatılmış servisi durdurmak için).
+    /// Kills whatever holds the port (used to stop externally started services).
     static func killPort(_ port: Int) {
         runDetached("lsof -nP -iTCP:\(port) -sTCP:LISTEN -t | xargs -r kill -TERM")
     }

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Yayınlanabilir paket üretir: universal binary + ad-hoc imza + ClaudeStudio.zip
-# Güncelleyici (Updater.swift) bu zip'i indirip kurar — varlık adı değişmemeli.
+# Produces the release artifact: universal binary + ad-hoc signature + ClaudeStudio.zip
+# Updater.swift downloads and installs this zip — the asset name must not change.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -8,18 +8,24 @@ VERSION="$(cat VERSION)"
 APP="Claude Studio.app"
 ZIP="ClaudeStudio.zip"
 
-echo "→ ikon üretiliyor…"
+echo "→ generating icon…"
 swift scripts/make-icon.swift >/dev/null
 iconutil -c icns AppIcon.iconset -o AppIcon.icns
 
-echo "→ universal binary derleniyor (arm64 + x86_64)…"
-swift build -c release --arch arm64 --arch x86_64
+# A universal build needs the Metal Toolchain for SwiftTerm's Metal shader
+# (xcodebuild -downloadComponent MetalToolchain). Without it we fall back to the
+# native architecture — the release still ships, just single-arch.
+echo "→ attempting universal binary (arm64 + x86_64)…"
+if swift build -c release --arch arm64 --arch x86_64 >/dev/null 2>&1; then
+  BIN=".build/apple/Products/Release/ClaudeStudio"
+else
+  echo "  no Metal Toolchain → building for the native architecture only"
+  swift build -c release
+  BIN=".build/release/ClaudeStudio"
+fi
+[ -f "$BIN" ] || { echo "✗ build failed"; exit 1; }
 
-BIN=".build/apple/Products/Release/ClaudeStudio"
-[ -f "$BIN" ] || BIN=".build/release/ClaudeStudio"
-[ -f "$BIN" ] || { echo "✗ derleme başarısız"; exit 1; }
-
-echo "→ paketleniyor…"
+echo "→ packaging…"
 rm -rf "$APP" "$ZIP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/ClaudeStudio"
@@ -49,12 +55,12 @@ PLIST
 
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 
-echo "→ arşivleniyor…"
+echo "→ archiving…"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-echo "✓ v${VERSION} hazır"
+echo "✓ v${VERSION} ready"
 echo "  $(pwd)/$ZIP  ($(du -h "$ZIP" | cut -f1))"
-lipo -archs "$APP/Contents/MacOS/ClaudeStudio" 2>/dev/null | sed 's/^/  mimari: /'
+lipo -archs "$APP/Contents/MacOS/ClaudeStudio" 2>/dev/null | sed 's/^/  arch: /'
 echo
-echo "Yayınlamak için:"
+echo "To publish:"
 echo "  gh release create v${VERSION} \"$ZIP\" --title \"Claude Studio v${VERSION}\" --notes \"…\""

@@ -2,8 +2,8 @@ import Foundation
 import SwiftUI
 import AppKit
 
-/// Bir pencerenin (bir projenin) tüm durumu. Görünümler bunu okur; iş mantığı
-/// buradadır, görünüm katmanında değil.
+/// All state for one window (one project). Views read it; the business logic
+/// lives here, not in the view layer.
 @MainActor
 final class StudioModel: ObservableObject {
 
@@ -13,11 +13,11 @@ final class StudioModel: ObservableObject {
 
         var title: String {
             switch self {
-            case .sessions:  return "oturumlar"
-            case .skills:    return "beceriler"
-            case .cron:      return "zamanlanmış"
-            case .services:  return "servisler"
-            case .terminals: return "terminaller"
+            case .sessions:  return "sessions"
+            case .skills:    return "skills"
+            case .cron:      return "scheduled"
+            case .services:  return "services"
+            case .terminals: return "terminals"
             }
         }
         var icon: String {
@@ -31,11 +31,11 @@ final class StudioModel: ObservableObject {
         }
         var help: String {
             switch self {
-            case .sessions:  return "Claude oturumları"
-            case .skills:    return "Beceriler (.claude/skills)"
-            case .cron:      return "Zamanlanmış çalışmalar"
-            case .services:  return "Servisler"
-            case .terminals: return "Terminaller"
+            case .sessions:  return "Claude sessions"
+            case .skills:    return "Skills (.claude/skills)"
+            case .cron:      return "Scheduled runs"
+            case .services:  return "Services"
+            case .terminals: return "Terminals"
             }
         }
     }
@@ -49,10 +49,10 @@ final class StudioModel: ObservableObject {
     @Published var pane: Pane = .sessions
     @Published var tabs: [StudioTab] = []
     @Published var activeTabID: String?
-    /// Şu anda tmux'ta yaşayan oturum adları.
+    /// Session names currently alive in tmux.
     @Published var liveSessions: Set<String> = []
     @Published var sidebarWidth: CGFloat = 260
-    /// Skill/cron panelinde seçili çalışma kaydı.
+    /// Selected run in the skill/cron pane.
     @Published var selectedRun: [String: String] = [:]
 
     private var refreshTimer: Timer?
@@ -69,7 +69,7 @@ final class StudioModel: ObservableObject {
         engine.projectName = project.name
     }
 
-    // MARK: - Yaşam döngüsü
+    // MARK: - Lifecycle
 
     func start() {
         Paths.ensure(Paths.csDir(project))
@@ -95,9 +95,9 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    /// Pencere kapanırken: terminaller ve servisler kapanır (kullanıcı onları
-    /// bu pencerede açtı), Claude oturumları tmux'ta yaşamaya devam eder —
-    /// kalıcı olmalarının bütün sebebi bu.
+    /// On window close: terminals and services shut down (the user opened them in
+    /// this window), while Claude sessions keep living in tmux — that persistence
+    /// is their entire point.
     func stop() {
         refreshTimer?.invalidate()
         runs.stopPolling()
@@ -113,17 +113,17 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    // MARK: - Oturumlar
+    // MARK: - Sessions
 
-    /// Kayıtlı oturumlar, yeniden eskiye.
+    /// Recorded sessions, newest first.
     var sessions: [SessionRecord] {
         store.config.sessions.sorted { $0.lastUsed > $1.lastUsed }
     }
 
-    /// tmux'ta yaşayanlar (kenar çubuğunda listelenenler).
+    /// The ones alive in tmux (listed in the sidebar).
     var openSessions: [SessionRecord] { sessions.filter { liveSessions.contains($0.tmux) } }
 
-    /// Kapatılmış ama geri açılabilecek oturumlar.
+    /// Closed sessions that can be reopened.
     var pastSessions: [SessionRecord] { sessions.filter { !liveSessions.contains($0.tmux) } }
 
     func attention(of record: SessionRecord) -> Attention {
@@ -134,8 +134,8 @@ final class StudioModel: ObservableObject {
         openSessions.filter { attention(of: $0) == .waiting }.count
     }
 
-    /// tmux'ta bu projeye ait olup kaydı olmayan oturumları kayda alır —
-    /// başka bir makineden/sürümden kalanlar da listede görünür.
+    /// Adopts tmux sessions that belong to this project but have no record — so
+    /// leftovers from another machine or version still show up in the list.
     private func adoptOrphanSessions() {
         guard Tmux.isAvailable else { return }
         let shortID = project.shortID
@@ -157,7 +157,7 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    /// Canlı oturum kümesini tmux'tan tazeler. tmux tek doğruluk kaynağıdır.
+    /// Refreshes the live session set from tmux, the single source of truth.
     func refreshSessions() {
         guard Tmux.isAvailable else { return }
         let shortID = project.shortID
@@ -179,15 +179,15 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    /// Bildirim metinleri motorun elinde olsun.
+    /// Keep notification text available to the engine.
     private func syncSessionContext() {
         var titles: [String: String] = [:]
         for record in store.config.sessions { titles[record.tabKey] = record.name }
         engine.sessionTitles = titles
     }
 
-    /// Hook'un yakaladığı Claude oturum kimliklerini kayda geçir — kapatılan bir
-    /// oturum `--resume` ile aynı konuşmadan devam edebilsin.
+    /// Persist the Claude session ids captured by the hook, so a closed session
+    /// can resume the same conversation with `--resume`.
     private func persistClaudeSIDs() {
         for record in store.config.sessions {
             guard let sid = engine.claudeSIDs[record.tabKey], sid != record.claudeSID else { continue }
@@ -217,21 +217,21 @@ final class StudioModel: ObservableObject {
         return "Claude \(index)"
     }
 
-    /// Kayıtlı bir oturumu açar. tmux'ta yaşıyorsa bağlanır; ölmüşse Claude
-    /// oturum kimliği biliniyorsa `--resume` ile aynı konuşmadan devam eder.
+    /// Opens a recorded session: attaches if it is alive in tmux, otherwise
+    /// resumes the same conversation with `--resume` when the id is known.
     func openSession(_ record: SessionRecord) {
         open(StudioTab(kind: .session, ref: record.tmux, title: record.name))
 
-        // Oturum tmux'ta yaşıyorsa yalnız bağlanılır. Ölmüşse ancak konuşma
-        // diskte duruyorsa `--resume` denenir; yoksa Claude "No session found"
-        // deyip anında çıkar ve elde ölü bir terminal kalırdı.
+        // A live session is simply attached. A dead one is resumed only if the
+        // transcript is actually on disk; otherwise Claude prints "No session
+        // found", exits instantly and leaves a dead terminal behind.
         let alive = liveSessions.contains(record.tmux)
         var resume: String?
         if !alive, let sid = record.claudeSID {
             if ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid) {
                 resume = sid
             } else {
-                // Kayıt bayat: bir daha denenmesin.
+                // Stale record: do not try again.
                 store.updateSession({ var copy = record; copy.claudeSID = nil; return copy }())
             }
         }
@@ -243,7 +243,7 @@ final class StudioModel: ObservableObject {
         syncSessionContext()
     }
 
-    /// Kapatılmış bir oturumun konuşması geri getirilebilir mi?
+    /// Can a closed session's conversation be brought back?
     func canResume(_ record: SessionRecord) -> Bool {
         guard let sid = record.claudeSID else { return false }
         return ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid)
@@ -259,12 +259,12 @@ final class StudioModel: ObservableObject {
         syncSessionContext()
     }
 
-    /// Oturumu kapatır: tmux öldürülür, sekme ve kenar çubuğundan düşer —
-    /// kayıt kalır, "önceki oturumlar" altından geri açılabilir.
+    /// Closes a session: tmux is killed and the tab and sidebar entry go away —
+    /// the record stays and can be reopened from "previous sessions".
     func closeSession(_ record: SessionRecord) {
-        // SIRA ÖNEMLİ: önce sekme ve terminal görünümü bırakılır (tmux istemcisi
-        // ölür), sonra oturum öldürülür. Ters sırada istemci ekrana
-        // "no server running / exited" basardı.
+        // ORDER MATTERS: release the tab and terminal view first (which kills the
+        // tmux client), then kill the session. The other way round the client
+        // prints "no server running / exited" on screen.
         closeTab(id: record.tabKey, killSession: false)
         engine.discard(record.tabKey)
         liveSessions.remove(record.tmux)
@@ -275,13 +275,13 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    /// Kaydı tamamen siler (geri açılamaz).
+    /// Deletes the record for good (it cannot be reopened).
     func deleteSession(_ record: SessionRecord) {
         closeSession(record)
         store.removeSession(tmux: record.tmux)
     }
 
-    // MARK: - Terminaller
+    // MARK: - Terminals
 
     func newTerminal(name: String? = nil) {
         let terminal = TerminalTab(name: name ?? "zsh \(store.config.terminals.count + 1)")
@@ -318,7 +318,7 @@ final class StudioModel: ObservableObject {
         "cs-\(project.shortID)-sh-\(terminal.id.uuidString.prefix(8).lowercased())"
     }
 
-    // MARK: - Servisler
+    // MARK: - Serviceler
 
     func openService(_ service: Service) {
         open(StudioTab(kind: .service, ref: service.id.uuidString, title: service.name))
@@ -345,18 +345,18 @@ final class StudioModel: ObservableObject {
         store.config.services.filter { (engine.serviceStatus[$0.id] ?? .stopped).isLive }.count
     }
 
-    // MARK: - Beceriler
+    // MARK: - Skills
 
     func openSkill(_ skill: Skill) {
         open(StudioTab(kind: .skill, ref: skill.name, title: skill.name))
         runs.refresh(skill: skill.name)
     }
 
-    /// Beceriyi görünür bir Claude oturumunda çalıştırır.
+    /// Runs the skill in a visible Claude session.
     func runSkillVisible(_ skill: Skill) {
         Paths.ensure(Paths.runsDir(project, skill: skill.name))
         let env = Runs.environment(project: project, skill: skill.name, mode: "manual")
-        newSession(name: "beceri: \(skill.name)",
+        newSession(name: "skill: \(skill.name)",
                    prompt: Scheduler.promptFor(project: project, skill: skill.name),
                    autoRun: true, extraEnv: env)
     }
@@ -370,15 +370,15 @@ final class StudioModel: ObservableObject {
         runs.refresh(skill: schedule.skill)
     }
 
-    // MARK: - Sekmeler
+    // MARK: - Tabs
 
     func open(_ tab: StudioTab) {
         if !tabs.contains(where: { $0.id == tab.id }) { tabs.append(tab) }
         activeTabID = tab.id
     }
 
-    /// Sekmeyi kapatır. Claude sekmelerinde tmux oturumu da sonlanır — kullanıcı
-    /// "kapat" dediğinde oturumun arkada yaşamaya devam etmesi şaşırtıcı olurdu.
+    /// Closes a tab. For Claude tabs the tmux session ends too — leaving it alive
+    /// in the background after the user pressed "close" would be surprising.
     func closeTab(id: String, killSession: Bool = true) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs[index]
@@ -387,8 +387,8 @@ final class StudioModel: ObservableObject {
             closeSession(record)
             return
         }
-        // Terminali sekmeden kapatmak onu tamamen kapatır — kenar çubuğunda
-        // hayalet bir satır bırakmaz.
+        // Closing a terminal from its tab closes it completely — no ghost row is
+        // left in the sidebar.
         if killSession, tab.kind == .terminal, let id = UUID(uuidString: tab.ref),
            let terminal = store.terminal(id) {
             removeTerminal(terminal)
@@ -410,8 +410,8 @@ final class StudioModel: ObservableObject {
         activeTabID = tabs[(index + offset + tabs.count) % tabs.count].id
     }
 
-    /// ⌘T bağlama duyarlıdır: Claude sekmesindeysen yeni Claude oturumu,
-    /// değilsen yeni terminal açar.
+    /// ⌘T is context sensitive: a new Claude session while on a Claude tab,
+    /// a new terminal otherwise.
     func newTabForContext() {
         if activeTab?.kind == .session || (activeTab == nil && pane == .sessions) {
             newSession()

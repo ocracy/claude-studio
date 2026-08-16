@@ -1,10 +1,10 @@
 import SwiftUI
 import AppKit
 
-// MARK: - Oturum yöneticisi
+// MARK: - Session manager
 
-/// Projenin tüm Claude oturumları tek listede: hangileri tmux'ta yaşıyor,
-/// hangileri geri açılabilir — ve istenmeyenler burada silinir.
+/// Every Claude session of the project in one list: which are alive in tmux,
+/// which can be reopened — and unwanted ones are deleted here.
 struct SessionManager: View {
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
@@ -12,7 +12,7 @@ struct SessionManager: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Oturum yöneticisi")
+                Text("Session manager")
                     .font(Theme.ui(15, .semibold))
                     .foregroundStyle(Theme.text)
                 Spacer()
@@ -22,13 +22,13 @@ struct SessionManager: View {
             }
             .padding(.bottom, 4)
 
-            Text("Açık oturumlar tmux'ta yaşar; kapatılanların kaydı kalır ve aynı isimle geri açılır.")
+            Text("Open sessions live in tmux; closed ones keep their record and reopen under the same name.")
                 .font(Theme.ui(11.5))
                 .foregroundStyle(Theme.text3)
                 .padding(.bottom, 14)
 
             if model.sessions.isEmpty {
-                Text("Kayıtlı oturum yok.")
+                Text("No recorded sessions.")
                     .font(Theme.ui(12.5))
                     .foregroundStyle(Theme.text3)
                     .frame(maxWidth: .infinity, minHeight: 120)
@@ -49,7 +49,7 @@ struct SessionManager: View {
                 Button {
                     for record in model.openSessions { model.closeSession(record) }
                 } label: {
-                    Text("Tüm oturumları kapat")
+                    Text("Close all sessions")
                         .font(Theme.ui(11.5))
                         .foregroundStyle(Theme.danger)
                 }
@@ -57,7 +57,7 @@ struct SessionManager: View {
                 .disabled(model.openSessions.isEmpty)
 
                 Spacer()
-                SmallButton(title: "Kapat", prominent: true, action: onDismiss)
+                SmallButton(title: "Done", prominent: true, action: onDismiss)
             }
             .padding(.top, 16)
         }
@@ -77,13 +77,13 @@ struct SessionManager: View {
                     .foregroundStyle(Theme.text3)
             }
             Spacer()
-            Text(live ? "açık" : (model.canResume(record) ? "sürdürülebilir" : "kapalı"))
+            Text(live ? "open" : (model.canResume(record) ? "resumable" : "closed"))
                 .font(Theme.ui(10.5))
                 .foregroundStyle(Theme.text3)
-            SmallButton(title: live ? "Kapat" : "Aç") {
+            SmallButton(title: live ? "Close" : "Open") {
                 live ? model.closeSession(record) : model.openSession(record)
             }
-            IconButton(icon: "trash", help: "Kaydı sil", tint: Theme.danger) {
+            IconButton(icon: "trash", help: "Delete record", tint: Theme.danger) {
                 model.deleteSession(record)
             }
         }
@@ -92,7 +92,7 @@ struct SessionManager: View {
     }
 }
 
-// MARK: - Servis ayarları
+// MARK: - Service settings
 
 struct ServiceEditor: View {
     @ObservedObject var model: StudioModel
@@ -103,31 +103,31 @@ struct ServiceEditor: View {
     @State private var portText = ""
 
     var body: some View {
-        SheetShell(title: isNew ? "Yeni servis" : service.name,
-                   destructive: isNew ? nil : ("Servisi sil", {
+        SheetShell(title: isNew ? "New service" : service.name,
+                   destructive: isNew ? nil : ("Delete service", {
                        model.engine.stopService(service)
                        model.store.removeService(service.id)
                        onDismiss()
                    }),
-                   confirm: ("Kaydet", save),
+                   confirm: ("Save", save),
                    onDismiss: onDismiss) {
-            Field(label: "ad") {
+            Field(label: "name") {
                 TextField("frontend", text: $service.name)
                     .textFieldStyle(.plain).font(Theme.ui(12.5))
             }
-            Field(label: "komut") {
+            Field(label: "command") {
                 TextField("npm run dev", text: $service.command)
                     .textFieldStyle(.plain).font(Theme.mono(12))
             }
-            Field(label: "dizin") {
+            Field(label: "directory") {
                 TextField(model.project.displayPath, text: $service.cwd)
                     .textFieldStyle(.plain).font(Theme.mono(12))
             }
-            Field(label: "port (isteğe bağlı)") {
+            Field(label: "port (optional)") {
                 TextField("5173", text: $portText)
                     .textFieldStyle(.plain).font(Theme.mono(12))
             }
-            Toggle("Proje açılınca otomatik başlat", isOn: $service.autoStart)
+            Toggle("Start automatically when the project opens", isOn: $service.autoStart)
                 .toggleStyle(.switch)
                 .tint(Theme.accent)
                 .font(Theme.ui(12.5))
@@ -143,7 +143,7 @@ struct ServiceEditor: View {
     }
 }
 
-// MARK: - Zamanlama ayarları
+// MARK: - Schedule settings
 
 struct ScheduleEditor: View {
     @ObservedObject var model: StudioModel
@@ -151,22 +151,22 @@ struct ScheduleEditor: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        SheetShell(title: "Zamanlanmış çalışma",
+        SheetShell(title: "Scheduled run",
                    destructive: model.store.schedule(for: schedule.skill) != nil
-                        ? ("Zamanlamayı sil", {
+                        ? ("Delete schedule", {
                             model.store.removeSchedule(skill: schedule.skill)
                             onDismiss()
                         }) : nil,
-                   confirm: ("Kaydet", save),
+                   confirm: ("Save", save),
                    onDismiss: onDismiss) {
-            Field(label: "beceri") {
+            Field(label: "skill") {
                 Picker("", selection: $schedule.skill) {
                     ForEach(model.skills.skills) { Text($0.name).tag($0.name) }
                 }
                 .labelsHidden().pickerStyle(.menu).font(Theme.ui(12.5))
             }
 
-            Field(label: "sıklık") {
+            Field(label: "frequency") {
                 Picker("", selection: $schedule.frequency) {
                     ForEach(Schedule.Frequency.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
@@ -175,7 +175,7 @@ struct ScheduleEditor: View {
 
             HStack(spacing: 10) {
                 if schedule.frequency == .weekly {
-                    Field(label: "gün") {
+                    Field(label: "day") {
                         Picker("", selection: $schedule.weekday) {
                             ForEach(0..<7, id: \.self) { Text(Schedule.weekdayNames[$0]).tag($0) }
                         }
@@ -183,30 +183,30 @@ struct ScheduleEditor: View {
                     }
                 }
                 if schedule.frequency != .hourly {
-                    Field(label: "saat") {
+                    Field(label: "hour") {
                         Stepper(value: $schedule.hour, in: 0...23) {
                             Text(String(format: "%02d", schedule.hour)).font(Theme.mono(12))
                         }
                     }
                 }
-                Field(label: "dakika") {
+                Field(label: "minute") {
                     Stepper(value: $schedule.minute, in: 0...59, step: 5) {
                         Text(String(format: "%02d", schedule.minute)).font(Theme.mono(12))
                     }
                 }
             }
 
-            Field(label: "ek yönerge (isteğe bağlı)") {
+            Field(label: "extra instruction (optional)") {
                 TextEditor(text: $schedule.prompt)
                     .font(Theme.mono(12))
                     .frame(height: 60)
                     .scrollContentBackground(.hidden)
             }
 
-            Toggle("Zamanlama aktif", isOn: $schedule.enabled)
+            Toggle("Schedule enabled", isOn: $schedule.enabled)
                 .toggleStyle(.switch).tint(Theme.accent).font(Theme.ui(12.5))
 
-            Text("\(schedule.summary) çalışır; uygulama kapalı olsa bile launchd üstlenir. Rapor `.cs/runs/\(schedule.skill)/` altına yazılır.")
+            Text("Runs \(schedule.summary); launchd takes over even while the app is closed. The report is written to `.cs/runs/\(schedule.skill)/`.")
                 .font(Theme.ui(11))
                 .foregroundStyle(Theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -219,7 +219,7 @@ struct ScheduleEditor: View {
     }
 }
 
-// MARK: - Ortak kabuk
+// MARK: - Shared shell
 
 struct SheetShell<Content: View>: View {
     let title: String
@@ -248,7 +248,7 @@ struct SheetShell<Content: View>: View {
                 }
                 Spacer()
                 Button(action: onDismiss) {
-                    Text("Vazgeç").font(Theme.ui(11.5)).foregroundStyle(Theme.text3)
+                    Text("Cancel").font(Theme.ui(11.5)).foregroundStyle(Theme.text3)
                 }
                 .buttonStyle(.plain)
                 SmallButton(title: confirm.0, prominent: true, action: confirm.1)
@@ -261,7 +261,7 @@ struct SheetShell<Content: View>: View {
     }
 }
 
-/// Etiketli form alanı.
+/// A labelled form field.
 struct Field<Content: View>: View {
     let label: String
     @ViewBuilder var content: () -> Content

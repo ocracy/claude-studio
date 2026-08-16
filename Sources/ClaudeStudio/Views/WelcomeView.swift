@@ -1,8 +1,9 @@
 import SwiftUI
 import AppKit
 
-/// Açılış ekranı: klasör seç ya da son projelerden birine dön.
-/// Hiçbir tarama yapılmaz — liste tek küçük JSON'dan gelir, pencere anında açılır.
+/// Launch screen: pick a folder or return to a recent project.
+/// Nothing is scanned — the list comes from one small JSON file, so the window
+/// appears instantly.
 struct WelcomeView: View {
     let onOpen: (Project) -> Void
 
@@ -37,7 +38,7 @@ struct WelcomeView: View {
         }
     }
 
-    // MARK: - Sol sütun
+    // MARK: - Left column
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,19 +47,19 @@ struct WelcomeView: View {
             Text("Claude Studio")
                 .font(Theme.ui(24, .semibold))
                 .foregroundStyle(Theme.text)
-            Text("projelerin için tek ekran")
+            Text("one screen for your projects")
                 .font(Theme.ui(12.5))
                 .foregroundStyle(Theme.text3)
                 .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 2) {
-                action(icon: "folder", title: "Klasör aç…", shortcut: "⌘O") {
+                action(icon: "folder", title: "Open folder…", shortcut: "⌘O") {
                     if let project = Recents.chooseFolder() { onOpen(project) }
                 }
-                action(icon: "macwindow.badge.plus", title: "Yeni pencere", shortcut: "⇧⌘N") {
+                action(icon: "macwindow.badge.plus", title: "New window", shortcut: "⇧⌘N") {
                     WindowManager.shared.openWelcome()
                 }
-                action(icon: "gearshape", title: "Ayarlar", shortcut: "⌘,") {
+                action(icon: "gearshape", title: "Settings", shortcut: "⌘,") {
                     SettingsWindow.show()
                 }
             }
@@ -67,10 +68,10 @@ struct WelcomeView: View {
             Spacer()
 
             VStack(alignment: .leading, spacing: 6) {
-                note("Oturumlar tmux ile kalıcı")
-                note("Beceriler `.claude/skills` klasöründen")
-                note("Zamanlanmış çalışmalar uygulama kapalıyken de sürer")
-                note("Ayarlar projedeki `.cs` klasöründe")
+                note("Sessions persist through tmux")
+                note("Skills are read from `.claude/skills`")
+                note("Scheduled runs continue while the app is closed")
+                note("Settings live in the project's `.cs` folder")
             }
             .padding(.bottom, 26)
         }
@@ -103,12 +104,12 @@ struct WelcomeView: View {
         }
     }
 
-    // MARK: - Sağ sütun
+    // MARK: - Right column
 
     private var recentsColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                SectionLabel(text: "son projeler")
+                SectionLabel(text: "recent projects")
                 Spacer()
             }
             .padding(.horizontal, 26)
@@ -138,7 +139,7 @@ struct WelcomeView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.text3)
-            TextField("ara", text: $query)
+            TextField("search", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.ui(12.5))
                 .focused($searchFocused)
@@ -172,7 +173,7 @@ struct WelcomeView: View {
                     if let count = sessionCounts[project.shortID], count > 0 {
                         HStack(spacing: 5) {
                             StatusDot(color: Theme.running, size: 5)
-                            Text("\(count) oturum")
+                            Text("\(count) sessions")
                         }
                         .font(Theme.ui(10.5))
                         .foregroundStyle(Theme.text2)
@@ -185,22 +186,22 @@ struct WelcomeView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("Finder'da göster") {
+            Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([project.url])
             }
-            Button("Listeden kaldır") { recents.forget(project) }
+            Button("Remove from list") { recents.forget(project) }
         }
     }
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Text("Henüz proje yok")
+            Text("No projects yet")
                 .font(Theme.ui(15, .medium))
                 .foregroundStyle(Theme.text2)
-            Text("Başlamak için bir klasör açın.")
+            Text("Open a folder to get started.")
                 .font(Theme.ui(12))
                 .foregroundStyle(Theme.text3)
-            SmallButton(title: "Klasör aç", icon: "folder", prominent: true) {
+            SmallButton(title: "Open folder", icon: "folder", prominent: true) {
                 if let project = Recents.chooseFolder() { onOpen(project) }
             }
             .padding(.top, 4)
@@ -208,7 +209,7 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Canlı oturum sayıları tmux'tan bir kez, arka planda okunur.
+    /// Live session counts are read from tmux once, in the background.
     private func loadSessionCounts() {
         guard Tmux.isAvailable else { return }
         Task.detached(priority: .utility) {

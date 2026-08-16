@@ -1,35 +1,35 @@
 import SwiftUI
 import AppKit
 
-/// Tek tasarım kaynağı.
+/// The single source of design truth.
 ///
-/// Ölçü: sade ve yerel. Renkler macOS'un anlamsal renkleridir — açık/koyu
-/// görünüme kendiliğinden uyar; yalnız vurgu ve durum renkleri sabittir.
-/// Süsleme yok: yazı tipi sistem yazı tipi, terminal SF Mono.
+/// Restrained and native. Colors are macOS semantic colors, so light and dark
+/// appearance are handled for free; only the accent and status colors are fixed.
+/// No decoration: system font for the UI, SF Mono in the terminal.
 enum Theme {
 
-    // MARK: - Yüzeyler
+    // MARK: - Surfaces
 
-    /// Ana içerik zemini (editör alanı).
+    /// Main content background (the editor area).
     static let bg          = Color(nsColor: .textBackgroundColor)
-    /// Kenar çubuğu, üst ve alt barlar.
+    /// Sidebar, top bar and status bar.
     static let chrome      = Color(nsColor: .windowBackgroundColor)
-    /// Seçili satır / etkin sekme dolgusu.
+    /// Selected row / active tab fill.
     static let selection   = Color(nsColor: .selectedContentBackgroundColor).opacity(0.16)
     static let hover       = Color(nsColor: .labelColor).opacity(0.06)
     static let separator   = Color(nsColor: .separatorColor)
-    /// Kart ve giriş alanı zemini.
+    /// Card and input field background.
     static let field       = Color(nsColor: .controlBackgroundColor)
 
-    // MARK: - Metin
+    // MARK: - Text
 
     static let text        = Color(nsColor: .labelColor)
     static let text2       = Color(nsColor: .secondaryLabelColor)
     static let text3       = Color(nsColor: .tertiaryLabelColor)
 
-    // MARK: - Vurgu ve durum
+    // MARK: - Accent and status
 
-    /// Claude'un turuncusu — tek vurgu rengi.
+    /// Claude's orange — the only accent color.
     static let accent      = Color(red: 0.851, green: 0.467, blue: 0.341)
     static let running     = Color(red: 0.290, green: 0.686, blue: 0.353)
     static let waiting     = Color(red: 0.851, green: 0.467, blue: 0.341)
@@ -42,7 +42,7 @@ enum Theme {
     static let nsTermBG: NSColor = .textBackgroundColor
     static let nsTermFG: NSColor = .labelColor
 
-    // MARK: - Tipografi
+    // MARK: - Typography
 
     static func ui(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight)
@@ -52,11 +52,11 @@ enum Theme {
         .system(size: size, weight: weight, design: .monospaced)
     }
 
-    /// Bölüm başlığı: küçük, harf aralıklı.
+    /// Section heading: small, letterspaced.
     static func sectionLabel() -> Font { .system(size: 10.5, weight: .semibold) }
 }
 
-/// Kenar çubuğu bölüm başlığı.
+/// Sidebar section heading.
 struct SectionLabel: View {
     let text: String
     var body: some View {
@@ -67,7 +67,7 @@ struct SectionLabel: View {
     }
 }
 
-/// Durum noktası — çalışıyor / bekliyor / durdu.
+/// Status dot — running / waiting / stopped.
 struct StatusDot: View {
     let color: Color
     var size: CGFloat = 6
@@ -76,7 +76,7 @@ struct StatusDot: View {
     }
 }
 
-/// Fare üstüne gelince zemini değişen satır.
+/// A row that highlights on hover.
 struct HoverRow<Content: View>: View {
     var selected: Bool = false
     var padding: EdgeInsets = EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 8)
@@ -97,7 +97,7 @@ struct HoverRow<Content: View>: View {
     }
 }
 
-/// Küçük, sade düğme. `prominent` yalnız birincil eylemde kullanılır.
+/// Small, plain button. Use `prominent` only for the primary action.
 struct SmallButton: View {
     let title: String
     var icon: String? = nil
@@ -128,7 +128,7 @@ struct SmallButton: View {
     }
 }
 
-/// Yalnız ikonlu araç düğmesi.
+/// Icon-only tool button.
 struct IconButton: View {
     let icon: String
     var help: String = ""

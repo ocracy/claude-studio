@@ -2,15 +2,15 @@
 .swiftpm/
 *.xcodeproj
 
-# Üretilen paket ve ikon
+# Build output
 Claude Studio.app/
 AppIcon.icns
 AppIcon.iconset/
 
-# Makineye özel launcher dosyası
+# Machine-specific launcher file
 heart.json
 
-# Proje ayarları (kendi projemizi stüdyoda açarsak oluşur)
+# Project settings (created when this repo is opened in the studio)
 .cs/
 
 .DS_Store

@@ -1,11 +1,11 @@
 import Foundation
 
-/// Oturumların kalıcılığı tmux ile sağlanır: Claude Studio kapansa da oturum
-/// yaşamaya devam eder, tekrar açıldığında kaldığı yerden bağlanılır.
+/// Session persistence is provided by tmux: sessions outlive the app, so
+/// reopening a project reattaches exactly where you left off.
 ///
-/// KRİTİK: her zaman sabit `-S <socket>` kullanılır, `-L` KULLANILMAZ — GUI
-/// süreci ile login shell farklı `TMUX_TMPDIR` görür, `-L` ile iki ayrı sunucu
-/// oluşur. Sabit soket yolu her çağıran için aynıdır.
+/// CRITICAL: always use a fixed `-S <socket>`, never `-L` — the GUI process and
+/// a login shell see different `TMUX_TMPDIR` values, so `-L` would end up with
+/// two separate servers. A fixed socket path is identical for every caller.
 enum Tmux {
 
     static let socketPath = "/tmp/claude-studio-\(getuid()).sock"
@@ -19,8 +19,8 @@ enum Tmux {
 
     static var isAvailable: Bool { path != nil }
 
-    /// Minimal config. `mouse off` şart: tmux fareyi yakalarsa terminaldeki
-    /// metin seçimi bozulur — kaydırmayı uygulama kendisi copy-mode'a yönlendirir.
+    /// Minimal config. `mouse off` is required: if tmux grabs the mouse, text
+    /// selection breaks — the app routes scrolling into copy-mode itself.
     static func ensureConfig() {
         let body = """
         set -g status off
@@ -40,7 +40,7 @@ enum Tmux {
         }
     }
 
-    // MARK: - Oturumlar
+    // MARK: - Sessions
 
     struct Session {
         let name: String
@@ -51,7 +51,7 @@ enum Tmux {
         let lastUsed: Date?
     }
 
-    /// Claude Studio'ya ait tüm oturumlar (`@cs_project` etiketi dolu olanlar).
+    /// All sessions owned by Claude Studio (those tagged with `@cs_project`).
     static func sessions(projectID: String? = nil) -> [Session] {
         let fmt = "#{session_name}\t#{@cs_project}\t#{@cs_title}\t#{@cs_sid}\t#{session_attached}\t#{@cs_used}"
         let r = run(["list-sessions", "-F", fmt])
@@ -86,8 +86,8 @@ enum Tmux {
         setOption(session, "@cs_used", String(Int(Date().timeIntervalSince1970)))
     }
 
-    /// Pencere başlıkları — Claude kendi başlığını OSC ile yazar, oturum
-    /// adlarını canlı tutmak için okunur.
+    /// Pane titles — Claude sets its own title over OSC; read to keep session
+    /// labels live.
     static func paneTitles() -> [String: String] {
         let r = run(["list-panes", "-a", "-F", "#{session_name}\t#{pane_title}"])
         guard r.status == 0 else { return [:] }
@@ -100,7 +100,7 @@ enum Tmux {
         return out
     }
 
-    /// Geçmişte gezinme: `copy-mode -e` en alta inince kendiliğinden çıkar.
+    /// Scrollback navigation: `copy-mode -e` exits by itself at the bottom.
     static func scroll(_ session: String, lines: Int, up: Bool) {
         guard lines > 0 else { return }
         if up {
@@ -111,10 +111,11 @@ enum Tmux {
         }
     }
 
-    // MARK: - Bağlanma komutu
+    // MARK: - Attach command
 
-    /// `-A -D`: oturum varsa ona bağlan (eski istemciyi düşür), yoksa `inner`
-    /// komutuyla yenisini yarat. Tek çağrı hem "devam et" hem "başlat" demek.
+    /// `-A -D`: attach to the session if it exists (detaching the old client),
+    /// otherwise create it running `inner`. One call means both "resume" and
+    /// "start".
     static func attachCommand(session: String, cols: Int, rows: Int,
                               env: [String: String], inner: String?) -> String {
         var parts = [

@@ -1,8 +1,8 @@
 import SwiftUI
 import AppKit
 
-/// Uygulamanın pencereleri. Her pencere ya karşılama ekranıdır ya da tek bir
-/// projenin stüdyosu. Aynı proje ikinci kez açılmaz — var olan pencere öne gelir.
+/// The app's windows. Each is either the welcome screen or the studio for one
+/// project. A project never opens twice — the existing window comes forward.
 @MainActor
 final class WindowManager: NSObject, NSWindowDelegate {
     static let shared = WindowManager()
@@ -13,7 +13,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
 
     @discardableResult
     func openWelcome() -> StudioWindow {
-        // Zaten boş bir pencere varsa onu kullan — boş pencere yığmayalım.
+        // Reuse an idle window if there is one — do not pile up empty windows.
         if let idle = controllers.first(where: { $0.project == nil }) {
             idle.window.makeKeyAndOrderFront(nil)
             return idle
@@ -29,7 +29,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
             existing.window.makeKeyAndOrderFront(nil)
             return
         }
-        // Boş bir pencere varsa projeyi orada aç (Visual Studio davranışı).
+        // If a window is idle, open the project there (Visual Studio behaviour).
         if let idle = controllers.first(where: { $0.project == nil }) {
             idle.load(project: project)
             idle.window.makeKeyAndOrderFront(nil)
@@ -44,7 +44,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
         controllers.removeAll { $0 === controller }
     }
 
-    /// Menü komutunu etkin pencerenin modeline uygular.
+    /// Applies a menu command to the key window's model.
     func perform(_ command: StudioCommand) {
         switch command {
         case .openFolder:
@@ -70,7 +70,7 @@ final class WindowManager: NSObject, NSWindowDelegate {
     }
 }
 
-/// Tek bir pencere ve içindeki SwiftUI ağacı.
+/// One window and the SwiftUI tree inside it.
 @MainActor
 final class StudioWindow: NSObject, NSWindowDelegate {
     let window: NSWindow
@@ -94,7 +94,7 @@ final class StudioWindow: NSObject, NSWindowDelegate {
         if let project { load(project: project) }
     }
 
-    /// Projeyi bu pencerede açar (ya da karşılama ekranına döner).
+    /// Opens the project in this window (or returns to the welcome screen).
     func load(project: Project?) {
         model?.stop()
         self.project = project
@@ -124,7 +124,7 @@ final class StudioWindow: NSObject, NSWindowDelegate {
         WindowManager.shared.forget(self)
     }
 
-    /// Menü komutları yalnız anahtar pencereye uygulanır.
+    /// Menu commands apply to the key window only.
     var isKey: Bool { window.isKeyWindow }
     var activeModel: StudioModel? { model }
 }

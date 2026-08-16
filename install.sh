@@ -1,16 +1,16 @@
 #!/bin/bash
-# Derler ve /Applications altına kurar.
+# Builds and installs into /Applications.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 ./build.sh
 
-echo "→ /Applications'a kuruluyor…"
+echo "→ installing into /Applications…"
 rm -rf "/Applications/Claude Studio.app"
 cp -R "Claude Studio.app" /Applications/
 xattr -cr "/Applications/Claude Studio.app" 2>/dev/null || true
 
-echo "✓ kuruldu — açılıyor"
-# Tam yolla aç: LaunchServices aksi hâlde proje klasöründeki build çıktısını
-# seçebiliyor ve kurulu sürüm yerine o çalışıyor.
+echo "✓ installed — launching"
+# Open by full path: otherwise LaunchServices may pick the build output in the
+# project folder and run that instead of the installed copy.
 open "/Applications/Claude Studio.app"

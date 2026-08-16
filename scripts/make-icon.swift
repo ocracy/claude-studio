@@ -1,8 +1,7 @@
 #!/usr/bin/env swift
 import AppKit
 
-// Uygulama ikonu: krem zemin, koyu "editör" kartı, gül rengi bir prompt işareti.
-// Tasarımdaki paletin birebir aynısı — ikon da arayüzün parçası.
+// App icon: light plate, dark "editor" card, an accent prompt chevron.
 
 let sizes: [(name: String, px: Int)] = [
     ("icon_16x16", 16), ("icon_16x16@2x", 32),
@@ -30,21 +29,21 @@ func draw(_ px: Int) -> NSImage {
 
     let scale = size / 1024
 
-    // Yuvarlatılmış krem zemin (macOS ikon silueti).
+    // Rounded plate (macOS icon silhouette).
     let plate = NSBezierPath(roundedRect: NSRect(x: 100 * scale, y: 100 * scale,
                                                  width: 824 * scale, height: 824 * scale),
                              xRadius: 185 * scale, yRadius: 185 * scale)
     cream.setFill()
     plate.fill()
 
-    // Koyu editör kartı.
+    // Dark editor card.
     let card = NSBezierPath(roundedRect: NSRect(x: 214 * scale, y: 306 * scale,
                                                 width: 596 * scale, height: 412 * scale),
                             xRadius: 64 * scale, yRadius: 64 * scale)
     ink.setFill()
     card.fill()
 
-    // Prompt işareti  ›
+    // Prompt chevron  ›
     let chevron = NSBezierPath()
     chevron.move(to: NSPoint(x: 344 * scale, y: 570 * scale))
     chevron.line(to: NSPoint(x: 436 * scale, y: 496 * scale))
@@ -55,7 +54,7 @@ func draw(_ px: Int) -> NSImage {
     blush.setStroke()
     chevron.stroke()
 
-    // İmleç satırı.
+    // Caret line.
     let caret = NSBezierPath(roundedRect: NSRect(x: 486 * scale, y: 400 * scale,
                                                  width: 200 * scale, height: 44 * scale),
                              xRadius: 22 * scale, yRadius: 22 * scale)
@@ -78,4 +77,4 @@ for (name, px) in sizes {
     try? png.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
 }
 
-print("✓ \(dir) üretildi")
+print("✓ generated \(dir)")

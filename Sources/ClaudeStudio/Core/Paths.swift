@@ -1,15 +1,15 @@
 import Foundation
 
-/// Diskteki sabit yollar.
+/// Fixed on-disk locations.
 ///
-/// İki katman vardır:
-/// - **Uygulama katmanı** (`~/Library/Application Support/Claude Studio/`):
-///   son açılan projeler, hook durum dosyaları, runner script'leri — makineye ait.
-/// - **Proje katmanı** (`<proje>/.cs/`): servisler, terminaller, zamanlamalar,
-///   çalışma raporları — projeye ait, taşınabilir ve versiyonlanabilir.
+/// Two layers:
+/// - **Application layer** (`~/Library/Application Support/Claude Studio/`):
+///   recent projects, hook state files, runner scripts — belongs to the machine.
+/// - **Project layer** (`<project>/.cs/`): services, terminals, schedules and run
+///   reports — belongs to the project, so it travels and can be versioned.
 enum Paths {
 
-    // MARK: - Uygulama katmanı
+    // MARK: - Application layer
 
     static let appSupport: URL = {
         let url = FileManager.default
@@ -23,14 +23,14 @@ enum Paths {
 
     static let tmuxConfig = appSupport.appendingPathComponent("tmux.conf")
 
-    /// Hook script'inin yazdığı `<sekmeKimliği>.json` durum dosyaları.
+    /// `<tabID>.json` state files written by the hook script.
     static let sessionStateDir: URL = {
         let url = appSupport.appendingPathComponent("session-state", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
 
-    /// launchd job'larının çalıştırdığı zsh script'leri.
+    /// zsh scripts executed by launchd jobs.
     static let runnersDir: URL = {
         let url = appSupport.appendingPathComponent("runners", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -49,14 +49,14 @@ enum Paths {
     static let globalSkillsDir = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/skills", isDirectory: true)
 
-    // MARK: - Proje katmanı (.cs)
+    // MARK: - Projectct layer (.cs)
 
-    /// `<proje>/.cs` — Visual Studio'nun `.vs`'i gibi, proje özelinde ayarlar.
+    /// `<project>/.cs` — project-scoped settings, like Visual Studio's `.vs`.
     static func csDir(_ project: Project) -> URL {
         project.url.appendingPathComponent(".cs", isDirectory: true)
     }
 
-    /// `.cs` altındaki dosyalar — her bölüm kendi dosyasında.
+    /// Files under `.cs` — each section in its own file.
     static func services(_ project: Project) -> URL {
         csDir(project).appendingPathComponent("services.json")
     }
@@ -77,12 +77,12 @@ enum Paths {
         csDir(project).appendingPathComponent("settings.json")
     }
 
-    /// Tek dosyalı eski biçim; açılışta bir kez okunup bölünür.
+    /// Legacy single-file format; read once on open and split.
     static func legacyConfig(_ project: Project) -> URL {
         csDir(project).appendingPathComponent("config.json")
     }
 
-    /// Skill çalışma raporları: `.cs/runs/<skill>/<zaman>.md`.
+    /// Skill run reports: `.cs/runs/<skill>/<timestamp>.md`.
     static func runsDir(_ project: Project, skill: String) -> URL {
         csDir(project)
             .appendingPathComponent("runs", isDirectory: true)
@@ -103,7 +103,7 @@ enum Paths {
         return dir
     }
 
-    /// Atomik JSON yazımı (tmp + move) — yarım yazılmış dosya asla kalmaz.
+    /// Atomic JSON write (tmp + move) — a half-written file is never left behind.
     static func writeAtomically(_ data: Data, to dest: URL) {
         let fm = FileManager.default
         do {
@@ -114,7 +114,7 @@ enum Paths {
             _ = try? fm.removeItem(at: dest)
             try fm.moveItem(at: tmp, to: dest)
         } catch {
-            NSLog("[Paths] yazma başarısız %@: %@", dest.path, "\(error)")
+            NSLog("[Paths] write failed %@: %@", dest.path, "\(error)")
         }
     }
 }

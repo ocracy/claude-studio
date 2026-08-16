@@ -1,8 +1,9 @@
 import AppKit
 
-// Giriş noktası. Pencereler SwiftUI'nin `WindowGroup`'una değil, `WindowManager`a
-// aittir: bir editörde pencere sayısı ve kimliği kesin olmalıdır — klasörle
-// açma, yeni pencere ve karşılama ekranı hep aynı deterministik yoldan geçer.
+// Entry point. Windows belong to `WindowManager`, not to SwiftUI's `WindowGroup`:
+// in an editor the number and identity of windows must be exact, so opening a
+// folder, opening a new window and showing the welcome screen all go through the
+// same deterministic path.
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

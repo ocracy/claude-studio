@@ -1,79 +1,97 @@
 # CLAUDE.md
 
-Bu dosya Claude Code için proje rehberidir.
+Guidance for Claude Code working in this repository.
 
-## Proje Özeti
+## What this is
 
-**Claude Studio** — çok projeli geliştirme stüdyosu (macOS, Swift 6 + SwiftUI + SwiftTerm).
-Klasör açılır, pencere o projenin stüdyosu olur: Claude oturumları (tmux ile kalıcı),
-`.claude/skills` skill'leri, zamanlanmış çalışmalar (launchd), servisler ve terminaller.
+**Claude Studio** — a multi-project development workspace for macOS
+(Swift 6 + SwiftUI + SwiftTerm). Open a folder and the window becomes that project's
+studio: Claude Code sessions (persistent through tmux), `.claude/skills`, scheduled
+runs (launchd), dev services and terminals.
 
-Kullanıcıya görünen tüm metin **Türkçe**dir; kod ve yorumlar da Türkçe yazılır.
+The app's language is **English** — user-facing strings, code and comments alike.
 
-## Komutlar
+## Commands
 
 ```bash
-swift build      # hızlı derleme kontrolü
-./build.sh       # release + "Claude Studio.app" paketi
-./install.sh     # build + /Applications'a kur + aç
+swift build      # fast compile check
+./build.sh       # release build + "Claude Studio.app" bundle
+./install.sh     # build + install into /Applications + launch
+./dist.sh        # release artifact: ClaudeStudio.zip (asset name the updater expects)
 ```
 
-## Klasör Yapısı
+Release flow: bump `VERSION` → `./dist.sh` → commit and push →
+`gh release create v<VERSION> ClaudeStudio.zip --title "Claude Studio v<VERSION>" --notes "…"`.
+`VERSION` is the single source of truth; `build.sh` and `dist.sh` both read it, and
+`Updater` compares the installed `CFBundleShortVersionString` against the release tag.
+
+## Layout
 
 ```
 Sources/ClaudeStudio/
-├── main.swift             # giriş noktası (NSApplication; WindowGroup KULLANILMAZ)
-├── ClaudeStudioApp.swift  # AppDelegate + ana menü
-├── Theme.swift            # tek tasarım kaynağı: renk, tipografi, ortak bileşenler
-├── Models/Models.swift    # Project, StudioTab, ClaudeSession, Skill, Schedule, Service, SkillRun
+├── main.swift             # entry point (NSApplication; WindowGroup is NOT used)
+├── ClaudeStudioApp.swift  # AppDelegate + main menu
+├── Theme.swift            # single design source: color, typography, shared controls
+├── Models/Models.swift    # Project, StudioTab, SessionRecord, Skill, Schedule, Service, SkillRun
 ├── Core/
-│   ├── Paths.swift        # ~/Library/.../Claude Studio  +  <proje>/.cs
-│   ├── Shell.swift        # PATH anlık görüntüsü, süreç çalıştırma, port kontrolü
-│   ├── Tmux.swift         # oturum kalıcılığı
-│   ├── TerminalEngine.swift # SwiftTerm görünüm önbelleği, spawn, servis durumları, dikkat izleme
-│   ├── ProjectConfig.swift  # .cs/config.json + launchd eşitlemesi
-│   ├── Skills.swift       # .claude/skills tarayıcı + frontmatter + klasör izleyici
-│   ├── Runs.swift         # çalışma raporları (durum = raporun kendisi)
-│   ├── Scheduler.swift    # runner script + launchd plist
-│   ├── HookBridge.swift   # Claude Code hook'ları → oturum durumu
-│   ├── Settings.swift     # kullanıcı tercihleri (ses, bildirim, terminal)
-│   ├── Recents.swift      # son projeler + klasör seçici
-│   └── StudioModel.swift  # bir pencerenin tüm durumu
+│   ├── Paths.swift            # ~/Library/.../Claude Studio  +  <project>/.cs
+│   ├── Shell.swift            # PATH snapshot, process helpers, port probes
+│   ├── Tmux.swift             # session persistence
+│   ├── TerminalEngine.swift   # SwiftTerm view cache, spawning, service status, attention
+│   ├── ProjectConfig.swift    # .cs/*.json + launchd sync
+│   ├── Skills.swift           # .claude/skills scanner + frontmatter + directory watcher
+│   ├── Runs.swift             # run reports (the reports are the state)
+│   ├── Scheduler.swift        # runner script + launchd plist
+│   ├── HookBridge.swift       # Claude Code hooks → session state
+│   ├── ClaudeTranscripts.swift# resume availability check
+│   ├── Settings.swift         # user preferences (sound, notifications, terminal)
+│   ├── Updater.swift          # GitHub release self-updater
+│   ├── Recents.swift          # recent projects + folder picker
+│   └── StudioModel.swift      # all state for one window
 └── Views/                 # Windows, RootView, WelcomeView, StudioView, Sidebar, Detail,
                            # Sheets, SettingsWindow, Markdown, TerminalHost
 ```
 
-## Kritik Kurallar
+## Hard-won rules
 
-- **Pencereler**: `WindowGroup` KULLANMA. AppKit `WindowManager` pencere sayısını ve kimliğini
-  belirlenimci tutar; SwiftUI'nin örtük pencere açması klasörle açmada kopyalar üretiyordu.
-- **tmux**: her zaman sabit `-S /tmp/claude-studio-<uid>.sock`; `-L` KULLANMA (GUI ile login shell
-  farklı `TMUX_TMPDIR` görür). Config'de `mouse off` şart — açıksa metin seçimi bozulur.
-- **`Project.shortID`**: `hashValue` KULLANMA — Swift onu süreç başına rastgele tohumlar, tmux
-  oturumları ve launchd job'ları her açılışta öksüz kalırdı. FNV-1a kullanılıyor.
-- **Spawn**: her zaman `/bin/zsh -l -i -c`; `-i` zorunlu (PATH `.zshrc`'de). Komutun başına
-  `stty cols C rows R`. Ortama `Shell.userPath` enjekte edilir.
-- **launchd**: runner script'e PATH GÖMÜLÜ yazılır; `#!/bin/zsh -l`'in `.zshrc` okumasına güvenme.
-  Script'te `setopt NULL_GLOB` şart — ilk çalışmada `*.md` eşleşmezse zsh hata verir.
-- **Çok satırlı girdi**: tmux içinde `/terminal-setup` çalışmaz. Shift+Enter → `\`+CR,
-  Option+Enter → ESC+CR eşlemesi `TerminalEngine.installKeyMonitor` içinde yapılır.
-- **Kaydırma**: tmux destekli terminallerde tekerlek olayı copy-mode'a çevrilir ve YUTULUR
-  (`return nil`). Yutulmazsa SwiftTerm'in boş kaydırması ekranı titretir.
-- **Oturum kimliği**: `SessionRecord` `.cs/config.json`'da yaşar; tmux ölse de kayıt kalır.
-  Claude'un `session_id`'si hook'tan yakalanıp kaydedilir — "geri aç" `claude --resume` ile
-  aynı konuşmayı sürdürür.
-- **SwiftTerm**: terminal görünümleri `TerminalEngine`'e aittir; görünüm katmanı yalnız barındırır.
-  Konteyneri yeniden mount ETME (kaydırma sıfırlanır). `softReset()` kullan, `reset()` değil
-  (geçmişi siler). Yeniden boyutlandırmada 80 ms sönümleme.
-- **Bildirim**: `osascript display notification` kullan; ad-hoc imzalı uygulamada
-  `UNUserNotificationCenter` çalışmaz. `NSSound` referansı tutulmalı, yoksa ses çıkmaz.
-- **Yazma**: JSON'lar atomik yazılır (`Paths.writeAtomically`). Çözümlenemeyen
-  `~/.claude/settings.json`'a DOKUNMA.
-- **Eşzamanlılık**: `Task.detached` içinde biriktirilen `var`, `MainActor.run`'a `let` kopya
-  olarak geçirilir (Swift 6 dil kipinde hata).
+- **Windows**: do NOT use `WindowGroup`. The AppKit `WindowManager` keeps the number
+  and identity of windows deterministic; SwiftUI's implicit window creation produced
+  duplicates when opening a folder.
+- **tmux**: always the fixed socket `-S /tmp/claude-studio-<uid>.sock`; never `-L`
+  (the GUI and a login shell see different `TMUX_TMPDIR`). `mouse off` is required in
+  the config or text selection breaks.
+- **`Project.shortID`**: never `hashValue` — Swift seeds it per process, which would
+  orphan every tmux session and launchd job on the next launch. FNV-1a is used.
+- **Spawning**: always `/bin/zsh -l -i -c`; `-i` is mandatory (PATH lives in
+  `.zshrc`). Prefix commands with `stty cols C rows R` and inject `Shell.userPath`.
+- **launchd**: the PATH is EMBEDDED in the runner script; `#!/bin/zsh -l` cannot be
+  trusted to read `.zshrc`. `setopt NULL_GLOB` is required — on the first run
+  `*.md` matches nothing and zsh errors out.
+- **Multi-line input**: `/terminal-setup` cannot run inside tmux. Shift+Enter → `\`+CR
+  and Option+Enter → ESC+CR are mapped in `TerminalEngine.installKeyMonitor`.
+- **Scrolling**: in tmux-backed terminals the wheel event is translated into
+  copy-mode and SWALLOWED (`return nil`). Letting SwiftTerm scroll its empty buffer
+  makes the screen jitter.
+- **Sessions**: `SessionRecord` lives in `.cs/sessions.json` and outlives tmux.
+  Claude's `session_id` is captured from the hook, and reopening only passes
+  `--resume` when `ClaudeTranscripts.exists` confirms the transcript — otherwise
+  Claude prints "No session found" and exits.
+- **Closing order**: release the tab and terminal view first, then kill the tmux
+  session. The reverse order prints "no server running / exited" on screen.
+- **SwiftTerm**: terminal views belong to `TerminalEngine`; the view layer only hosts
+  them. Never remount the container (it resets scrolling). Use `softReset()`, not
+  `reset()` (which erases scrollback). Debounce resizes by 80 ms.
+- **Notifications**: use `osascript display notification`;
+  `UNUserNotificationCenter` does not work in an ad-hoc signed app. Keep a strong
+  reference to `NSSound` or nothing plays.
+- **Writes**: all JSON is written atomically (`Paths.writeAtomically`). Never touch a
+  `~/.claude/settings.json` that fails to parse.
+- **Concurrency**: values accumulated inside `Task.detached` are handed to
+  `MainActor.run` as immutable copies (an error in the Swift 6 language mode).
 
-## Tasarım
+## Design
 
-Sade ve yerel. Renkler macOS'un anlamsal renkleridir (açık/koyu görünüme kendiliğinden uyar);
-yalnız vurgu (Claude turuncusu) ve durum renkleri sabittir. Süsleme yok: sistem yazı tipi,
-terminalde SF Mono. Yeni renk/ölçü eklemek gerekirse yalnız `Theme.swift` düzenlenir.
+Restrained and native. Colors are macOS semantic colors, so light and dark appearance
+come for free; only the accent (Claude orange) and status colors are fixed. No
+decoration: system font in the UI, SF Mono in the terminal. New colors or metrics go
+in `Theme.swift` and nowhere else.

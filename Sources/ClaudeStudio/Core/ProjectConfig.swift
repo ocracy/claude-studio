@@ -1,22 +1,21 @@
 import Foundation
 import SwiftUI
 
-/// Projeye ait ayarların bellekteki hâli. Diskte tek dosya değil, `.cs/`
-/// altında **her biri kendi dosyasında** durur:
+/// The in-memory shape of a project's settings. On disk it is not one file:
+/// each section lives in **its own file** under `.cs/`:
 ///
 /// ```
 /// .cs/
-/// ├── services.json    servisler
-/// ├── terminals.json   terminaller
-/// ├── schedules.json   zamanlanmış çalışmalar
-/// ├── sessions.json    Claude oturum kayıtları
-/// └── settings.json    arayüz tercihleri
+/// ├── services.json    services
+/// ├── terminals.json   terminals
+/// ├── schedules.json   scheduled runs
+/// ├── sessions.json    Claude session records
+/// └── settings.json    interface preferences
 /// ```
 ///
-/// Ayrı dosya olmasının sebebi pratik: servis listesini elle düzenlemek ya da
-/// ekiple paylaşmak isteyince tek başına duran, okunur bir dosya gerekir;
-/// arayüz tercihleri onunla aynı dosyada olsaydı her pencere boyutu değişimi
-/// paylaşılan dosyayı kirletirdi.
+/// The split is practical: editing or sharing the service list needs a small,
+/// readable file of its own. If interface preferences lived in the same file,
+/// every sidebar resize would dirty a file the team shares.
 struct ProjectConfig: Codable, Equatable {
     var sessions: [SessionRecord] = []
     var services: [Service] = []
@@ -37,11 +36,11 @@ struct ProjectConfig: Codable, Equatable {
 
     init() {}
 
-    /// Çözümleme kasten toleranslıdır: eksik anahtar varsayılana düşer.
-    /// Swift'in ürettiği çözümleyici eksik anahtarda HATA verir — bu yüzden
-    /// elle yazıldı; hem eski tek dosyalı biçim (`sidebarWidth`, `lastView`
-    /// düz alanlar) hem yeni biçim aynı koddan okunur ve elle düzenlenmiş,
-    /// yarım bir dosya bütün yapılandırmayı düşürmez.
+    /// Decoding is deliberately tolerant: a missing key falls back to its default.
+    /// Swift's synthesized decoder THROWS on a missing key, so this is written by
+    /// hand — both the legacy single-file shape (flat `sidebarWidth`, `lastView`)
+    /// and the new shape are read by the same code, and a half-edited file does
+    /// not take the whole configuration down with it.
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
@@ -75,14 +74,14 @@ struct ProjectConfig: Codable, Equatable {
     }
 }
 
-/// `.cs/settings.json` — yalnız bu projeye ait arayüz tercihleri.
+/// `.cs/settings.json` — interface preferences for this project only.
 struct ProjectSettings: Codable, Equatable {
     var sidebarWidth: Double = 260
     var lastView: String = "sessions"
 }
 
-/// Yapılandırmayı yükler, değişen bölümü diske yazar ve launchd job'larını
-/// zamanlamalarla eşitler.
+/// Loads the configuration, writes back only the section that changed and keeps
+/// launchd jobs in sync with the schedules.
 @MainActor
 final class ProjectStore: ObservableObject {
     let project: Project
@@ -93,7 +92,7 @@ final class ProjectStore: ObservableObject {
         self.config = Self.load(project)
     }
 
-    // MARK: - Sorgular
+    // MARK: - Queries
 
     func session(tmux: String) -> SessionRecord? { config.sessions.first { $0.tmux == tmux } }
     func service(_ id: UUID) -> Service? { config.services.first { $0.id == id } }
@@ -102,16 +101,16 @@ final class ProjectStore: ObservableObject {
 
     var activeSchedules: [Schedule] { config.schedules.filter(\.enabled) }
 
-    /// Bir sonraki zamanlanmış çalışma (durum çubuğu).
+    /// The next scheduled run (status bar).
     var nextRun: (skill: String, date: Date)? {
         config.schedules
             .compactMap { s in s.nextFire.map { (s.skill, $0) } }
             .min { $0.1 < $1.1 }
     }
 
-    // MARK: - Mutasyon
+    // MARK: - Mutation
 
-    /// Tek yazma yolu. Yalnız gerçekten değişen bölümün dosyası yazılır.
+    /// The single write path. Only the section that actually changed is written.
     func mutate(_ change: (inout ProjectConfig) -> Void) {
         let before = config
         var copy = config
@@ -121,7 +120,7 @@ final class ProjectStore: ObservableObject {
         save(changed: before)
     }
 
-    // Oturumlar
+    // Sessions
 
     func addSession(_ record: SessionRecord) { mutate { $0.sessions.append(record) } }
 
@@ -149,7 +148,7 @@ final class ProjectStore: ObservableObject {
 
     func removeSession(tmux: String) { mutate { $0.sessions.removeAll { $0.tmux == tmux } } }
 
-    // Servisler
+    // Services
 
     func addService(_ service: Service) { mutate { $0.services.append(service) } }
 
@@ -162,7 +161,7 @@ final class ProjectStore: ObservableObject {
 
     func removeService(_ id: UUID) { mutate { $0.services.removeAll { $0.id == id } } }
 
-    // Terminaller
+    // Terminals
 
     func addTerminal(_ terminal: TerminalTab) { mutate { $0.terminals.append(terminal) } }
 
@@ -175,7 +174,7 @@ final class ProjectStore: ObservableObject {
 
     func removeTerminal(_ id: UUID) { mutate { $0.terminals.removeAll { $0.id == id } } }
 
-    // Zamanlamalar — JSON ve launchd birlikte güncellenir.
+    // Schedules — JSON and launchd are updated together.
 
     func setSchedule(_ schedule: Schedule) {
         mutate {
@@ -199,7 +198,7 @@ final class ProjectStore: ObservableObject {
         }
     }
 
-    /// Diskten silinmiş becerilerin yetim launchd job'larını temizler.
+    /// Removes orphaned launchd jobs for skills that no longer exist on disk.
     func pruneOrphanSchedules(existing: Set<String>) {
         let orphans = config.schedules.map(\.skill).filter { !existing.contains($0) }
         guard !orphans.isEmpty else { return }
@@ -220,8 +219,8 @@ final class ProjectStore: ObservableObject {
         config.sessions  = read([SessionRecord].self, from: Paths.sessions(project))  ?? []
         config.settings  = read(ProjectSettings.self, from: Paths.settings(project))  ?? ProjectSettings()
 
-        // Tek dosyalı eski biçimden geçiş: bir kez okunur, bölünmüş dosyalara
-        // yazılır, eski dosya kaldırılır.
+        // Migration from the legacy single-file format: read once, written to the
+        // split files, then removed.
         let legacy = Paths.legacyConfig(project)
         if FileManager.default.fileExists(atPath: legacy.path),
            let old = read(ProjectConfig.self, from: legacy) {
@@ -257,8 +256,8 @@ final class ProjectStore: ObservableObject {
         write(config.settings,  to: Paths.settings(project))
     }
 
-    /// Yalnız değişen bölümü yazar — tek bir pencere boyutu değişimi servis
-    /// dosyasının tarihini değiştirmesin.
+    /// Writes only the section that changed, so resizing the sidebar does not
+    /// touch the services file.
     private func save(changed previous: ProjectConfig) {
         Paths.ensure(Paths.csDir(project))
         if config.services  != previous.services  { Self.write(config.services,  to: Paths.services(project)) }
@@ -269,13 +268,13 @@ final class ProjectStore: ObservableObject {
         ensureGitIgnore()
     }
 
-    /// `.cs/.gitignore` — çalışma çıktıları ve makineye özel durum dosyaları
-    /// versiyonlanmasın; servisler ve zamanlamalar versiyonlansın.
+    /// `.cs/.gitignore` — keep run output and machine-specific state out of
+    /// version control while services and schedules stay in.
     private func ensureGitIgnore() {
         let url = Paths.csDir(project).appendingPathComponent(".gitignore")
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
         let body = """
-        # Claude Studio — makineye özel olanlar versiyonlanmaz.
+        # Claude Studio — machine-specific files are not versioned.
         runs/
         sessions.json
         settings.json

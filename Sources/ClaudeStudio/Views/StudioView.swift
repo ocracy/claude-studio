@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Ana ekran: üst bar · etkinlik rayı · kenar çubuğu · sekmeler · içerik · durum çubuğu.
+/// Main screen: top bar · activity rail · sidebar · tabs · content · status bar.
 struct StudioView: View {
     @ObservedObject var model: StudioModel
     let onClose: () -> Void
@@ -35,7 +35,7 @@ struct StudioView: View {
         .onDisappear { model.stop() }
     }
 
-    /// Kenar çubuğu genişliği sürüklenerek ayarlanır; değer `.cs/config.json`'a yazılır.
+    /// The sidebar width is dragged to size and persisted in `.cs/settings.json`.
     private var sidebarHandle: some View {
         Rectangle()
             .fill(draggingSidebar ? Theme.accent : Theme.separator)
@@ -58,7 +58,7 @@ struct StudioView: View {
     }
 }
 
-// MARK: - Üst bar
+// MARK: - Top bar
 
 private struct TopBar: View {
     @ObservedObject var model: StudioModel
@@ -68,7 +68,7 @@ private struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Trafik ışıklarının şeridi — başlık hemen bitiminde başlar.
+            // Strip reserved for the traffic lights — the title starts right after.
             Color.clear.frame(width: 72, height: 1)
 
             Text("Claude Studio")
@@ -109,26 +109,26 @@ private struct TopBar: View {
             if model.attentionCount > 0 {
                 HStack(spacing: 6) {
                     StatusDot(color: Theme.waiting)
-                    Text("\(model.attentionCount) oturum bekliyor")
+                    Text("\(model.attentionCount) waiting")
                 }
                 .font(Theme.ui(11.5))
                 .foregroundStyle(Theme.text2)
             }
 
             if !model.store.config.services.isEmpty {
-                SmallButton(title: model.runningServiceCount > 0 ? "Tümünü durdur" : "Servisleri başlat",
+                SmallButton(title: model.runningServiceCount > 0 ? "Stop all" : "Start services",
                             icon: model.runningServiceCount > 0 ? "stop.fill" : "play.fill") {
                     model.runningServiceCount > 0 ? model.stopAllServices() : model.startAllServices()
                 }
             }
 
             if let version = updater.availableVersion {
-                SmallButton(title: "Güncelle · \(version)", icon: "arrow.down.circle") {
+                SmallButton(title: "Update · \(version)", icon: "arrow.down.circle") {
                     SettingsWindow.show()
                 }
             }
 
-            IconButton(icon: "gearshape", help: "Ayarlar (⌘,)") {
+            IconButton(icon: "gearshape", help: "Settings (⌘,)") {
                 SettingsWindow.show()
             }
         }
@@ -146,18 +146,18 @@ private struct ProjectMenu: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            item("Finder'da göster", icon: "folder") {
+            item("Reveal in Finder", icon: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([model.project.url])
             }
-            item("Terminalde aç", icon: "terminal") {
+            item("Open in Terminal", icon: "terminal") {
                 Shell.runDetached("open -a Terminal \(Shell.quoted(model.project.path))")
             }
-            item("Proje ayarları (.cs)", icon: "gearshape") {
+            item("Project settings (.cs)", icon: "gearshape") {
                 Paths.ensure(Paths.csDir(model.project))
                 NSWorkspace.shared.open(Paths.csDir(model.project))
             }
             Divider().padding(.vertical, 5)
-            item("Projeyi kapat", icon: "xmark", tone: Theme.danger) { onClose() }
+            item("Close project", icon: "xmark", tone: Theme.danger) { onClose() }
         }
         .padding(6)
         .frame(width: 230)
@@ -179,7 +179,7 @@ private struct ProjectMenu: View {
     }
 }
 
-// MARK: - Etkinlik rayı
+// MARK: - Activity rail
 
 private struct ActivityRail: View {
     @ObservedObject var model: StudioModel
@@ -222,7 +222,7 @@ private struct ActivityRail: View {
     }
 }
 
-// MARK: - Sekme çubuğu
+// MARK: - Tab bar
 
 private struct TabBar: View {
     @ObservedObject var model: StudioModel
@@ -286,7 +286,7 @@ private struct TabBar: View {
     }
 }
 
-// MARK: - Durum çubuğu
+// MARK: - Status bar
 
 private struct StatusBar: View {
     @ObservedObject var model: StudioModel
@@ -295,13 +295,13 @@ private struct StatusBar: View {
         HStack(spacing: 16) {
             Text(model.project.name).foregroundStyle(Theme.text2)
             Spacer()
-            Text("\(model.openSessions.count) oturum")
-            Text("\(model.runningServiceCount)/\(model.store.config.services.count) servis")
+            Text("\(model.openSessions.count) sessions")
+            Text("\(model.runningServiceCount)/\(model.store.config.services.count) services")
             if let next = model.store.nextRun {
-                Text("sonraki: \(next.skill) · \(next.date.shortStamp)")
+                Text("next: \(next.skill) · \(next.date.shortStamp)")
             }
             if !Tmux.isAvailable {
-                Text("tmux yok — oturumlar kalıcı değil").foregroundStyle(Theme.danger)
+                Text("tmux missing — sessions are not persistent").foregroundStyle(Theme.danger)
             }
         }
         .font(Theme.mono(10.5))

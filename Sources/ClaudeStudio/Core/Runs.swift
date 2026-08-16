@@ -1,15 +1,15 @@
 import Foundation
 import SwiftUI
 
-/// Skill çalışmalarının disk katmanı: `<proje>/.cs/runs/<skill>/`.
+/// The on-disk layer for skill runs: `<project>/.cs/runs/<skill>/`.
 ///
-/// Ayrı bir veritabanı yoktur — **raporların kendisi durumdur**. "Son çalışma"
-/// en yeni raporun `run_at` alanıdır. Böylece uygulama kapalıyken launchd bir
-/// rapor üretse bile, açılışta hiçbir senkronizasyon gerekmeden doğru tablo
-/// görünür.
+/// There is no separate database — **the reports themselves are the state**.
+/// "Last run" is the newest report's `run_at`. So even when launchd produces a
+/// report while the app is closed, opening it shows the right table with no
+/// synchronisation at all.
 enum Runs {
 
-    /// Bir skill'in tüm çalışmaları, yeniden eskiye.
+    /// Every run of a skill, newest first.
     static func list(project: Project, skill: String) -> [SkillRun] {
         let dir = Paths.runsDir(project, skill: skill)
         guard let urls = try? FileManager.default.contentsOfDirectory(
@@ -60,7 +60,7 @@ enum Runs {
         return try? decoder.decode(RunState.self, from: data)
     }
 
-    /// `2026-08-16-2312.md` — sıralanabilir, çakışmasız.
+    /// `2026-08-16-2312.md` — sortable and collision-free.
     static func fileName(at date: Date = Date()) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -68,8 +68,8 @@ enum Runs {
         return f.string(from: date) + ".md"
     }
 
-    /// Skill'e geçilecek ortam değişkenleri. Önceki rapor da verilir — skill
-    /// isterse kıyaslama yapabilir.
+    /// Environment handed to the skill. The previous report is included so the
+    /// skill can compare if it wants to.
     static func environment(project: Project, skill: String, mode: String,
                             at date: Date = Date()) -> [String: String] {
         let dir = Paths.runsDir(project, skill: skill)
@@ -92,12 +92,12 @@ enum Runs {
     }
 }
 
-/// Açık projedeki skill çalışmalarının bellekteki görünümü.
+/// In-memory view of the open project's skill runs.
 @MainActor
 final class RunStore: ObservableObject {
-    /// skill adı → çalışmalar (yeniden eskiye).
+    /// skill name → runs (newest first).
     @Published private(set) var runs: [String: [SkillRun]] = [:]
-    /// Şu anda çalıştığı bilinen skill'ler.
+    /// Skills currently known to be running.
     @Published private(set) var running: Set<String> = []
 
     private let project: Project
@@ -111,7 +111,7 @@ final class RunStore: ObservableObject {
     func latest(for skill: String) -> SkillRun? { runs[skill]?.first }
     func isRunning(_ skill: String) -> Bool { running.contains(skill) }
 
-    /// Verilen skill'lerin çalışmalarını arka planda okur.
+    /// Reads the given skills' runs in the background.
     func refresh(skills: [String]) {
         let project = self.project
         Task.detached(priority: .utility) {
@@ -145,8 +145,8 @@ final class RunStore: ObservableObject {
         }
     }
 
-    /// Zamanlanmış çalışmaları yakalamak için düşük frekanslı yoklama —
-    /// launchd uygulamadan bağımsız tetiklediğinde de liste tazelenir.
+    /// Low-frequency polling so scheduled runs are noticed: launchd fires
+    /// independently of the app, and the list still refreshes.
     func startPolling(skills: @escaping () -> [String]) {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in
@@ -159,7 +159,7 @@ final class RunStore: ObservableObject {
         pollTimer = nil
     }
 
-    /// Skill'i arka planda (sessiz) çalıştırır; bitince ses + bildirim.
+    /// Runs the skill silently in the background; announces when it finishes.
     func runInBackground(skill: String) {
         guard !running.contains(skill) else { return }
         running.insert(skill)
@@ -173,7 +173,7 @@ final class RunStore: ObservableObject {
                 self.refresh(skill: skill)
                 if status != 0 {
                     Notify.post(title: project.name, subtitle: skill,
-                                body: "Çalışma başarısız (çıkış \(status)).", sound: Notify.alertSound)
+                                body: "Run failed (exit \(status)).", sound: Notify.alertSound)
                 }
             }
         }

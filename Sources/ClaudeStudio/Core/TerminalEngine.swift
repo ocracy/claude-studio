@@ -4,35 +4,36 @@ import Darwin
 import AppKit
 import SwiftTerm
 
-/// tmux destekli terminaller işaretlenir: kaydırma tekerleği tmux copy-mode'a
-/// yönlendirilir, çünkü geçmiş tmux'ta durur — SwiftTerm yalnız tmux'un çizdiği
-/// tek ekranı görür.
+/// tmux-backed terminals are tagged: the scroll wheel is routed into tmux
+/// copy-mode, because the scrollback lives in tmux — SwiftTerm only ever sees the
+/// single screen tmux draws.
 final class StudioTerminalView: LocalProcessTerminalView {
     var tmuxSession: String?
 }
 
-/// Uygulamanın çalışma zamanı çekirdeği: terminal görünümü önbelleği, süreç
-/// yaşam döngüsü, tmux oturumları ve Claude dikkat göstergeleri.
+/// The app's runtime core: terminal view cache, process lifecycle, tmux sessions
+/// and Claude attention indicators.
 ///
-/// Terminal görünümleri **burada yaşar**, görünüm katmanında değil. Sekme
-/// değiştirmek yalnız hangi NSView'ın ekleneceğini seçmektir; süreç, kaydırma
-/// konumu ve tampon dokunulmadan kalır — geçişin anında olmasının sebebi budur.
+/// Terminal views **live here**, not in the view layer. Switching tabs only picks
+/// which NSView gets attached; the process, scroll position and buffer are left
+/// untouched — which is why switching is instant.
 @MainActor
 final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalViewDelegate {
 
-    /// Servis kimliği → durum.
+    /// Service id → status.
     @Published var serviceStatus: [UUID: ServiceStatus] = [:]
-    /// Oturum adı → Claude'un anlık durumu (hook köprüsünden).
+    /// Session key → Claude's live state (from the hook bridge).
     @Published var attention: [String: Attention] = [:]
-    /// tmux oturum adı → Claude'un yazdığı canlı başlık.
+    /// tmux session name → the live title Claude sets.
     @Published var paneTitles: [String: String] = [:]
-    /// Sekme anahtarı → Claude'un kendi oturum kimliği (`--resume` için).
+    /// Tab key → Claude's own session id (for `--resume`).
     @Published var claudeSIDs: [String: String] = [:]
 
     private var views: [String: StudioTerminalView] = [:]
-    /// Spawn çağrıldı ama süreç henüz `running` değil — çift spawn koruması.
+    /// Spawn was requested but the process is not `running` yet — guards against
+    /// double spawns.
     private var starting: Set<String> = []
-    /// Görünmez çalışan komutlar (bitince ses çıkarır).
+    /// Commands running invisibly (they announce themselves when done).
     private var backgroundKeys: [String: String] = [:]
     private var scrollMonitor: Any?
     private var keyMonitor: Any?
@@ -40,7 +41,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     private var pollTimer: Timer?
 
     private lazy var baseEnvironment: [String] = Self.buildEnvironment()
-    /// Bildirim metinleri için bağlam; `StudioModel` doldurur.
+    /// Context for notification text; filled in by `StudioModel`.
     var projectName = ""
     var sessionTitles: [String: String] = [:]
 
@@ -53,12 +54,12 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         startPolling()
     }
 
-    // MARK: - Görünüm önbelleği
+    // MARK: - View cache
 
     func view(for key: String) -> StudioTerminalView {
         if let existing = views[key] { return existing }
-        // Cömert başlangıç çerçevesi: SwiftTerm ilk spawn'da PTY boyutunu
-        // buradan hesaplar, layout öncesi 0×0'a düşmesin.
+        // Generous initial frame: SwiftTerm derives the PTY size from it on the
+        // first spawn, so it must not be 0×0 before layout.
         let v = StudioTerminalView(frame: NSRect(x: 0, y: 0, width: 1200, height: 720))
         v.processDelegate = self
         v.font = NSFont.monospacedSystemFont(
@@ -74,7 +75,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
     func hasView(_ key: String) -> Bool { views[key] != nil }
 
-    /// Görünümü ve sürecini tamamen bırakır (sekme kapatıldığında).
+    /// Releases the view and its process entirely (when a tab is closed).
     func discard(_ key: String) {
         guard let v = views.removeValue(forKey: key) else { return }
         if v.process?.running == true { kill(v.process.shellPid, SIGTERM) }
@@ -82,10 +83,10 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         HookBridge.clearState(key)
     }
 
-    // MARK: - Claude oturumu (tmux ile kalıcı)
+    // MARK: - Claude session (persistent via tmux)
 
-    /// Oturuma bağlanır; yoksa yaratır. `-A -D` sayesinde tek çağrı hem
-    /// "kaldığın yerden devam et" hem "yeni başlat" anlamına gelir.
+    /// Attaches to the session, creating it if needed. Thanks to `-A -D` a single
+    /// call means both "pick up where you left off" and "start fresh".
     func startSession(key: String, session: String, project: Project,
                       title: String, resumeSID: String? = nil,
                       initialPrompt: String? = nil, autoRun: Bool = false,
@@ -98,8 +99,8 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         let cols = max(80, v.getTerminal().cols)
         let rows = max(24, v.getTerminal().rows)
 
-        // Hook ortamı hem PTY'ye hem tmux oturumuna geçer — oturum yeniden
-        // yaratılsa bile bağlam korunur.
+        // The hook environment is passed to the PTY and to the tmux session, so
+        // the context survives even if the session is recreated.
         var hookEnv = ["CS_TAB_ID": key, "CS_TAB_NAME": title, "CS_PROJECT": project.name]
         for (k, v) in extraEnv { hookEnv[k] = v }
 
@@ -125,7 +126,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             wrapped = Tmux.attachCommand(session: session, cols: cols, rows: rows,
                                          env: hookEnv, inner: inner)
         } else {
-            // tmux yoksa kalıcı olmayan düz spawn — uygulama yine çalışır.
+            // Without tmux, a plain non-persistent spawn — the app still works.
             wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; \(inner)"
         }
 
@@ -141,15 +142,15 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             }
         }
 
-        // Otomatik çalıştırma kapalıysa komut kutuya yazılır, gönderilmez —
-        // kullanıcı görüp kendi onaylar.
+        // With auto-run off the prompt is typed into the box but not sent — the
+        // user reviews and submits it.
         if resumeSID == nil, !autoRun, let prompt = trimmed, !prompt.isEmpty {
             after(1.6) { [weak self] in self?.send(key: key, text: prompt) }
         }
     }
 
-    /// Elle açılan kabuk. tmux varsa o da kalıcıdır — uygulama kapanıp açılınca
-    /// aynı dizinde, aynı geçmişle geri gelir.
+    /// A manually opened shell. With tmux it is persistent too — reopening the
+    /// app brings it back in the same directory with the same history.
     func startShell(key: String, session: String, project: Project, cwd: String, title: String) {
         guard !starting.contains(key) else { return }
         let v = view(for: key)
@@ -184,7 +185,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    // MARK: - Servisler (doğrudan PTY)
+    // MARK: - Services (direct PTY)
 
     func startService(_ service: Service, project: Project) {
         let key = service.id.uuidString
@@ -193,12 +194,12 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
         serviceStatus[service.id] = .starting
         let cwd = service.resolvedCwd(projectPath: project.path)
-        feed(key: key, "\r\n\u{1B}[2m— başlatılıyor: \(service.command)  (\(cwd)) —\u{1B}[0m\r\n")
+        feed(key: key, "\r\n\u{1B}[2m— starting: \(service.command)  (\(cwd)) —\u{1B}[0m\r\n")
 
         let cols = max(80, v.getTerminal().cols)
         let rows = max(24, v.getTerminal().rows)
-        // stty: ilk spawn'da PTY boyutunu içeriden damgalar; SwiftTerm'in
-        // layout sonrası TIOCSWINSZ'i yine kazanır.
+        // stty stamps the PTY size from the inside on first spawn; SwiftTerm's
+        // post-layout TIOCSWINSZ still wins afterwards.
         let wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; "
             + "cd \(Shell.quoted(cwd)) && \(service.command)"
 
@@ -218,7 +219,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    /// Kibar durdurma: PTY'ye Ctrl-C → 3 sn → SIGTERM → 3 sn → SIGKILL.
+    /// Graceful stop: Ctrl-C to the PTY → 3 s → SIGTERM → 3 s → SIGKILL.
     func stopService(_ service: Service) {
         let key = service.id.uuidString
         if let v = views[key], v.process?.running == true {
@@ -235,7 +236,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             }
             return
         }
-        // Dışarıdan başlatılmış servis: portu boşalt.
+        // Externally started service: free the port.
         if serviceStatus[service.id] == .external, let port = service.port {
             serviceStatus[service.id] = .stopping
             Shell.killPort(port)
@@ -248,7 +249,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         after(1.0) { [weak self] in self?.startService(service, project: project) }
     }
 
-    /// Uygulama başlatmadığı hâlde portu dinleyen servisleri işaretler.
+    /// Flags services listening on their port that the app did not start.
     func refreshExternalStatuses(_ services: [Service]) {
         let probes = services.compactMap { s -> (UUID, Int)? in
             guard let port = s.port else { return nil }
@@ -287,9 +288,9 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    // MARK: - Tek seferlik komut
+    // MARK: - One-shot command
 
-    /// Komutu görünmez bir PTY'de çalıştırır; bitince ses + bildirim verir.
+    /// Runs a command in an invisible PTY and announces the result.
     func runInBackground(name: String, command: String, cwd: String) {
         let key = "bg:\(UUID().uuidString)"
         backgroundKeys[key] = name
@@ -303,7 +304,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                        environment: env, execName: nil)
     }
 
-    // MARK: - Girdi
+    // MARK: - Input
 
     func send(key: String, text: String, enter: Bool = false) {
         guard let v = views[key], v.process?.running == true else { return }
@@ -316,7 +317,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         view(for: key).getTerminal().feed(text: ansi)
     }
 
-    /// Ekranı temizler ama geçmişi silmez (`reset()` geçmişi siler — kullanma).
+    /// Clears the screen but keeps the scrollback (`reset()` would erase it).
     func clear(key: String) {
         guard let v = views[key] else { return }
         v.getTerminal().softReset()
@@ -324,11 +325,11 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         v.needsDisplay = true
     }
 
-    // MARK: - İzleme
+    // MARK: - Monitoring
 
-    /// Hook durum dosyalarını ve tmux başlıklarını düşük frekansla yoklar.
-    /// Dosya izleyicisi yerine yoklama: launchd/tmux tarafı uygulamadan bağımsız
-    /// yazar, 1,5 sn'lik tur hem ucuz hem yeterince canlı.
+    /// Polls hook state files and tmux titles at a low frequency. Polling rather
+    /// than watching: launchd and tmux write independently of the app, and a 1.5 s
+    /// loop is both cheap and live enough.
     private func startPolling() {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
@@ -349,7 +350,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             if let sid = state.sid, !sid.isEmpty { sids[key] = sid }
         }
 
-        // Bekleyen duruma GEÇİŞTE tek bildirim — her turda değil.
+        // Announce on the TRANSITION into waiting — not on every poll.
         for (key, value) in next where value == .waiting && attention[key] != .waiting {
             if attention[key] != nil {
                 AppSettings.shared.announceWaiting(session: sessionTitles[key] ?? "Claude",
@@ -370,9 +371,9 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    /// Fare tekerleği: tmux destekli terminallerde geçmiş tmux'ta durduğu için
-    /// olay copy-mode'a çevrilir ve YUTULUR — SwiftTerm'in kendi (boş) kaydırması
-    /// çalışırsa ekran yerinde titrer.
+    /// Scroll wheel: in tmux-backed terminals the scrollback lives in tmux, so the
+    /// event is translated into copy-mode and SWALLOWED — letting SwiftTerm run its
+    /// own (empty) scroll makes the screen jitter in place.
     private func installScrollMonitor() {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             let consumed = MainActor.assumeIsolated { () -> Bool in
@@ -397,9 +398,9 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    /// Claude Code'da çok satırlı girdi: Shift+Enter → `\` + CR, Option+Enter →
-    /// ESC + CR. tmux içinde `/terminal-setup` çalışamadığından bu eşleme
-    /// uygulamanın kendisinde yapılır.
+    /// Multi-line input in Claude Code: Shift+Enter → `\` + CR, Option+Enter →
+    /// ESC + CR. `/terminal-setup` cannot run inside tmux, so the mapping is done
+    /// by the app itself.
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let consumed = MainActor.assumeIsolated { () -> Bool in
@@ -422,7 +423,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    /// Verilen görünümden yukarı doğru ilk terminal görünümü.
+    /// The first terminal view walking up from the given view.
     private static func enclosingTerminal(_ view: NSView) -> StudioTerminalView? {
         var node: NSView? = view
         while let current = node {
@@ -435,7 +436,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     // MARK: - Delegate
 
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        // LocalProcessTerminalView TIOCSWINSZ'i kendisi uygular.
+        // LocalProcessTerminalView applies TIOCSWINSZ itself.
     }
 
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
@@ -451,7 +452,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                 let ok = (exitCode ?? 0) == 0
                 AppSettings.shared.announceFinished(
                     title: name,
-                    detail: ok ? "Tamamlandı." : "Başarısız (çıkış \(exitCode ?? -1)).",
+                    detail: ok ? "Finished." : "Failed (exit \(exitCode ?? -1)).",
                     ok: ok)
                 self.views.removeValue(forKey: key)
                 return
@@ -464,29 +465,29 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                     self.serviceStatus[id] = .stopped
                 } else {
                     self.serviceStatus[id] = .crashed
-                    self.feed(key: key, "\r\n\u{1B}[31m— süreç \(code) koduyla sonlandı —\u{1B}[0m\r\n")
-                    AppSettings.shared.announceFinished(title: "Servis durdu",
-                                                        detail: "Çıkış kodu \(code).", ok: false)
+                    self.feed(key: key, "\r\n\u{1B}[31m— process exited with code \(code) —\u{1B}[0m\r\n")
+                    AppSettings.shared.announceFinished(title: "Service stopped",
+                                                        detail: "Exit code \(code).", ok: false)
                 }
             }
         }
     }
 
-    // MARK: - Yardımcılar
+    // MARK: - Helpers
 
     private func after(_ seconds: TimeInterval, _ block: @escaping @MainActor () -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MainActor.assumeIsolated(block) }
     }
 
-    /// Spawn edilecek süreçlerin ortamı: kullanıcının gerçek PATH'i + terminal
-    /// yetenek bildirimleri.
+    /// Environment for spawned processes: the user's real PATH plus terminal
+    /// capability declarations.
     private static func buildEnvironment() -> [String] {
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
         env.removeAll { $0.hasPrefix("PATH=") }
         env.append("PATH=\(Shell.userPath)")
         env.append("TERM_PROGRAM=ClaudeStudio")
         env.append("COLORTERM=truecolor")
-        // Claude Code'un çizim titremesini kapatan bayrak — Deck'te de böyle.
+        // Flag that disables Claude Code's redraw flicker.
         env.append("CLAUDE_CODE_NO_FLICKER=0")
         if let lang = ProcessInfo.processInfo.environment["LANG"] {
             env.removeAll { $0.hasPrefix("LANG=") }

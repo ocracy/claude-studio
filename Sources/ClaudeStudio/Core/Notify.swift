@@ -1,15 +1,15 @@
 import Foundation
 import AppKit
 
-/// Bildirim + ses. Sade tutuldu: iş bitince tek bir yumuşak ton ve tek satırlık
-/// banner — dikkat çeker, rahatsız etmez.
+/// Notifications and sound. Deliberately restrained: one soft tone and a
+/// single-line banner when work finishes — noticeable, not annoying.
 ///
-/// `UNUserNotificationCenter` ad-hoc imzalı bir uygulamada güvenilir değildir
-/// (provizyonlu bundle ve izin ister); `osascript display notification` hiçbir
-/// entitlement gerektirmez.
+/// `UNUserNotificationCenter` is unreliable in an ad-hoc signed app (it wants a
+/// provisioned bundle and permission); `osascript display notification` needs no
+/// entitlement at all.
 enum Notify {
 
-    /// Kullanılan tek ses. Sistemde yoksa NSSound sessizce yutar.
+    /// The sound to play. If missing, NSSound fails silently.
     static let doneSound = "Glass"
     static let alertSound = "Basso"
 
@@ -21,11 +21,12 @@ enum Notify {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = ["-e", script]
-        // Fire-and-forget: osascript bu nesneden uzun yaşar.
+        // Fire-and-forget: osascript outlives this Process object.
         try? p.run()
     }
 
-    /// Geçici NSSound çalmadan serbest bırakılırsa ses hiç çıkmaz — referansı tut.
+    /// A temporary NSSound is deallocated before it finishes playing and never
+    /// makes a sound — keep a strong reference.
     private static var activeSound: NSSound?
 
     static func play(_ name: String = doneSound) {

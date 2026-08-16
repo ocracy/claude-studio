@@ -1,11 +1,11 @@
 import Foundation
 
-/// Claude Code hook'larını kurar: bir oturumun "çalışıyor / seni bekliyor"
-/// durumunu, Claude Studio'nun izlediği per-oturum bir dosyaya köprüler.
+/// Installs the Claude Code hooks: they bridge a session's working/waiting state
+/// into a per-session file that Claude Studio watches.
 ///
-/// Hook'lar `claude` sürecinin ortamını miras alır; oturum başlatılırken
-/// `CS_TAB_ID` enjekte edilir. Claude Studio dışında bu değişken boş olduğundan
-/// script no-op'tur — kullanıcının diğer Claude oturumlarına sıfır etki.
+/// Hooks inherit the `claude` process environment, into which `CS_TAB_ID` is
+/// injected when a session starts. Outside Claude Studio that variable is unset,
+/// so the script is a no-op — zero effect on the user's other Claude sessions.
 enum HookBridge {
 
     private static let events: [(event: String, state: String)] = [
@@ -33,18 +33,18 @@ enum HookBridge {
             try FileManager.default.setAttributes([.posixPermissions: 0o755],
                                                   ofItemAtPath: url.path)
         } catch {
-            NSLog("[HookBridge] script yazılamadı: %@", "\(error)")
+            NSLog("[HookBridge] failed to write script: %@", "\(error)")
         }
     }
 
     private static let scriptBody = """
     #!/bin/sh
-    # Claude Studio <-> Claude Code köprüsü. Uygulama tarafından yönetilir — elle düzenlemeyin.
-    # Oturumun working/waiting durumunu (ve resume için session_id'sini) izlenen
-    # bir dosyaya yazar. Claude Studio dışında (CS_TAB_ID yokken) hiçbir şey yapmaz.
+    # Claude Studio <-> Claude Code bridge. Managed by the app — do not edit.
+    # Writes the session's working/waiting state (and its session_id, for resume)
+    # to a file the app watches. No-op outside Claude Studio (CS_TAB_ID unset).
     state="$1"
 
-    # Claude olay JSON'unu stdin'den verir; yazması bloklanmasın diye hemen oku.
+    # Claude pipes the event JSON on stdin; read it so its write never blocks.
     input=$(cat 2>/dev/null)
 
     [ -z "$CS_TAB_ID" ] && exit 0
@@ -70,10 +70,10 @@ enum HookBridge {
     exit 0
     """
 
-    // MARK: - settings.json birleştirme
+    // MARK: - settings.json merge
 
-    /// `~/.claude/settings.json`'a idempotent merge. Parse edilemeyen dosyaya
-    /// dokunulmaz — kullanıcının ayarları asla bozulmaz.
+    /// Idempotent merge into `~/.claude/settings.json`. A file that cannot be
+    /// parsed is left untouched — the user's settings are never corrupted.
     private static func mergeSettings() {
         let url = Paths.claudeSettings
         Paths.ensure(url.deletingLastPathComponent())
@@ -81,7 +81,7 @@ enum HookBridge {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: url), !data.isEmpty {
             guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                NSLog("[HookBridge] settings.json çözümlenemedi — birleştirme atlandı")
+                NSLog("[HookBridge] could not parse settings.json — merge skipped")
                 return
             }
             root = parsed
@@ -119,11 +119,11 @@ enum HookBridge {
                                                   options: [.prettyPrinted, .sortedKeys])
             try data.write(to: url, options: .atomic)
         } catch {
-            NSLog("[HookBridge] settings.json yazılamadı: %@", "\(error)")
+            NSLog("[HookBridge] failed to write settings.json: %@", "\(error)")
         }
     }
 
-    // MARK: - Durum okuma
+    // MARK: - Reading state
 
     struct State: Decodable {
         var state: String
@@ -132,7 +132,7 @@ enum HookBridge {
         var ts: Double?
     }
 
-    /// Tüm oturum durum dosyalarını okur: `oturumAdı → durum`.
+    /// Reads every session state file: `sessionName → state`.
     static func readAll() -> [String: State] {
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: Paths.sessionStateDir, includingPropertiesForKeys: nil,

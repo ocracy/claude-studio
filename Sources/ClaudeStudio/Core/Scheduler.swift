@@ -1,20 +1,20 @@
 import Foundation
 
-/// Zamanlanmış skill çalışmalarının launchd katmanı.
+/// The launchd layer behind scheduled skill runs.
 ///
-/// Uygulama kapalıyken de çalışabilmesi için her zamanlama bir LaunchAgent'a
-/// bağlanır. Job doğrudan `claude` çağırmaz; Claude Studio'nun yazdığı bir zsh
-/// script'ini çalıştırır — script ortamı kurar, raporu ürettirir, durumu
-/// `.state.json`'a yazar ve bitince bildirim + ses verir.
+/// So that runs happen even while the app is closed, every schedule is bound to a
+/// LaunchAgent. The job does not invoke `claude` directly; it runs a zsh script
+/// written by Claude Studio — the script sets up the environment, produces the
+/// report, records state in `.state.json` and notifies when done.
 ///
-/// KRİTİK: launchd süreçlere minimal PATH verir. Bu yüzden `Shell.userPath`
-/// snapshot'ı script'e GÖMÜLÜ yazılır; `#!/bin/zsh -l`'in `.zshrc`'yi okuyacağına
-/// güvenilmez.
+/// CRITICAL: launchd hands processes a minimal PATH, so the `Shell.userPath`
+/// snapshot is EMBEDDED in the script; `#!/bin/zsh -l` cannot be trusted to read
+/// `.zshrc`.
 enum Scheduler {
 
-    // MARK: - Kimlik
+    // MARK: - Identity
 
-    /// `com.claudestudio.<projeKısaKimliği>.<skill>`
+    /// `com.claudestudio.<projectShortID>.<skill>`
     static func label(project: Project, skill: String) -> String {
         "com.claudestudio.\(sanitize(project.shortID)).\(sanitize(skill))"
     }
@@ -35,37 +35,39 @@ enum Scheduler {
 
     private static var uid: String { String(getuid()) }
 
-    // MARK: - Skill'e verilen yönerge
+    // MARK: - The instruction handed to the skill
 
-    /// Claude'a verilen komut. Skill'i kendi adıyla çağırır ve raporun nereye,
-    /// hangi biçimde yazılacağını söyler — böylece çıktı uygulamada tablo olur.
+    /// The prompt handed to Claude. It invokes the skill by name and states
+    /// where and in what shape the report must be written, so the output becomes
+    /// a readable table in the app.
     static func promptFor(project: Project, skill: String, extra: String = "") -> String {
         var prompt = """
-        \(skill) skill'ini çalıştır.
+        Run the \(skill) skill.
 
-        Bitirince raporu `$CS_REPORT_FILE` yoluna yaz. Dosya şu frontmatter ile başlasın:
+        When you are done, write the report to `$CS_REPORT_FILE`. Start the file
+        with this frontmatter:
 
         ---
-        run_at: <ISO 8601 zaman>
+        run_at: <ISO 8601 timestamp>
         status: ok | warning | failed
-        summary: <tek satır, en fazla 90 karakter>
-        duration_sec: <sayı>
+        summary: <one line, 90 characters max>
+        duration_sec: <number>
         trigger: $CS_RUN_MODE
         ---
 
-        Ardından bulguları kısa markdown olarak yaz. Önceki rapor `$CS_LAST_REPORT` \
-        yolunda; anlamlı bir değişiklik varsa belirt.
+        Then write your findings as short markdown. The previous report is at
+        `$CS_LAST_REPORT`; call out anything that changed meaningfully.
         """
         if let e = extra.nilIfEmpty {
-            prompt += "\n\nEk yönerge:\n\(e)"
+            prompt += "\n\nAdditional instructions:\n\(e)"
         }
         return prompt
     }
 
     // MARK: - Runner script
 
-    /// Skill'i başsız (headless) çalıştıran zsh script'ini yazar ve yolunu döner.
-    /// Hem launchd hem "arka planda çalıştır" bunu kullanır — tek kod yolu.
+    /// Writes the zsh script that runs the skill headlessly and returns its path.
+    /// Both launchd and "run in background" use it — a single code path.
     @discardableResult
     static func writeRunnerScript(project: Project, skill: String, prompt: String) -> URL {
         let url = scriptURL(project: project, skill: skill)
@@ -74,14 +76,14 @@ enum Scheduler {
 
         let script = """
         #!/bin/zsh
-        # Claude Studio — zamanlanmış skill çalıştırıcı.
-        # Otomatik üretildi; elle yapılan değişiklikler üzerine yazılır.
-        # Skill: \(skill)   Proje: \(project.name)
+        # Claude Studio — scheduled skill runner.
+        # Generated automatically; manual edits are overwritten.
+        # Skill: \(skill)   Project: \(project.name)
 
-        # İlk çalışmada rapor klasörü boştur; eşleşmeyen glob zsh'te hata verir.
+        # The run directory is empty on the first run; an unmatched glob errors in zsh.
         setopt NULL_GLOB
 
-        # launchd minimal PATH verir — giriş kabuğundan alınan gerçek PATH enjekte edilir.
+        # launchd hands us a minimal PATH — inject the real one from the login shell.
         export PATH=\(Shell.quoted(Shell.userPath))
 
         export CS_SKILL_NAME=\(Shell.quoted(skill))
@@ -96,7 +98,7 @@ enum Scheduler {
         STAMP=$(date +%Y-%m-%d-%H%M)
         export CS_REPORT_FILE="$CS_RUN_DIR/$STAMP.md"
 
-        # Önceki çalışma bağlamı — bu koşu hariç en yeni rapor.
+        # Previous run context — the newest report other than this one.
         LAST=$(ls -1t "$CS_RUN_DIR"/*.md 2>/dev/null | grep -v "^$CS_REPORT_FILE$" | head -1)
         export CS_LAST_REPORT="${LAST:-}"
         if [[ -n "$LAST" ]]; then
@@ -118,17 +120,17 @@ enum Scheduler {
         FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"finishedAt\\":\\"$FINISHED\\",\\"exitCode\\":$CODE,\\"reportFile\\":\\"$CS_REPORT_FILE\\"}" > "$STATE"
 
-        # Log sınırsız büyümesin.
+        # Keep the log from growing without bound.
         tail -n 500 "$CS_RUN_DIR/.run.log" > "$CS_RUN_DIR/.run.log.tmp" 2>/dev/null \\
           && mv "$CS_RUN_DIR/.run.log.tmp" "$CS_RUN_DIR/.run.log"
 
-        # Ad-hoc imzalı uygulamada UNUserNotificationCenter çalışmaz — osascript kullanılır.
+        # UNUserNotificationCenter does not work in an ad-hoc signed app — use osascript.
         TITLE=\(Shell.quoted(applescriptSafe("\(project.name) — \(skill)")))
         if [[ $CODE -eq 0 && -f "$CS_REPORT_FILE" ]]; then
           SUMMARY=$(grep -m1 '^summary:' "$CS_REPORT_FILE" | sed 's/^summary:[[:space:]]*//' | tr -d '"\\\\')
-          osascript -e "display notification \\"${SUMMARY:-Rapor hazır}\\" with title \\"$TITLE\\" sound name \\"Glass\\"" >/dev/null 2>&1
+          osascript -e "display notification \\"${SUMMARY:-Report ready}\\" with title \\"$TITLE\\" sound name \\"Glass\\"" >/dev/null 2>&1
         else
-          osascript -e "display notification \\"Çalışma başarısız (çıkış $CODE)\\" with title \\"$TITLE\\" sound name \\"Basso\\"" >/dev/null 2>&1
+          osascript -e "display notification \\"Run failed (exit $CODE)\\" with title \\"$TITLE\\" sound name \\"Basso\\"" >/dev/null 2>&1
         fi
 
         exit $CODE
@@ -140,18 +142,18 @@ enum Scheduler {
         return url
     }
 
-    /// osascript → zsh → Swift üç katmanlı kaçış zinciri kırılgandır; başlıktaki
-    /// tırnak ve ters bölü tamamen elenir.
+    /// The osascript → zsh → Swift escaping chain is brittle; quotes and
+    /// backslashes are stripped from the title entirely.
     private static func applescriptSafe(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: " ")
          .replacingOccurrences(of: "\"", with: " ")
          .trimmingCharacters(in: .whitespaces)
     }
 
-    // MARK: - Kurulum
+    // MARK: - Installation
 
-    /// Job'ı kurar (script + plist + bootstrap). Zamanlama kapalıysa kaldırır —
-    /// çağıranın ayrıca kontrol etmesi gerekmez.
+    /// Installs the job (script + plist + bootstrap). If the schedule is disabled
+    /// it uninstalls instead, so callers need no extra check.
     static func install(project: Project, schedule: Schedule) {
         guard schedule.enabled else {
             uninstall(project: project, skill: schedule.skill)
@@ -203,19 +205,19 @@ enum Scheduler {
         Paths.ensure(Paths.launchAgentsDir)
         try? xml.write(to: plist, atomically: true, encoding: .utf8)
 
-        // `load/unload` kullanımdan kalktı. Aynı label ikinci kez bootstrap
-        // edilirse hata verir → önce koşulsuz bootout (yoksa da zararsız).
+        // `load/unload` is deprecated. Bootstrapping the same label twice fails,
+        // so bootout unconditionally first (harmless if it is not loaded).
         Shell.runAsync("/bin/launchctl", ["bootout", "gui/\(uid)/\(jobLabel)"]) { _, _ in
             Shell.runAsync("/bin/launchctl", ["bootstrap", "gui/\(uid)", plist.path]) { status, out in
                 if status != 0 {
-                    NSLog("[Scheduler] bootstrap başarısız (%d) %@: %@", status, jobLabel, out)
+                    NSLog("[Scheduler] bootstrap failed (%d) %@: %@", status, jobLabel, out)
                 }
             }
         }
     }
 
-    /// Job'ı kaldırır ve plist'i siler. Runner script'i kalır — "arka planda
-    /// çalıştır" onu kullanmaya devam eder.
+    /// Removes the job and its plist. The runner script stays — "run in
+    /// background" keeps using it.
     static func uninstall(project: Project, skill: String) {
         let jobLabel = label(project: project, skill: skill)
         let plist = plistURL(project: project, skill: skill)
