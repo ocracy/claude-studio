@@ -378,6 +378,29 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             let session = Self.serviceSession(service, project: project)
             v.tmuxSession = session
             serviceSessions[service.id] = session
+
+            // `new-session -A` ATTACHES when the session already exists, which
+            // means the command inside it is never run again. A session left
+            // behind by a previous run — dead pane held open by `remain-on-exit`,
+            // or one whose client went away — would therefore make "play" attach
+            // to a corpse and sit on "starting" forever. A live pane is adopted
+            // (auto-start on open must not restart a healthy service); anything
+            // else is cleared out so this really is a fresh start.
+            if let state = Tmux.paneState(session) {
+                if !state.dead {
+                    v.startProcess(executable: "/bin/zsh",
+                                   args: ["-l", "-i", "-c",
+                                          Tmux.attachCommand(session: session, env: [:], inner: nil)],
+                                   environment: env, execName: nil)
+                    if let port = service.port {
+                        checkReadiness(service, port: port, attempt: 0)
+                    } else {
+                        serviceStatus[service.id] = .running
+                    }
+                    return
+                }
+                Tmux.kill(session)
+            }
             // `remain-on-exit` is set from INSIDE the pane, before the command runs.
             // Setting it from outside a moment later is a race a fast-failing service
             // wins: the pane dies, the session is destroyed, and its output — the very
@@ -399,7 +422,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                        environment: env, execName: nil)
 
         if let port = service.port {
-            checkReadiness(service.id, port: port, attempt: 0)
+            checkReadiness(service, port: port, attempt: 0)
         } else {
             after(1.5) { [weak self] in
                 guard let self, self.serviceStatus[service.id] == .starting else { return }
@@ -491,16 +514,34 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    private func checkReadiness(_ id: UUID, port: Int, attempt: Int) {
-        guard attempt < 40 else { return }
+    /// Waits for the port to answer, but never waits forever.
+    ///
+    /// The port is a nicety, not the definition of running: a service can be
+    /// perfectly up while the port is wrong, bound to another interface, or slower
+    /// to open than any timeout worth having. Giving up used to leave the row
+    /// stuck on "starting" with a live process behind it — the process is the
+    /// truth, so that is what the last word comes from.
+    private func checkReadiness(_ service: Service, port: Int, attempt: Int) {
+        let id = service.id
+        guard attempt < 40 else {  // 20 s
+            serviceStatus[id] = isServiceAlive(service) ? .running : .crashed
+            return
+        }
         after(0.5) { [weak self] in
             guard let self, self.serviceStatus[id] == .starting else { return }
+            let session = self.serviceSessions[id]
             Task.detached(priority: .utility) {
                 let up = Shell.portIsListening(port)
+                // A pane that has already died says "crashed" long before the port
+                // timeout would. The first seconds are exempt: the tmux session does
+                // not exist yet while the client is still attaching, and "not there
+                // yet" is not "dead".
+                let dead = attempt >= 6 && (session.flatMap { Tmux.paneState($0)?.dead } ?? false)
                 await MainActor.run {
                     guard self.serviceStatus[id] == .starting else { return }
                     if up { self.serviceStatus[id] = .running }
-                    else { self.checkReadiness(id, port: port, attempt: attempt + 1) }
+                    else if dead { self.serviceStatus[id] = .crashed }
+                    else { self.checkReadiness(service, port: port, attempt: attempt + 1) }
                 }
             }
         }

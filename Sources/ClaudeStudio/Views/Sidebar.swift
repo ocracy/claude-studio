@@ -9,7 +9,6 @@ struct Sidebar: View {
     @State private var addingService = false
     @State private var scriptSheet: ProjectScript?
     @State private var addingScript = false
-    @State private var addMenu = false
     @State private var mcpSheet: MCPServer?
     @State private var linkSheet = false
     @State private var mcpAddMenu = false
@@ -49,6 +48,9 @@ struct Sidebar: View {
         .onChange(of: model.pane) {
             if model.pane == .mcp { model.mcp.scan() }
             if model.pane == .commands { model.claudeCommands.scan(project: model.project) }
+            // Ports move without the app: probe them the moment the list is looked
+            // at, rather than leaving a service dark until the 4 s refresh.
+            if model.pane == .services { model.engine.refreshExternalStatuses(model.store.config.services) }
         }
         .sheet(item: $serviceSheet) { service in
             ServiceEditor(model: model, service: service, isNew: addingService) {
@@ -122,26 +124,6 @@ struct Sidebar: View {
                     .padding(6)
                     .frame(width: 280)
                 }
-            } else if model.pane == .services || model.pane == .scripts {
-                // One button, two things to create: a long-running service or a
-                // one-shot script. They live in different panes but are added here.
-                IconButton(icon: "plus", help: "Add a service or script") { addMenu = true }
-                    .popover(isPresented: $addMenu, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            addMenuItem("New service", icon: "server.rack",
-                                        detail: "long-running, port aware") {
-                                addMenu = false
-                                newService()
-                            }
-                            addMenuItem("New script", icon: "bolt",
-                                        detail: "runs once in a tab") {
-                                addMenu = false
-                                newScript()
-                            }
-                        }
-                        .padding(6)
-                        .frame(width: 250)
-                    }
             } else {
                 IconButton(icon: "plus", help: addHelp, action: add)
             }

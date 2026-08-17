@@ -236,7 +236,9 @@ enum ServiceStatus: String, Codable {
         case .running:             return Theme.running
         case .starting, .stopping: return Theme.warning
         case .crashed:             return Theme.danger
-        case .external:            return Theme.warning
+        // Something is already answering on the port: the service IS up, the app
+        // just did not start it. The light says up; the label says who started it.
+        case .external:            return Theme.running
         case .stopped:             return Theme.idle
         }
     }
