@@ -207,6 +207,33 @@ struct Service: Identifiable, Hashable, Codable {
     var port: Int?
     var autoStart: Bool = false
 
+    init(id: UUID = UUID(), name: String, command: String,
+         cwd: String = "", port: Int? = nil, autoStart: Bool = false) {
+        self.id = id
+        self.name = name
+        self.command = command
+        self.cwd = cwd
+        self.port = port
+        self.autoStart = autoStart
+    }
+
+    /// Written by hand because `services.json` is edited by hand — and by Claude.
+    /// The synthesized decoder throws on a missing key even where there is a
+    /// default, so one entry without an `id` would take the whole service list
+    /// down with it. Only `name` and `command` are actually required.
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? box.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        id = value(.id, UUID())
+        name = value(.name, "")
+        command = value(.command, "")
+        cwd = value(.cwd, "")
+        port = (try? box.decodeIfPresent(Int.self, forKey: .port)) ?? nil
+        autoStart = value(.autoStart, false)
+    }
+
     func resolvedCwd(projectPath: String) -> String {
         let trimmed = cwd.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return projectPath }
@@ -260,6 +287,26 @@ struct ProjectScript: Identifiable, Hashable, Codable {
     var command: String
     /// Empty means the project root.
     var cwd: String = ""
+
+    init(id: UUID = UUID(), name: String, command: String, cwd: String = "") {
+        self.id = id
+        self.name = name
+        self.command = command
+        self.cwd = cwd
+    }
+
+    /// Tolerant for the same reason as `Service`: `scripts.json` is edited by
+    /// hand and by Claude, and a missing `id` must not cost the whole list.
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? box.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        id = value(.id, UUID())
+        name = value(.name, "")
+        command = value(.command, "")
+        cwd = value(.cwd, "")
+    }
 
     func resolvedCwd(projectPath: String) -> String {
         let trimmed = cwd.trimmingCharacters(in: .whitespaces)

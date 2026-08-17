@@ -35,10 +35,20 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(message.title, {
       body: message.body,
-      icon: "/icon.svg",
-      badge: "/icon.svg",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
       // One notification per session: a later one replaces the earlier.
       tag: message.tmux || "cs",
+      // Replacing a notification is silent by default, so a session that comes
+      // back for you twice would only make a sound the first time.
+      renotify: true,
+      // The Notification API has no way to choose a sound — the `sound` field
+      // was dropped from the spec and no browser implements it. The tone comes
+      // from the notification channel Android gives this app, which is also
+      // where the user can change it. Vibration is the one part of the alert
+      // the page still controls.
+      vibrate: message.silent ? [] : [180, 90, 180],
+      silent: Boolean(message.silent),
       data: message,
     }),
   )

@@ -594,6 +594,7 @@ async function openSettings() {
   const on = Boolean(subscription)
   $("push-enabled").checked = on
   $("push-projects-wrap").classList.toggle("hidden", !on)
+  $("push-silent-row").classList.toggle("hidden", !on)
 
   if (!on) {
     $("push-note").textContent = window.matchMedia("(display-mode: standalone)").matches
@@ -624,6 +625,7 @@ async function openSettings() {
     }
   }
 
+  $("push-silent").checked = Boolean(status.preferences?.silent)
   renderProjectChoices(status.preferences?.projects ?? [])
 }
 
@@ -735,6 +737,18 @@ $("push-repair").onclick = async () => {
     $("push-note").textContent = error.message
     toast(error.message)
   }
+}
+
+$("push-silent").onchange = async (event) => {
+  const subscription = await currentSubscription()
+  if (!subscription) return
+  await api("/api/push/preferences", {
+    method: "POST",
+    body: JSON.stringify({
+      endpoint: subscription.endpoint,
+      preferences: { silent: event.target.checked },
+    }),
+  }).catch((error) => toast(error.message))
 }
 
 $("push-test").onclick = async () => {

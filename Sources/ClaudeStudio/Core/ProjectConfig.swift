@@ -121,9 +121,22 @@ final class ProjectStore: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         watcher = DirectoryWatcher(url: directory) { [weak self] in
             guard let self, !self.isWriting else { return }
-            let onDisk = Self.readSessions(self.project)
-            guard onDisk != self.config.sessions else { return }
-            self.config.sessions = onDisk
+            let sessions = Self.readSessions(self.project)
+            if sessions != self.config.sessions { self.config.sessions = sessions }
+
+            // Services and scripts are written from outside too — by hand, and by
+            // the Claude session the "with Claude" button opens. Without this the
+            // list it just wrote would not appear until the project was reopened.
+            // `nil` is "no readable file" — a half-written or absent one — and must
+            // not be mistaken for "the list is now empty".
+            if let services = Self.read([Service].self, from: Paths.services(self.project)),
+               services != self.config.services {
+                self.config.services = services
+            }
+            if let scripts = Self.read([ProjectScript].self, from: Paths.scripts(self.project)),
+               scripts != self.config.scripts {
+                self.config.scripts = scripts
+            }
         }
     }
 

@@ -351,13 +351,24 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         "cs-\(project.shortID)-sv-\(service.id.uuidString.prefix(8).lowercased())"
     }
 
+    /// Key into the terminal view cache for a service.
+    ///
+    /// It MUST be the id its tab carries: a service used to run under the bare
+    /// uuid while its tab hosted `service:<uuid>`, so the pane on screen was a
+    /// different, empty terminal from the one the process was writing to — the
+    /// service ran perfectly and showed nothing. Derived from `StudioTab` rather
+    /// than spelled out, so the two cannot drift apart again.
+    static func serviceKey(_ service: Service) -> String {
+        StudioTab(kind: .service, ref: service.id.uuidString, title: service.name).terminalKey
+    }
+
     /// Starts a service inside tmux.
     ///
     /// tmux, not a bare PTY: that is what lets anything outside this process — a
     /// linked project, or you in a terminal — read what a service is printing, and it
     /// keeps a crashed service's output and exit code on screen (`remain-on-exit`).
     func startService(_ service: Service, project: Project) {
-        let key = service.id.uuidString
+        let key = Self.serviceKey(service)
         let v = view(for: key)
         if v.process?.running == true { return }
 
@@ -438,7 +449,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             guard let state = Tmux.paneState(session) else { return false }
             return !state.dead
         }
-        return isLive(service.id.uuidString)
+        return isLive(Self.serviceKey(service))
     }
 
     /// Reads what a service has printed — including after it died, thanks to
@@ -450,7 +461,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
     /// Graceful stop: Ctrl-C first, then the session goes away.
     func stopService(_ service: Service) {
-        let key = service.id.uuidString
+        let key = Self.serviceKey(service)
         if let session = serviceSessions[service.id], Tmux.exists(session) {
             serviceStatus[service.id] = .stopping
             Tmux.interrupt(session)

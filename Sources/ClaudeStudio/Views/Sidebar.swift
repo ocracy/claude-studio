@@ -15,6 +15,7 @@ struct Sidebar: View {
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
     @State private var transcriptMenu = false
+    @State private var maker: MakerRequest?
     @State private var sessionManager = false
     @State private var renaming: String?
     @State private var renameText = ""
@@ -76,6 +77,18 @@ struct Sidebar: View {
         .sheet(isPresented: $sessionManager) {
             SessionManager(model: model) { sessionManager = false }
         }
+        .sheet(item: $maker) { request in
+            ClaudeMaker(model: model, kind: request.kind,
+                        service: request.service, script: request.script) { maker = nil }
+        }
+    }
+
+    /// What the "with Claude" sheet was opened for: a whole list, or one entry.
+    struct MakerRequest: Identifiable {
+        let id = UUID()
+        let kind: ClaudeMaker.Kind
+        var service: Service?
+        var script: ProjectScript?
     }
 
     // MARK: - Header and footer
@@ -125,6 +138,18 @@ struct Sidebar: View {
                     .frame(width: 280)
                 }
             } else {
+                // Services and scripts can be written by Claude instead of typed:
+                // it reads the project and fills the file in. Its own button, next
+                // to "+", because it is a different act — not a variant of adding
+                // one by hand, and it works on the whole list at once.
+                if model.pane == .services || model.pane == .scripts {
+                    IconButton(icon: "sparkles",
+                               help: model.pane == .services
+                                     ? "Write services with Claude"
+                                     : "Write scripts with Claude") {
+                        maker = MakerRequest(kind: model.pane == .services ? .services : .scripts)
+                    }
+                }
                 IconButton(icon: "plus", help: addHelp, action: add)
             }
         }
@@ -422,9 +447,8 @@ struct Sidebar: View {
 
     @ViewBuilder private var servicesList: some View {
         if model.store.config.services.isEmpty {
-            emptyHint("No services defined.", action: "Add a service") {
-                addingService = true
-                serviceSheet = Service(name: "new service", command: "", cwd: model.project.path)
+            emptyHint("No services defined.", action: "Let Claude find them") {
+                maker = MakerRequest(kind: .services)
             }
         }
         ForEach(model.store.config.services) { service in
@@ -447,6 +471,9 @@ struct Sidebar: View {
                 .contextMenu {
                     Button("Restart") { model.engine.restartService(service, project: model.project) }
                     Button("Settings…") { serviceSheet = service }
+                    Button("Update with Claude…") {
+                        maker = MakerRequest(kind: .services, service: service)
+                    }
                     Divider()
                     Button("Delete service") {
                         model.engine.stopService(service)
@@ -572,7 +599,9 @@ struct Sidebar: View {
 
     @ViewBuilder private var scriptsList: some View {
         if model.store.config.scripts.isEmpty {
-            emptyHint("No scripts defined.", action: "Add a script", perform: newScript)
+            emptyHint("No scripts defined.", action: "Let Claude find them") {
+                maker = MakerRequest(kind: .scripts)
+            }
         }
         ForEach(model.store.config.scripts) { script in
             let key = "script:\(script.id.uuidString)"
@@ -588,6 +617,9 @@ struct Sidebar: View {
                     Button("Run") { model.runScript(script) }
                     Button("Run in background") { model.runScriptInBackground(script) }
                     Button("Settings…") { scriptSheet = script }
+                    Button("Update with Claude…") {
+                        maker = MakerRequest(kind: .scripts, script: script)
+                    }
                     Divider()
                     Button("Delete script") { model.removeScript(script) }
                 }

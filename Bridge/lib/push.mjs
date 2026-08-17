@@ -195,7 +195,11 @@ export async function notify(message) {
   const results = await Promise.all(
     readSubscriptions()
       .filter((subscription) => wants(subscription, message))
-      .map((subscription) => deliver(subscription, message)),
+      // Alert preferences are per device — one phone can be set to buzz
+      // silently while another rings — so they ride along in each payload
+      // rather than being baked into the message.
+      .map((subscription) =>
+        deliver(subscription, { ...message, silent: Boolean(subscription.preferences?.silent) })),
   )
   return results.filter((status) => status >= 200 && status < 300).length
 }

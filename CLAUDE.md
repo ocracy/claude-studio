@@ -106,6 +106,13 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
 - **Naming**: a **command** is Claude's own slash command (`.claude/commands`); a
   **script** is a one-shot shell command we store in `.cs/scripts.json`. Do not mix
   the two — `commands.json` was the old name for scripts and is migrated on load.
+- **Services and scripts written by Claude**: the "with Claude" button hands over a
+  prompt (`StudioModel.servicesPrompt` / `scriptsPrompt`) and Claude edits
+  `.cs/services.json` / `.cs/scripts.json` itself — the app never parses an answer
+  back. Two things make that work: the `.cs` watcher re-reads both files, not only
+  `sessions.json`, and `Service`/`ProjectScript` decode by hand, so an entry written
+  without an `id` gets one instead of taking the whole list down. The prompt keeps the
+  JSON example comment-free; a `//` in the sample comes back as a `//` in the file.
 - **Terminal geometry**: a terminal is spawned only after its container's size has
   stopped changing (`TerminalContainer.armPendingStart`), and `attachCommand` passes
   NO `-x/-y` — tmux takes its size from the attaching client's pty. Passing a size

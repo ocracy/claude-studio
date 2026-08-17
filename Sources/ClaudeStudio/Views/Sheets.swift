@@ -579,6 +579,91 @@ struct SheetShell<Content: View>: View {
 }
 
 /// A labelled form field.
+// MARK: - Ask Claude for services or scripts
+
+/// Hands the job of writing `.cs/services.json` or `.cs/scripts.json` to Claude.
+///
+/// The box is optional on purpose: with nothing in it Claude scans the project and
+/// proposes what fits, which is the whole point the first time. Later it is where
+/// "add a worker for the queue" or "this one should not auto-start" goes — the same
+/// session keeps talking, because the file is the interface, not a form.
+struct ClaudeMaker: View {
+    enum Kind { case services, scripts }
+
+    @ObservedObject var model: StudioModel
+    let kind: Kind
+    /// An existing entry to work on, when this was opened from its row.
+    var service: Service?
+    var script: ProjectScript?
+    let onDismiss: () -> Void
+
+    @State private var request = ""
+
+    private var isService: Bool { kind == .services }
+
+    private var title: String {
+        if let service { return "Update “\(service.name)” with Claude" }
+        if let script { return "Update “\(script.name)” with Claude" }
+        return isService ? "Services with Claude" : "Scripts with Claude"
+    }
+
+    private var explanation: String {
+        isService
+            ? "Claude reads the project — package.json, composer.json, docker-compose, the "
+              + "Makefile — and writes the long-running processes into .cs/services.json. "
+              + "The list here updates as soon as it saves."
+            : "Claude reads the project — package.json, composer.json, the CI workflow, the "
+              + "Makefile — and writes the one-shot commands into .cs/scripts.json. "
+              + "The list here updates as soon as it saves."
+    }
+
+    private var placeholder: String {
+        isService
+            ? "Optional. For example: the frontend and the queue worker only, nothing on 3000."
+            : "Optional. For example: build, test and the migration commands for the backend."
+    }
+
+    var body: some View {
+        SheetShell(title: title,
+                   confirm: ("Open Claude", open),
+                   onDismiss: onDismiss) {
+            Text(explanation)
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Field(label: "what should it do?") {
+                ZStack(alignment: .topLeading) {
+                    if request.isEmpty {
+                        Text(placeholder)
+                            .font(Theme.ui(12))
+                            .foregroundStyle(Theme.text3)
+                            .padding(.top, 2)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $request)
+                        .font(Theme.ui(12.5))
+                        .scrollContentBackground(.hidden)
+                        .frame(height: 76)
+                }
+            }
+
+            Text("Leave it empty to let Claude decide what this project needs.")
+                .font(Theme.ui(11))
+                .foregroundStyle(Theme.text3)
+        }
+    }
+
+    private func open() {
+        if isService {
+            model.createServicesWithClaude(request: request, focus: service)
+        } else {
+            model.createScriptsWithClaude(request: request, focus: script)
+        }
+        onDismiss()
+    }
+}
+
 /// Where a service or script runs.
 ///
 /// Spelled out rather than left blank: an empty box meaning "the project root"

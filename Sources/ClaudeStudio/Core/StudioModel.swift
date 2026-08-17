@@ -583,6 +583,145 @@ final class StudioModel: ObservableObject {
     argument belongs.
     """
 
+    // MARK: - Services and scripts, written by Claude
+
+    /// Opens a Claude session that writes `.cs/services.json` itself.
+    ///
+    /// The app does not parse an answer back: Claude edits the file, the `.cs`
+    /// watcher notices and the list updates. That is also why the same entry
+    /// point serves "add some" and "change this one" — it is one conversation
+    /// about one file, and the user can keep talking to it.
+    func createServicesWithClaude(request: String, focus: Service? = nil) {
+        newSession(name: focus == nil ? "services" : "service: \(focus!.name)",
+                   prompt: Self.servicesPrompt(project: project, request: request, focus: focus),
+                   autoRun: true)
+    }
+
+    func createScriptsWithClaude(request: String, focus: ProjectScript? = nil) {
+        newSession(name: focus == nil ? "scripts" : "script: \(focus!.name)",
+                   prompt: Self.scriptsPrompt(project: project, request: request, focus: focus),
+                   autoRun: true)
+    }
+
+    static func servicesPrompt(project: Project, request: String, focus: Service? = nil) -> String {
+        var prompt = """
+        YOUR TASK: work out which long-running development processes this project \
+        actually has, then write them to `\(Paths.services(project).path)`. Claude Studio \
+        reads that file live — save it and the services appear in the sidebar, no restart.
+
+        HOW TO SCAN:
+        - Walk the root AND subdirectories, including monorepo layouts like backend/, \
+        frontend/, api/, apps/*, packages/*.
+        - Sources: package.json "scripts" (dev/start/watch/serve), composer.json, artisan \
+        commands (serve, horizon, queue:work, reverb:start, schedule:work), Makefile targets, \
+        docker-compose services, Procfile, README setup sections.
+        - Derive ports from the real configuration (vite.config, next.config, .env PORT/APP_URL). \
+        Defaults if nothing says otherwise: Vite 5173, Next/Nuxt 3000, Astro 4321, \
+        Laravel serve 8000, Reverb 8080, Storybook 6006.
+
+        WHAT BELONGS HERE: processes that KEEP RUNNING — dev servers, queue workers, \
+        websocket servers, `docker compose up`, watchers. A task that finishes on its own \
+        (build, migrate, test) is a SCRIPT and belongs in `\(Paths.scripts(project).path)` \
+        instead; do not put it in this file.
+
+        FORMAT — a JSON array. No comments, no trailing commas:
+        [
+          { "name": "Frontend", "command": "npm run dev", "cwd": "frontend", "port": 5173, "autoStart": true },
+          { "name": "Queue", "command": "php artisan queue:work" },
+          { "name": "Reverb", "command": "php artisan reverb:start", "port": 8080 }
+        ]
+
+        THE FIELDS:
+        - `name` — what the sidebar shows. Required.
+        - `command` — run through `zsh -l -i -c` inside tmux. Required.
+        - `cwd` — optional; relative to the project root, or absolute. Omit it for the root itself.
+        - `port` — optional; how the app decides the service is up, and what it offers to free.
+        - `autoStart` — optional; true means it starts when the project window opens.
+
+        RULES:
+        - KEEP the existing entries and their `id` fields exactly as they are — an id is \
+        what ties a service to its running process. New entries need no id; the app fills it in.
+        - `cwd` must be a directory that exists. Check with `ls` before writing it.
+        - Only `autoStart` the ones that genuinely start every day.
+        - Be lean: no service you cannot point at a file for. A wrong command is worse than \
+        a missing one.
+        - Write the file yourself (Write/Edit), keep it valid JSON, then summarise what you \
+        added or changed in one line each.
+        """
+        if let focus {
+            prompt += """
+
+
+            FOCUS ON THIS EXISTING SERVICE: "\(focus.name)" — command `\(focus.command)`\
+            \(focus.port.map { ", port \($0)" } ?? ""). Change that entry; leave the others alone \
+            unless I say otherwise.
+            """
+        }
+        return prompt + userRequestBlock(request)
+    }
+
+    static func scriptsPrompt(project: Project, request: String, focus: ProjectScript? = nil) -> String {
+        var prompt = """
+        YOUR TASK: work out which one-shot commands this project is actually run with, then \
+        write them to `\(Paths.scripts(project).path)`. Claude Studio reads that file live — \
+        save it and the scripts appear in the sidebar, no restart.
+
+        HOW TO SCAN:
+        - Walk the root AND subdirectories, including monorepo layouts like backend/, \
+        frontend/, api/, apps/*, packages/*.
+        - Sources: package.json "scripts" (build/test/lint/typecheck/migrate/seed), composer.json, \
+        artisan commands (migrate, optimize, cache:clear, test), Makefile targets, \
+        CI workflow files (what does the pipeline actually run?), README.
+
+        WHAT BELONGS HERE: commands that RUN ONCE AND FINISH — build, test, lint, typecheck, \
+        migrate, seed, install, deploy, cache clearing. A process that keeps running \
+        (dev server, worker, docker compose up) is a SERVICE and belongs in \
+        `\(Paths.services(project).path)` instead; do not put it in this file.
+
+        FORMAT — a JSON array. No comments, no trailing commas:
+        [
+          { "name": "Build", "command": "npm run build", "cwd": "frontend" },
+          { "name": "Test", "command": "npm test" },
+          { "name": "Migrate", "command": "php artisan migrate" }
+        ]
+
+        THE FIELDS:
+        - `name` — what the sidebar shows. Required.
+        - `command` — run through `zsh -l -i -c` in its own tab, exit code shown in place. Required.
+        - `cwd` — optional; relative to the project root, or absolute. Omit it for the root itself.
+
+        RULES:
+        - KEEP the existing entries and their `id` fields exactly as they are. New entries \
+        need no id; the app fills it in.
+        - `cwd` must be a directory that exists. Check with `ls` before writing it.
+        - Nothing destructive without it being obvious from the name: a script that drops a \
+        database must say so.
+        - Be lean: no script you cannot point at a file for.
+        - Write the file yourself (Write/Edit), keep it valid JSON, then summarise what you \
+        added or changed in one line each.
+        """
+        if let focus {
+            prompt += """
+
+
+            FOCUS ON THIS EXISTING SCRIPT: "\(focus.name)" — command `\(focus.command)`. \
+            Change that entry; leave the others alone unless I say otherwise.
+            """
+        }
+        return prompt + userRequestBlock(request)
+    }
+
+    /// The user's own words, last and clearly marked — everything above is context
+    /// for carrying them out.
+    private static func userRequestBlock(_ request: String) -> String {
+        guard let clean = request.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        else {
+            return "\n\nI have not asked for anything specific: scan the project and propose "
+                 + "what makes sense. Tell me what you are about to write before you write it."
+        }
+        return "\n\nWHAT I ASKED FOR (this comes first):\n\(clean)"
+    }
+
     // MARK: - Skills
 
     func openSkill(_ skill: Skill) {
