@@ -8,6 +8,7 @@ struct WelcomeView: View {
     let onOpen: (Project) -> Void
 
     @StateObject private var recents = Recents.shared
+    @ObservedObject private var updater = Updater.shared
     @State private var query = ""
     @State private var sessionCounts: [String: Int] = [:]
     @FocusState private var searchFocused: Bool
@@ -62,6 +63,14 @@ struct WelcomeView: View {
                 action(icon: "gearshape", title: "Settings", shortcut: "⌘,") {
                     SettingsWindow.show()
                 }
+                // Without a project window there is no top bar to carry the badge,
+                // so the welcome screen surfaces the update too.
+                if let version = updater.availableVersion {
+                    action(icon: "arrow.down.circle", title: "Update to \(version)",
+                           shortcut: "", accent: true) {
+                        SettingsWindow.show()
+                    }
+                }
             }
             .padding(.top, 28)
 
@@ -80,6 +89,7 @@ struct WelcomeView: View {
     }
 
     private func action(icon: String, title: String, shortcut: String,
+                        accent: Bool = false,
                         perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
             HoverRow(padding: EdgeInsets(top: 7, leading: 8, bottom: 7, trailing: 8)) {
@@ -88,7 +98,9 @@ struct WelcomeView: View {
                         .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(Theme.accent)
                         .frame(width: 16)
-                    Text(title).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
+                    Text(title)
+                        .font(Theme.ui(12.5, accent ? .medium : .regular))
+                        .foregroundStyle(accent ? Theme.accent : Theme.text)
                     Spacer()
                     Text(shortcut).font(Theme.mono(10.5)).foregroundStyle(Theme.text3)
                 }
