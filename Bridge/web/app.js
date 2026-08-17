@@ -76,11 +76,18 @@ function render() {
       seen.add(session.tmux)
       let row = group.querySelector(`[data-tmux="${CSS.escape(session.tmux)}"]`)
       if (!row) {
-        row = document.createElement("button")
+        // A row, not a button: it holds two independent targets — the body
+        // opens the session, the ⋯ opens its actions. A button inside a button
+        // is invalid and the inner one stops receiving taps.
+        row = document.createElement("div")
         row.className = "session"
         row.dataset.tmux = session.tmux
-        row.innerHTML = `<span class="dot"></span>
-          <span class="body"><span class="name"></span><span class="preview"></span></span>`
+        row.innerHTML = `
+          <button class="session-open">
+            <span class="dot"></span>
+            <span class="body"><span class="name"></span><span class="preview"></span></span>
+          </button>
+          <button class="session-more" aria-label="Actions">⋯</button>`
         group.append(row)
       }
       group.append(row)
@@ -90,14 +97,16 @@ function render() {
       row.querySelector(".preview").textContent = session.live
         ? session.preview.at(-1) || "running"
         : "not running — tap to start"
-      row.onclick = () =>
-        openSession({
-          tmux: session.tmux,
-          name: session.name,
-          claudeSID: session.claudeSID,
-          projectPath: project.path,
-          projectName: project.name,
-        })
+
+      const target = {
+        tmux: session.tmux,
+        name: session.name,
+        claudeSID: session.claudeSID,
+        projectPath: project.path,
+        projectName: project.name,
+      }
+      row.querySelector(".session-open").onclick = () => openSession(target)
+      row.querySelector(".session-more").onclick = () => openActions(target)
     }
 
     for (const row of group.querySelectorAll(".session")) {
@@ -113,6 +122,7 @@ function render() {
 async function refresh() {
   try {
     snapshot = await api("/api/state")
+    noteBuild(snapshot.buildId)
     if (views.list.classList.contains("hidden")) updateBadge()
     else render()
   } catch (error) {
@@ -256,13 +266,62 @@ async function sendKeys(body) {
   }
 }
 
-async function send() {
-  const box = $("prompt")
-  const text = box.value
-  if (!text.trim()) return
-  box.value = ""
-  box.style.height = "auto"
-  await sendKeys({ text, enter: true })
+// ── menu and updating ────────────────────────────────────────────────────
+
+/** The interface build this phone loaded; compared against what the Mac serves. */
+let loadedBuild = null
+
+function noteBuild(buildId) {
+  if (!buildId) return
+  if (loadedBuild === null) loadedBuild = buildId
+  $("update-banner").classList.toggle("hidden", buildId === loadedBuild)
+}
+
+function openMenu() {
+  $("menu-build").textContent = loadedBuild ? `Build ${loadedBuild}` : ""
+  $("menu").classList.remove("hidden")
+}
+
+const closeMenu = () => $("menu").classList.add("hidden")
+
+/**
+ * Load the interface the Mac is serving now.
+ *
+ * A plain reload is not enough: the service worker answers first and can hand
+ * back the copy it cached. Its caches are dropped and the worker told to check
+ * for a new version before reloading. The worker is NOT unregistered — that
+ * would take the push subscription with it and notifications would silently
+ * stop.
+ */
+async function updateApp() {
+  closeMenu()
+  toast("Updating…")
+  try {
+    if ("caches" in window) {
+      const names = await caches.keys()
+      await Promise.all(names.map((name) => caches.delete(name)))
+    }
+    const registrations = await navigator.serviceWorker?.getRegistrations?.() ?? []
+    await Promise.all(registrations.map((registration) => registration.update().catch(() => {})))
+  } catch {
+    // Even if clearing failed, reloading is still the best next move.
+  }
+  location.reload()
+}
+
+// ── per-session actions ──────────────────────────────────────────────────
+
+let actionTarget = null
+
+function openActions(session) {
+  actionTarget = session
+  $("actions-title").textContent = session.name
+  $("actions").classList.remove("hidden")
+}
+
+function closeActions() {
+  actionTarget = null
+  $("actions").classList.add("hidden")
 }
 
 // ── new session ──────────────────────────────────────────────────────────
@@ -315,12 +374,14 @@ async function create() {
   }
 }
 
-async function killCurrent() {
-  if (!current) return
-  const name = current.tmux
+/** Close a tab: end the tmux session and forget its record. */
+async function killSession(session) {
   try {
-    await api(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" })
-    closeSession()
+    await api(`/api/sessions/${encodeURIComponent(session.tmux)}`, { method: "DELETE" })
+    // If the tab being closed is the one on screen, step back to the list —
+    // its terminal is about to have nothing behind it.
+    if (current?.tmux === session.tmux) closeSession()
+    else await refresh()
     toast("Tab closed")
   } catch (error) {
     toast(error.message)
@@ -598,13 +659,27 @@ async function saveProjectChoices() {
 
 // ── wiring ───────────────────────────────────────────────────────────────
 
-$("refresh").onclick = refresh
+$("open-menu").onclick = openMenu
+$("menu-cancel").onclick = closeMenu
+$("menu").onclick = (event) => { if (event.target === $("menu")) closeMenu() }
+$("menu-refresh").onclick = () => { closeMenu(); refresh(); toast("Refreshed") }
+$("menu-update").onclick = updateApp
+$("menu-settings").onclick = () => { closeMenu(); openSettings() }
+$("update-banner").onclick = updateApp
+
 $("back").onclick = closeSession
 $("compose").onclick = openSheet
 $("new-cancel").onclick = () => $("sheet").classList.add("hidden")
 $("new-create").onclick = create
-$("send").onclick = send
-$("kill").onclick = killCurrent
+
+$("action-cancel").onclick = closeActions
+$("action-close").onclick = () => {
+  const session = actionTarget
+  closeActions()
+  if (session) killSession(session)
+}
+// Tapping the dimmed area behind the sheet dismisses it.
+$("actions").onclick = (event) => { if (event.target === $("actions")) closeActions() }
 
 for (const button of document.querySelectorAll("button[data-key]")) {
   button.onclick = () => sendKeys({ key: button.dataset.key })
@@ -617,25 +692,11 @@ for (const button of document.querySelectorAll("button[data-newline]")) {
   button.onclick = () => sendKeys({ text: "\n" })
 }
 
-const box = $("prompt")
-box.addEventListener("input", () => {
-  box.style.height = "auto"
-  box.style.height = `${Math.min(box.scrollHeight, window.innerHeight * 0.4)}px`
-})
-box.addEventListener("keydown", (event) => {
-  // A hardware keyboard sends Enter to submit; Shift+Enter still adds a line.
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault()
-    send()
-  }
-})
-
 // Coming back from the lock screen should show the truth immediately.
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh()
 })
 
-$("open-settings").onclick = openSettings
 $("settings-back").onclick = () => {
   views.settings.classList.add("hidden")
   views.list.classList.remove("hidden")

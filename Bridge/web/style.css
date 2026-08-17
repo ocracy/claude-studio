@@ -152,15 +152,41 @@ button.icon {
 
 .session {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: stretch;
   width: 100%;
-  text-align: left;
-  padding: 12px 14px;
   margin-bottom: 8px;
   border-radius: var(--radius);
   background: var(--bg-raised);
   border: 1px solid var(--separator);
+  overflow: hidden;
+}
+
+/* The row's two targets share one card: the wide one opens the session, the
+   narrow one opens its actions. Both are borderless so the card reads as a
+   single object. */
+.session-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 12px 4px 12px 14px;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.session-more {
+  flex: none;
+  width: 46px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--label-2);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
 }
 
 .session .body { flex: 1; min-width: 0; }
@@ -219,21 +245,35 @@ button.icon {
   color: var(--label-2);
 }
 
-/* ── composer ─────────────────────────────────────────────────────────── */
+/* ── update banner ────────────────────────────────────────────────────── */
 
-.composer {
+.banner {
   flex: none;
-  background: var(--bg-raised);
-  border-top: 1px solid var(--separator);
-  padding: 8px 10px calc(var(--safe-bottom) + 8px);
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--separator);
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 14px;
+  text-align: center;
 }
 
+/* ── key row ──────────────────────────────────────────────────────────── */
+
+/* Directly under the title bar. Below the terminal it would sit behind the
+   on-screen keyboard, which is where these keys are needed most. */
 .keys {
+  flex: none;
   display: flex;
   gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--separator);
 }
 .keys::-webkit-scrollbar { display: none; }
 
@@ -245,31 +285,6 @@ button.icon {
   background: var(--bg);
 }
 .keys button.warn { color: var(--danger); }
-.keys button.right { margin-left: auto; }
-
-.input { display: flex; gap: 8px; align-items: flex-end; }
-
-.input textarea {
-  flex: 1;
-  resize: none;
-  max-height: 40vh;
-  padding: 10px 12px;
-  border-radius: 20px;
-  border: 1px solid var(--separator);
-  background: var(--bg);
-  color: var(--label);
-  font: inherit;
-  line-height: 1.35;
-}
-
-.input .primary {
-  border-radius: 50%;
-  width: 42px;
-  height: 42px;
-  padding: 0;
-  font-size: 19px;
-  flex: none;
-}
 
 /* ── sheet ────────────────────────────────────────────────────────────── */
 
@@ -329,6 +344,9 @@ button.icon {
 
 .actions { display: flex; gap: 10px; margin-top: 20px; }
 .actions button { flex: 1; padding: 13px; }
+
+.actions.vertical { flex-direction: column; margin-top: 4px; }
+.actions button.danger { color: var(--danger); font-weight: 600; }
 
 /* ── settings ─────────────────────────────────────────────────────────── */
 

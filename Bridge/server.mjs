@@ -13,7 +13,7 @@
 import { createServer, request as httpRequest } from "node:http"
 import { createServer as createSecureServer } from "node:https"
 import { connect } from "node:net"
-import { readFileSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, statSync } from "node:fs"
 import { extname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { timingSafeEqual } from "node:crypto"
@@ -28,6 +28,28 @@ import * as watcher from "./lib/watcher.mjs"
 
 const HERE = fileURLToPath(new URL(".", import.meta.url))
 const WEB = join(HERE, "web")
+
+/**
+ * A stamp identifying the interface currently on disk.
+ *
+ * Derived from the files themselves rather than a version number, so it changes
+ * whenever any of them is edited and nobody has to remember to bump anything.
+ * Cheap enough to compute per request — a handful of stat calls.
+ */
+function buildId() {
+  let newest = 0
+  let total = 0
+  try {
+    for (const name of readdirSync(WEB)) {
+      const info = statSync(join(WEB, name))
+      newest = Math.max(newest, info.mtimeMs)
+      total += info.size
+    }
+  } catch {
+    return "unknown"
+  }
+  return `${Math.round(newest)}-${total}`
+}
 
 const PORT = Number(process.env.CS_BRIDGE_PORT || 7788)
 const TLS_PORT = Number(process.env.CS_BRIDGE_TLS_PORT || 7443)
@@ -204,7 +226,11 @@ async function handleAPI(req, res, url) {
   const path = url.pathname
 
   if (req.method === "GET" && path === "/api/state") {
-    return json(res, 200, snapshot())
+    // buildId travels with the state so the phone can tell it is running an
+    // older copy of the interface. Installed to the Home Screen there is no
+    // address bar and no reload button, so without this a change on the Mac can
+    // stay invisible on the phone indefinitely.
+    return json(res, 200, { ...snapshot(), buildId: buildId() })
   }
 
   if (req.method === "POST" && path === "/api/sessions") {

@@ -119,10 +119,7 @@ struct ServiceEditor: View {
                 TextField("npm run dev", text: $service.command)
                     .textFieldStyle(.plain).font(Theme.mono(12))
             }
-            Field(label: "directory") {
-                TextField(model.project.displayPath, text: $service.cwd)
-                    .textFieldStyle(.plain).font(Theme.mono(12))
-            }
+            DirectoryField(projectPath: model.project.path, path: $service.cwd)
             Field(label: "port (optional)") {
                 TextField("5173", text: $portText)
                     .textFieldStyle(.plain).font(Theme.mono(12))
@@ -448,10 +445,7 @@ struct ScriptEditor: View {
                 TextField("npm run build", text: $script.command)
                     .textFieldStyle(.plain).font(Theme.mono(12))
             }
-            Field(label: "directory") {
-                TextField(model.project.path, text: $script.cwd)
-                    .textFieldStyle(.plain).font(Theme.mono(12))
-            }
+            DirectoryField(projectPath: model.project.path, path: $script.cwd)
             Text("Runs once in its own tab and shows the exit code in place. No port, no auto-start.")
                 .font(Theme.ui(11))
                 .foregroundStyle(Theme.text3)
@@ -585,6 +579,57 @@ struct SheetShell<Content: View>: View {
 }
 
 /// A labelled form field.
+/// Where a service or script runs.
+///
+/// Spelled out rather than left blank: an empty box meaning "the project root"
+/// is only obvious to whoever wrote it. The path is typed by hand, picked from
+/// the system panel, or put back with one tap — all three, because a sibling
+/// directory is faster to type than to click through, and a deep one is not.
+struct DirectoryField: View {
+    let projectPath: String
+    @Binding var path: String
+
+    private var atRoot: Bool {
+        path.trimmingCharacters(in: .whitespaces) == projectPath
+    }
+
+    var body: some View {
+        Field(label: "directory") {
+            HStack(spacing: 4) {
+                TextField(projectPath, text: $path)
+                    .textFieldStyle(.plain)
+                    .font(Theme.mono(12))
+                if !atRoot {
+                    Button("project root") { path = projectPath }
+                        .buttonStyle(.plain)
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(Theme.accent)
+                }
+                IconButton(icon: "folder", help: "Choose a folder…", action: choose)
+            }
+        }
+        // A record saved before this field existed carries an empty path, which
+        // has always meant the project root — show what it resolves to.
+        .onAppear {
+            if path.trimmingCharacters(in: .whitespaces).isEmpty { path = projectPath }
+        }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "Where should this run?"
+        let current = path.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? projectPath
+        panel.directoryURL = URL(fileURLWithPath: (current as NSString).expandingTildeInPath)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        path = url.path
+    }
+}
+
 struct Field<Content: View>: View {
     let label: String
     @ViewBuilder var content: () -> Content

@@ -22,9 +22,12 @@
 <section id="list" class="view">
   <header class="bar">
     <h1>Claude Studio</h1>
-    <button id="refresh" class="icon" title="Refresh" aria-label="Refresh">⟳</button>
-    <button id="open-settings" class="icon" title="Settings" aria-label="Settings">⚙</button>
+    <button id="open-menu" class="icon" title="Menu" aria-label="Menu">☰</button>
   </header>
+
+  <!-- Shown when the Mac is serving a newer interface than this phone loaded.
+       Installed to the Home Screen there is no browser reload to fall back on. -->
+  <button id="update-banner" class="banner hidden">A newer version is ready — tap to update</button>
 
   <div id="projects" class="scroll"></div>
 
@@ -46,33 +49,54 @@
     <button id="mode" class="mode" data-key="BTab" title="Cycle mode (Shift+Tab)">mode ⇧⇥</button>
   </header>
 
+  <!-- Above the terminal, not below it: the on-screen keyboard covers the
+       bottom of the screen, and keys you cannot reach while typing are keys you
+       cannot use. There is no message box — the terminal takes the keyboard
+       directly, so a second place to type would only be in the way. -->
+  <div class="keys">
+    <button data-key="Escape">esc</button>
+    <button data-key="BSpace" aria-label="Backspace">⌫</button>
+    <button data-newline="1" aria-label="New line">⇧⏎</button>
+    <button data-key="Left" aria-label="Left">←</button>
+    <button data-key="Down" aria-label="Down">↓</button>
+    <button data-key="Up" aria-label="Up">↑</button>
+    <button data-key="Right" aria-label="Right">→</button>
+    <button data-key="Tab">tab</button>
+    <button data-key="1">1</button>
+    <button data-key="2">2</button>
+    <button data-key="3">3</button>
+    <button data-key="C-c" class="warn">^C</button>
+  </div>
+
   <!-- The real terminal, served by ttyd through the bridge's /term proxy.
        Swiping over it scrolls tmux's scrollback; see attachScrollGesture. -->
   <div id="term-host"></div>
-
-  <footer class="composer">
-    <div class="keys">
-      <button data-key="Escape">esc</button>
-      <button data-key="BSpace" aria-label="Backspace">⌫</button>
-      <button data-newline="1" aria-label="New line">⇧⏎</button>
-      <button data-key="Left" aria-label="Left">←</button>
-      <button data-key="Down" aria-label="Down">↓</button>
-      <button data-key="Up" aria-label="Up">↑</button>
-      <button data-key="Right" aria-label="Right">→</button>
-      <button data-key="Tab">tab</button>
-      <button data-key="1">1</button>
-      <button data-key="2">2</button>
-      <button data-key="3">3</button>
-      <button data-key="C-c" class="warn">^C</button>
-      <button id="kill" class="warn right">Close tab</button>
-    </div>
-    <div class="input">
-      <textarea id="prompt" rows="1" placeholder="Message Claude…"
-                enterkeyhint="send" autocapitalize="sentences"></textarea>
-      <button id="send" class="primary" aria-label="Send">↑</button>
-    </div>
-  </footer>
 </section>
+
+<!-- ── Menu ─────────────────────────────────────────────────────────────── -->
+<div id="menu" class="sheet hidden">
+  <div class="sheet-body">
+    <h2>Claude Studio</h2>
+    <div class="actions vertical">
+      <button id="menu-refresh">Refresh sessions</button>
+      <button id="menu-update">Update the app</button>
+      <button id="menu-settings">Notifications &amp; settings</button>
+      <button id="menu-cancel">Cancel</button>
+    </div>
+    <p id="menu-build" class="group-note"></p>
+  </div>
+</div>
+
+<!-- ── Per-session actions ──────────────────────────────────────────────── -->
+<div id="actions" class="sheet hidden">
+  <div class="sheet-body">
+    <h2 id="actions-title">Session</h2>
+    <div class="actions vertical">
+      <button id="action-close" class="danger">Close tab</button>
+      <button id="action-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── New session sheet ────────────────────────────────────────────────── -->
 <div id="sheet" class="sheet hidden">

@@ -125,6 +125,18 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   and it fails on the whole string as a filename. The bridge re-reads
   `.cs/sessions.json` before every write and the app watches `.cs` (not the file:
   atomic writes replace the inode), so neither side erases the other's records.
+- **Updating the phone**: installed to the Home Screen there is no address bar and no
+  reload button, so a change on the Mac can stay invisible indefinitely. `/api/state`
+  carries a `buildId` derived from the mtimes and sizes of `Bridge/web/`; when it differs
+  from the one the page loaded with, a banner offers to update. Updating clears the Cache
+  Storage and calls `registration.update()` — NEVER `unregister()`, which takes the push
+  subscription with it and stops notifications silently.
+- **Phone terminal layout**: the key row goes ABOVE the terminal — the on-screen keyboard
+  covers the bottom of the screen, so keys placed under it are unreachable exactly when
+  they are needed. There is no message box either: the terminal already owns the keyboard,
+  and a second place to type competes with it. Session rows are a `div` holding two
+  buttons (open, and `⋯` for actions) — a button nested in a button is invalid and the
+  inner one stops receiving taps.
 - **Phone scrolling**: the scrollback is tmux's, and Claude's TUI runs on the alternate
   screen, so the emulator has nothing of its own to scroll. `POST /scroll` enters
   copy-mode (`-e`, which exits by itself at the bottom) exactly as the Mac does with the

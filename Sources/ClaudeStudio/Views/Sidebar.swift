@@ -424,7 +424,7 @@ struct Sidebar: View {
         if model.store.config.services.isEmpty {
             emptyHint("No services defined.", action: "Add a service") {
                 addingService = true
-                serviceSheet = Service(name: "new service", command: "")
+                serviceSheet = Service(name: "new service", command: "", cwd: model.project.path)
             }
         }
         ForEach(model.store.config.services) { service in
