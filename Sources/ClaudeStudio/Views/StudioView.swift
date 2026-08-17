@@ -32,6 +32,9 @@ struct StudioView: View {
             StatusBar(model: model)
         }
         .background(Theme.bg)
+        .overlay {
+            if model.paletteOpen { CommandPalette(model: model) }
+        }
         .onDisappear { model.stop() }
     }
 
@@ -135,7 +138,9 @@ private struct TopBar: View {
         .padding(.leading, 0)
         .padding(.trailing, 10)
         .frame(height: 42)
-        .background(Theme.chrome)
+        // Double-clicking empty header space zooms the window, matching the title
+        // bar. The handler sits BEHIND the controls, so buttons still get their taps.
+        .background(WindowZoomOnDoubleClick().background(Theme.chrome))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 }
@@ -143,6 +148,7 @@ private struct TopBar: View {
 private struct ProjectMenu: View {
     @ObservedObject var model: StudioModel
     let onClose: () -> Void
+    @StateObject private var recents = Recents.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -157,22 +163,48 @@ private struct ProjectMenu: View {
                 NSWorkspace.shared.open(Paths.csDir(model.project))
             }
             Divider().padding(.vertical, 5)
+
+            SectionLabel(text: "workspaces")
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 4)
+
+            // Another project always opens in its own window — that is what keeps
+            // switching instant, since nothing has to be torn down.
+            ForEach(recents.projects.filter { $0.path != model.project.path }.prefix(6)) { project in
+                item(project.name, icon: "folder", detail: project.displayPath) {
+                    WindowManager.shared.open(project: project)
+                }
+            }
+            item("Open folder…", icon: "folder.badge.plus") {
+                WindowManager.shared.perform(.openFolder)
+            }
+
+            Divider().padding(.vertical, 5)
             item("Close project", icon: "xmark", tone: Theme.danger) { onClose() }
         }
         .padding(6)
-        .frame(width: 230)
+        .frame(width: 260)
     }
 
-    private func item(_ title: String, icon: String, tone: Color = Theme.text,
-                      action: @escaping () -> Void) -> some View {
+    private func item(_ title: String, icon: String, detail: String = "",
+                      tone: Color = Theme.text, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
                 HStack(spacing: 8) {
                     Image(systemName: icon).font(.system(size: 11)).frame(width: 14)
-                    Text(title).font(Theme.ui(12.5))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title).font(Theme.ui(12.5)).foregroundStyle(tone)
+                        if !detail.isEmpty {
+                            Text(detail)
+                                .font(Theme.mono(10))
+                                .foregroundStyle(Theme.text3)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                    }
                     Spacer()
                 }
-                .foregroundStyle(tone)
             }
         }
         .buttonStyle(.plain)

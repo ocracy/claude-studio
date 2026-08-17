@@ -9,6 +9,24 @@ import SwiftTerm
 /// single screen tmux draws.
 final class StudioTerminalView: LocalProcessTerminalView {
     var tmuxSession: String?
+
+    /// Work that must not run before the view has a real size.
+    ///
+    /// A terminal spawned while the view still has its placeholder frame computes
+    /// cols/rows from that frame, so tmux is created with the wrong geometry: the
+    /// first paint is garbled and the top rows sit outside the viewport. The start
+    /// closure therefore waits for the first real layout pass.
+    private var pendingStart: (() -> Void)?
+
+    var isSized: Bool { window != nil && frame.width > 120 && frame.height > 60 }
+
+    func deferStart(_ work: @escaping () -> Void) { pendingStart = work }
+
+    func runPendingStart() {
+        guard isSized, let work = pendingStart else { return }
+        pendingStart = nil
+        work()
+    }
 }
 
 /// The app's runtime core: terminal view cache, process lifecycle, tmux sessions
@@ -72,6 +90,12 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     }
 
     func isLive(_ key: String) -> Bool { views[key]?.process?.running == true }
+
+    /// Runs `start` once the view has a real size — immediately if it already has
+    /// one, otherwise on the first layout pass (see `StudioTerminalView`).
+    private func whenSized(_ view: StudioTerminalView, _ start: @escaping () -> Void) {
+        if view.isSized { start() } else { view.deferStart(start) }
+    }
 
     func hasView(_ key: String) -> Bool { views[key] != nil }
 
@@ -140,6 +164,12 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                 Tmux.setOption(session, "@cs_title", title)
                 Tmux.touch(session)
             }
+            // A reattached session may still be drawn at the previous client's size;
+            // ask tmux for a full repaint once the TUI has started.
+            after(0.9) { [weak self] in
+                Tmux.refreshClients(of: session)
+                self?.redraw(key: key)
+            }
         }
 
         // With auto-run off the prompt is typed into the box but not sent — the
@@ -157,9 +187,17 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         if v.process?.running == true { return }
         starting.insert(key)
 
+        whenSized(v) { [weak self] in
+            self?.spawnShell(view: v, key: key, session: session, project: project,
+                             cwd: cwd, title: title)
+        }
+    }
+
+    private func spawnShell(view v: StudioTerminalView, key: String, session: String,
+                            project: Project, cwd: String, title: String) {
         let expanded = (cwd as NSString).expandingTildeInPath
-        let cols = max(80, v.getTerminal().cols)
-        let rows = max(24, v.getTerminal().rows)
+        let cols = max(20, v.getTerminal().cols)
+        let rows = max(5, v.getTerminal().rows)
         var env = baseEnvironment
         env.append("COLUMNS=\(cols)")
         env.append("LINES=\(rows)")
@@ -182,6 +220,10 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                 Tmux.setOption(session, "@cs_title", title)
                 Tmux.setOption(session, "@cs_kind", "shell")
             }
+            after(0.9) { [weak self] in
+                Tmux.refreshClients(of: session)
+                self?.redraw(key: key)
+            }
         }
     }
 
@@ -196,6 +238,8 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         let cwd = service.resolvedCwd(projectPath: project.path)
         feed(key: key, "\r\n\u{1B}[2m— starting: \(service.command)  (\(cwd)) —\u{1B}[0m\r\n")
 
+        // Services must start without a visible tab (auto-start on open), so they
+        // do not wait for layout: their output is plain text and reflows when shown.
         let cols = max(80, v.getTerminal().cols)
         let rows = max(24, v.getTerminal().rows)
         // stty stamps the PTY size from the inside on first spawn; SwiftTerm's
@@ -315,6 +359,14 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
     func feed(key: String, _ ansi: String) {
         view(for: key).getTerminal().feed(text: ansi)
+    }
+
+    /// Forces SwiftTerm to repaint every row of the given terminal.
+    func redraw(key: String) {
+        guard let v = views[key] else { return }
+        let term = v.getTerminal()
+        term.refresh(startRow: 0, endRow: term.rows)
+        v.needsDisplay = true
     }
 
     /// Clears the screen but keeps the scrollback (`reset()` would erase it).

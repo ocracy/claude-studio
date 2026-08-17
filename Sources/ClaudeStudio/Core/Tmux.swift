@@ -100,6 +100,17 @@ enum Tmux {
         return out
     }
 
+    /// Forces every client attached to the session to repaint. tmux only redraws
+    /// on its own when something changes, so a client that attached mid-frame can
+    /// otherwise sit on a partially drawn screen.
+    static func refreshClients(of session: String) {
+        let r = run(["list-clients", "-t", session, "-F", "#{client_name}"])
+        guard r.status == 0 else { return }
+        for client in r.out.split(separator: "\n") where !client.isEmpty {
+            _ = run(["refresh-client", "-t", String(client)])
+        }
+    }
+
     /// Scrollback navigation: `copy-mode -e` exits by itself at the bottom.
     static func scroll(_ session: String, lines: Int, up: Bool) {
         guard lines > 0 else { return }

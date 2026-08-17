@@ -51,7 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Commands routed from the menu to the key window; applied by `WindowManager.perform`.
 enum StudioCommand {
-    case openFolder, newSession, newTerminal, newTab, closeTab, nextTab, previousTab
+    case openFolder, newSession, newTerminal, newTab, closeTab, nextTab, previousTab, palette
+    case selectTab(Int)
 }
 
 // MARK: - Menu
@@ -127,12 +128,23 @@ enum MainMenuBuilder {
         // View
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
+        viewMenu.addItem(action(title: "Command Palette…", key: "p", modifiers: .command) {
+            WindowManager.shared.perform(.palette)
+        })
+        viewMenu.addItem(.separator())
         viewMenu.addItem(action(title: "Next Tab", key: "]", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.nextTab)
         })
         viewMenu.addItem(action(title: "Previous Tab", key: "[", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.previousTab)
         })
+        viewMenu.addItem(.separator())
+        // ⌘1…⌘9 jump straight to a tab, like a browser.
+        for index in 1...9 {
+            viewMenu.addItem(action(title: "Tab \(index)", key: "\(index)", modifiers: .command) {
+                WindowManager.shared.perform(.selectTab(index - 1))
+            })
+        }
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 

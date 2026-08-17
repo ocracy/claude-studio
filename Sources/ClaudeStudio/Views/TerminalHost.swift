@@ -51,12 +51,15 @@ final class TerminalContainer: NSView {
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true
+            // The view now has its real geometry — safe to spawn.
+            (view as? StudioTerminalView)?.runPendingStart()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak terminal] in
             guard let view = terminal, view.window != nil else { return }
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true
+            (view as? StudioTerminalView)?.runPendingStart()
         }
     }
 
@@ -71,6 +74,7 @@ final class TerminalContainer: NSView {
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true
+            (view as? StudioTerminalView)?.runPendingStart()
         }
         resizeDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)

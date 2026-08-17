@@ -58,7 +58,12 @@ final class WindowManager: NSObject, NSWindowDelegate {
         case .newSession:   model.newSession()
         case .newTab:       model.newTabForContext()
         case .newTerminal:  model.newTerminal()
-        case .closeTab:     if let id = model.activeTabID { model.closeTab(id: id) }
+        case .closeTab:
+            // No tabs left to close → close the window, as any editor would.
+            if let id = model.activeTabID { model.closeTab(id: id) }
+            else { controllers.first(where: \.isKey)?.window.performClose(nil) }
+        case let .selectTab(index): model.selectTab(index)
+        case .palette:      model.paletteOpen.toggle()
         case .nextTab:      model.selectNextTab(1)
         case .previousTab:  model.selectNextTab(-1)
         case .openFolder:   break
@@ -127,4 +132,19 @@ final class StudioWindow: NSObject, NSWindowDelegate {
     /// Menu commands apply to the key window only.
     var isKey: Bool { window.isKeyWindow }
     var activeModel: StudioModel? { model }
+}
+
+/// Double-click-to-zoom for the custom header.
+///
+/// The window's own title bar is hidden, so AppKit's default double-click
+/// behaviour never fires. This transparent view restores it for the header strip.
+struct WindowZoomOnDoubleClick: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ZoomView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ZoomView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount >= 2 { window?.zoom(nil) } else { super.mouseDown(with: event) }
+        }
+    }
 }

@@ -54,6 +54,8 @@ final class StudioModel: ObservableObject {
     @Published var sidebarWidth: CGFloat = 260
     /// Selected run in the skill/cron pane.
     @Published var selectedRun: [String: String] = [:]
+    /// ⌘P palette visibility.
+    @Published var paletteOpen = false
 
     private var refreshTimer: Timer?
     private var autoAttachPending = true
@@ -403,6 +405,12 @@ final class StudioModel: ObservableObject {
     }
 
     var activeTab: StudioTab? { tabs.first { $0.id == activeTabID } }
+
+    /// ⌘1…⌘9 — jumps to the nth tab if it exists.
+    func selectTab(_ index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        activeTabID = tabs[index].id
+    }
 
     func selectNextTab(_ offset: Int) {
         guard !tabs.isEmpty, let current = activeTabID,
