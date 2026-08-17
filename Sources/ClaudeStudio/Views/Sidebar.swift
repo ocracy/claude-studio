@@ -10,6 +10,7 @@ struct Sidebar: View {
     @State private var commandSheet: ProjectCommand?
     @State private var addingCommand = false
     @State private var addMenu = false
+    @State private var mcpSheet: MCPServer?
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
     @State private var sessionManager = false
@@ -26,6 +27,7 @@ struct Sidebar: View {
                     switch model.pane {
                     case .sessions:  sessionsList
                     case .skills:    skillsList
+                    case .mcp:       mcpList
                     case .cron:      cronList
                     case .services:  servicesList
                     case .commands:  commandsList
@@ -40,6 +42,7 @@ struct Sidebar: View {
         }
         .frame(maxHeight: .infinity)
         .background(Theme.chrome)
+        .onChange(of: model.pane) { if model.pane == .mcp { model.mcp.scan() } }
         .sheet(item: $serviceSheet) { service in
             ServiceEditor(model: model, service: service, isNew: addingService) {
                 serviceSheet = nil
@@ -54,6 +57,9 @@ struct Sidebar: View {
                 commandSheet = nil
                 addingCommand = false
             }
+        }
+        .sheet(item: $mcpSheet) { server in
+            MCPEditor(model: model, server: server) { mcpSheet = nil }
         }
         .sheet(isPresented: $sessionManager) {
             SessionManager(model: model) { sessionManager = false }
@@ -75,6 +81,13 @@ struct Sidebar: View {
                 }
                 .popover(isPresented: $sessionMenu, arrowEdge: .bottom) {
                     SessionOpener(model: model) { sessionMenu = false }
+                }
+            } else if model.pane == .mcp {
+                IconButton(icon: "stethoscope", help: "Check connections") {
+                    model.mcp.checkHealth()
+                }
+                IconButton(icon: "plus", help: "Add an MCP server") {
+                    mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
                 }
             } else if model.pane == .services || model.pane == .commands {
                 // One button, two things to create: a long-running service or a
@@ -123,6 +136,9 @@ struct Sidebar: View {
         switch model.pane {
         case .sessions:  return "\(model.openSessions.count) open · \(model.pastSessions.count) previous"
         case .skills:    return "\(model.skills.skills.count) skills · .claude/skills"
+        case .mcp:       return model.mcp.checkingHealth
+                                ? "checking connections…"
+                                : "\(model.mcp.servers.count) servers · claude mcp"
         case .cron:      return "\(model.store.activeSchedules.count) active schedules"
         case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) running"
         case .commands:  return "\(model.store.config.commands.count) commands"
@@ -134,6 +150,7 @@ struct Sidebar: View {
         switch model.pane {
         case .sessions:  return "New session"
         case .skills:    return "Create a new skill with Claude"
+        case .mcp:       return "Add an MCP server"
         case .cron:      return "Schedule a skill"
         case .services:  return "Add a service"
         case .commands:  return "Add a command"
@@ -146,7 +163,9 @@ struct Sidebar: View {
         case .sessions:
             model.newSession()
         case .skills:
-            model.newSession(name: "new skill", prompt: newSkillPrompt, autoRun: true)
+            model.createSkillWithClaude()
+        case .mcp:
+            mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
         case .cron:
             guard let first = model.skills.skills.first else { return }
             scheduleSheet = model.store.schedule(for: first.name) ?? Schedule(skill: first.name)
@@ -191,13 +210,6 @@ struct Sidebar: View {
         .buttonStyle(.plain)
     }
 
-    private var newSkillPrompt: String {
-        """
-        Add a new Claude Code skill to this project: `.claude/skills/<name>/SKILL.md`.
-        Ask me what it should do first, then write a short SKILL.md with `name` and
-        `description` in its frontmatter.
-        """
-    }
 
     // MARK: - Sessions
 
@@ -297,9 +309,8 @@ struct Sidebar: View {
 
     @ViewBuilder private var skillsList: some View {
         if model.skills.skills.isEmpty {
-            emptyHint("`.claude/skills` is empty.", action: "Create a skill with Claude") {
-                model.newSession(name: "new skill", prompt: newSkillPrompt, autoRun: true)
-            }
+            emptyHint("`.claude/skills` is empty.", action: "Create a skill with Claude",
+                      perform: model.createSkillWithClaude)
         }
         ForEach(model.skills.skills) { skill in
             let schedule = model.store.schedule(for: skill.name)
@@ -412,6 +423,46 @@ struct Sidebar: View {
                         model.engine.stopService(service)
                         model.store.removeService(service.id)
                     }
+                }
+        }
+    }
+
+    // MARK: - MCP servers
+
+    @ViewBuilder private var mcpList: some View {
+        if model.mcp.servers.isEmpty {
+            emptyHint("No MCP servers configured.", action: "Add a server") {
+                mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
+            }
+        }
+        ForEach(model.mcp.servers) { server in
+            row(selected: false,
+                dot: server.health.color,
+                title: server.name,
+                meta: server.detail,
+                trailing: {
+                    Text(server.scope.label)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.text3)
+                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                        .background(Capsule().strokeBorder(Theme.separator))
+                        .help(server.scope.help)
+                },
+                action: { mcpSheet = server })
+                .contextMenu {
+                    Button("Details") {
+                        model.runMCPCommand("get \(Shell.quoted(server.name))",
+                                            title: "mcp: \(server.name)")
+                    }
+                    if server.transport != .stdio {
+                        Button("Sign in") {
+                            model.runMCPCommand("login \(Shell.quoted(server.name))",
+                                                title: "mcp login: \(server.name)")
+                        }
+                    }
+                    Button("Check connections") { model.mcp.checkHealth() }
+                    Divider()
+                    Button("Remove") { model.mcp.remove(server) }
                 }
         }
     }

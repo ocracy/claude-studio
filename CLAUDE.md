@@ -41,6 +41,7 @@ Sources/ClaudeStudio/
 │   ├── TerminalEngine.swift   # SwiftTerm view cache, spawning, service status, attention
 │   ├── ProjectConfig.swift    # .cs/*.json + launchd sync
 │   ├── Skills.swift           # .claude/skills scanner + frontmatter + directory watcher
+│   ├── MCP.swift              # MCP servers: reads Claude's config, mutates via claude mcp
 │   ├── Runs.swift             # run reports (the reports are the state)
 │   ├── Scheduler.swift        # runner script + launchd plist
 │   ├── HookBridge.swift       # Claude Code hooks → session state
@@ -78,6 +79,12 @@ Sources/ClaudeStudio/
 - **Scrolling**: in tmux-backed terminals the wheel event is translated into
   copy-mode and SWALLOWED (`return nil`). Letting SwiftTerm scroll its empty buffer
   makes the screen jitter.
+- **MCP**: never write MCP config ourselves. Listing reads `~/.claude.json`
+  (`mcpServers` for user scope, `projects[<path>].mcpServers` for local) and the
+  project's `.mcp.json` (project scope); changes go through `claude mcp add|remove`.
+  `claude mcp list` connects to every server, so it runs only on demand. Health lines
+  are matched against known server names — a plugin server is `plugin:a:b` and urls
+  contain colons, so splitting on punctuation gets the name wrong.
 - **Sessions**: `SessionRecord` lives in `.cs/sessions.json` and outlives tmux.
   Claude's `session_id` is captured from the hook, and reopening only passes
   `--resume` when `ClaudeTranscripts.exists` confirms the transcript — otherwise

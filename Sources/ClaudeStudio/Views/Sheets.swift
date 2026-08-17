@@ -143,6 +143,173 @@ struct ServiceEditor: View {
     }
 }
 
+// MARK: - MCP server
+
+/// Add or inspect an MCP server. Writing goes through `claude mcp add`, so Claude's
+/// own validation and scope handling stay authoritative; an existing server is shown
+/// read-only with the actions that only its CLI can perform.
+struct MCPEditor: View {
+    @ObservedObject var model: StudioModel
+    @State var server: MCPServer
+    let onDismiss: () -> Void
+
+    @State private var argsText = ""
+    @State private var envText = ""
+    @State private var headersText = ""
+    @State private var failure: String?
+    @State private var saving = false
+
+    /// A server that already exists on disk is edited by removing and re-adding —
+    /// the CLI has no update verb — so the form only creates.
+    private var isNew: Bool { !model.mcp.servers.contains { $0.id == server.id } }
+
+    var body: some View {
+        SheetShell(title: isNew ? "Add MCP server" : server.name,
+                   destructive: isNew ? nil : ("Remove server", {
+                       model.mcp.remove(server)
+                       onDismiss()
+                   }),
+                   confirm: isNew ? ("Add", save) : ("Done", onDismiss),
+                   onDismiss: onDismiss) {
+            if isNew {
+                Field(label: "name") {
+                    TextField("sentry", text: $server.name)
+                        .textFieldStyle(.plain).font(Theme.ui(12.5))
+                }
+
+                Field(label: "transport") {
+                    Picker("", selection: $server.transport) {
+                        ForEach(MCPServer.Transport.allCases, id: \.self) {
+                            Text($0.rawValue).tag($0)
+                        }
+                    }
+                    .labelsHidden().pickerStyle(.segmented)
+                }
+
+                if server.transport == .stdio {
+                    Field(label: "command") {
+                        TextField("npx", text: $server.command)
+                            .textFieldStyle(.plain).font(Theme.mono(12))
+                    }
+                    Field(label: "arguments (one per line)") {
+                        TextEditor(text: $argsText)
+                            .font(Theme.mono(12)).frame(height: 48)
+                            .scrollContentBackground(.hidden)
+                    }
+                    Field(label: "environment (KEY=value per line)") {
+                        TextEditor(text: $envText)
+                            .font(Theme.mono(12)).frame(height: 40)
+                            .scrollContentBackground(.hidden)
+                    }
+                } else {
+                    Field(label: "url") {
+                        TextField("https://mcp.example.com/mcp", text: $server.url)
+                            .textFieldStyle(.plain).font(Theme.mono(12))
+                    }
+                    Field(label: "headers (Name: value per line)") {
+                        TextEditor(text: $headersText)
+                            .font(Theme.mono(12)).frame(height: 40)
+                            .scrollContentBackground(.hidden)
+                    }
+                }
+
+                Field(label: "scope") {
+                    Picker("", selection: $server.scope) {
+                        ForEach(MCPServer.Scope.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                    .labelsHidden().pickerStyle(.segmented)
+                }
+                Text(server.scope.help)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.text3)
+
+                if let failure {
+                    Text(failure)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                detail("transport", server.transport.rawValue)
+                detail(server.transport == .stdio ? "command" : "url", server.detail)
+                detail("scope", "\(server.scope.label) — \(server.scope.help)")
+                detail("connection", server.health.label)
+
+                HStack(spacing: 8) {
+                    if server.transport != .stdio {
+                        SmallButton(title: "Sign in") {
+                            model.runMCPCommand("login \(Shell.quoted(server.name))",
+                                                title: "mcp login: \(server.name)")
+                            onDismiss()
+                        }
+                    }
+                    SmallButton(title: "Details") {
+                        model.runMCPCommand("get \(Shell.quoted(server.name))",
+                                            title: "mcp: \(server.name)")
+                        onDismiss()
+                    }
+                    SmallButton(title: "Check connection") { model.mcp.checkHealth() }
+                }
+                Text("Edit a server by removing it and adding it again — `claude mcp` has no update verb.")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear {
+            argsText = server.args.joined(separator: "\n")
+            envText = server.env.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n")
+            headersText = server.headers.map { "\($0.key): \($0.value)" }.sorted()
+                .joined(separator: "\n")
+        }
+    }
+
+    private func detail(_ key: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            SectionLabel(text: key)
+            Text(value)
+                .font(Theme.mono(11.5))
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func save() {
+        guard !saving, server.name.nilIfEmpty != nil else { return }
+        switch server.transport {
+        case .stdio: guard server.command.nilIfEmpty != nil else { return }
+        case .http, .sse: guard server.url.nilIfEmpty != nil else { return }
+        }
+
+        server.args = argsText.components(separatedBy: .newlines).compactMap(\.nilIfEmpty)
+        server.env = Self.pairs(envText, separator: "=")
+        server.headers = Self.pairs(headersText, separator: ":")
+
+        saving = true
+        model.mcp.add(server) { ok, output in
+            saving = false
+            if ok { onDismiss() } else { failure = output.nilIfEmpty ?? "claude mcp add failed." }
+        }
+    }
+
+    /// Splits `KEY=value` / `Name: value` lines, keeping any separator inside the value.
+    private static func pairs(_ text: String, separator: Character) -> [String: String] {
+        var out: [String: String] = [:]
+        for line in text.components(separatedBy: .newlines) {
+            guard let index = line.firstIndex(of: separator) else { continue }
+            let key = String(line[line.startIndex..<index]).trimmingCharacters(in: .whitespaces)
+            let value = String(line[line.index(after: index)...])
+                .trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            out[key] = value
+        }
+        return out
+    }
+}
+
 // MARK: - Command settings
 
 struct CommandEditor: View {

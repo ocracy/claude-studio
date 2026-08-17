@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainMenuBuilder.install()
+        HeaderDoubleClick.install()
 
         // Heavy setup happens in the background: hook bridge, tmux config, PATH
         // snapshot. The window never waits for them.

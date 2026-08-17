@@ -210,6 +210,15 @@ struct CommandPalette: View {
             })
         }
 
+        for server in model.mcp.servers {
+            out.append(PaletteItem(id: "m-\(server.id)", icon: "point.3.connected.trianglepath.dotted",
+                                   group: "MCP server", title: server.name,
+                                   subtitle: "\(server.scope.label) · \(server.detail)") {
+                model.runMCPCommand("get \(Shell.quoted(server.name))",
+                                    title: "mcp: \(server.name)")
+            })
+        }
+
         for command in model.store.config.commands {
             out.append(PaletteItem(id: "x-\(command.id)", icon: "bolt", group: "Command",
                                    title: command.name, subtitle: command.command) {
@@ -243,6 +252,14 @@ struct CommandPalette: View {
         out.append(PaletteItem(id: "open-folder", icon: "folder.badge.plus", group: "Workspace",
                                title: "Open folder…", shortcut: "⌘O") {
             WindowManager.shared.perform(.openFolder)
+        })
+        out.append(PaletteItem(id: "new-skill", icon: "sparkles", group: "Action",
+                               title: "Create a skill with Claude") {
+            model.createSkillWithClaude()
+        })
+        out.append(PaletteItem(id: "check-mcp", icon: "stethoscope", group: "Action",
+                               title: "Check MCP connections") {
+            model.mcp.checkHealth()
         })
         out.append(PaletteItem(id: "settings", icon: "gearshape", group: "Action",
                                title: "Settings", shortcut: "⌘,") {

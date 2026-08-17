@@ -41,7 +41,8 @@ sound.
 The sidebar lists the project's `.claude/skills` — plus your global ones, shadowed by
 project skills exactly as Claude resolves them — with their frontmatter description.
 Skill bodies render as markdown. Run one in a visible session to watch it work, or in
-the background to stay out of its way.
+the background to stay out of its way. The "+" opens a session that writes a new
+skill, leaning on Anthropic's own `skill-development` skill when it is installed.
 
 ### Scheduled runs that survive a quit
 Any skill can be scheduled hourly, daily or weekly. Schedules are bound to
@@ -49,6 +50,15 @@ Any skill can be scheduled hourly, daily or weekly. Schedules are bound to
 markdown report into `.cs/runs/<skill>/`, and the app shows the history with status,
 timestamp and produced output side by side. There is no database: the reports *are*
 the state, so a run that happened while the app was closed simply appears.
+
+### MCP servers, from Claude's own configuration
+The MCP section lists every server Claude Code will load for this project, read
+straight from the three places Claude keeps them — `~/.claude.json` (global), the
+project's `.mcp.json` (shared with the team) and the project's local entry (private
+to this machine) — with a badge saying which. Adding and removing goes through
+`claude mcp add|remove`, so Claude's own validation and scope rules stay in charge.
+"Check connections" runs `claude mcp list` and marks each server connected, needing
+authentication or failed; HTTP servers can be signed in to from the list.
 
 ### One-shot commands
 `npm run build`, `php artisan optimize`, a deploy script — commands live in their own
@@ -109,6 +119,7 @@ inside the project:
 ```
 <project>/
 ├── .claude/skills/…        # skills (Claude Code's own layout; untouched)
+├── .mcp.json               # MCP servers (Claude Code's own file; untouched)
 └── .cs/
     ├── services.json       # services            ← share with your team
     ├── commands.json       # one-shot commands   ← share with your team
@@ -174,7 +185,7 @@ duration_sec: 8
 | ⌘T | New tab (a session on a Claude tab, a terminal otherwise) |
 | ⇧⌘T | New terminal |
 | ⌘, | Settings |
-| ⌘P | Command palette |
+| ⌘P | Command palette (sessions, skills, commands, services, MCP, workspaces) |
 | ⌘1…⌘9 | Go to tab |
 | ⌘W | Close tab |
 | ⇧⌘] / ⇧⌘[ | Next / previous tab |

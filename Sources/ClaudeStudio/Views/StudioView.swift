@@ -138,9 +138,9 @@ private struct TopBar: View {
         .padding(.leading, 0)
         .padding(.trailing, 10)
         .frame(height: 42)
-        // Double-clicking empty header space zooms the window, matching the title
-        // bar. The handler sits BEHIND the controls, so buttons still get their taps.
-        .background(WindowZoomOnDoubleClick().background(Theme.chrome))
+        // The marker sits BEHIND the controls so a double-click on empty header
+        // space can be told apart from a click on a button (see HeaderDoubleClick).
+        .background(HeaderBackground().background(Theme.chrome))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 }

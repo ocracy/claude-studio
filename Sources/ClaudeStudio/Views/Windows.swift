@@ -134,17 +134,55 @@ final class StudioWindow: NSObject, NSWindowDelegate {
     var activeModel: StudioModel? { model }
 }
 
-/// Double-click-to-zoom for the custom header.
+/// Marks the empty area of the custom header.
 ///
-/// The window's own title bar is hidden, so AppKit's default double-click
-/// behaviour never fires. This transparent view restores it for the header strip.
-struct WindowZoomOnDoubleClick: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { ZoomView() }
+/// Nothing is drawn: it exists so hit-testing can tell "header background" from
+/// "a control in the header". `HeaderDoubleClick` uses that to decide whether a
+/// double-click should zoom the window.
+struct HeaderBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { HeaderMarkerView() }
     func updateNSView(_ view: NSView, context: Context) {}
+}
 
-    private final class ZoomView: NSView {
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount >= 2 { window?.zoom(nil) } else { super.mouseDown(with: event) }
+final class HeaderMarkerView: NSView {}
+
+/// Restores the native "double-click the title bar to zoom" behaviour.
+///
+/// The window uses `fullSizeContentView` with a transparent title bar, so the top
+/// ~28 px belong to AppKit's title bar and never reach our SwiftUI header — which
+/// is why a double-click up there did nothing. The event is intercepted before the
+/// window sees it, and consumed, so the system setting for title-bar double-clicks
+/// cannot double-toggle the zoom either.
+@MainActor
+enum HeaderDoubleClick {
+    /// Height of the header strip, and the traffic-light zone to leave alone.
+    private static let headerHeight: CGFloat = 42
+    private static let trafficLightWidth: CGFloat = 92
+
+    private static var monitor: Any?
+
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            MainActor.assumeIsolated {
+                guard event.clickCount == 2,
+                      let window = event.window,
+                      window.delegate is StudioWindow,
+                      window.isZoomable
+                else { return event }
+
+                let point = event.locationInWindow
+                guard point.y > window.frame.height - headerHeight,
+                      point.x > trafficLightWidth
+                else { return event }
+
+                // Only empty header space zooms; a control keeps its own click.
+                let hit = window.contentView?.hitTest(point)
+                guard hit == nil || hit is HeaderMarkerView else { return event }
+
+                window.zoom(nil)
+                return nil
+            }
         }
     }
 }

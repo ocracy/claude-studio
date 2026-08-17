@@ -8,13 +8,14 @@ import AppKit
 final class StudioModel: ObservableObject {
 
     enum Pane: String, CaseIterable, Identifiable {
-        case sessions, skills, cron, services, commands, terminals
+        case sessions, skills, mcp, cron, services, commands, terminals
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .sessions:  return "sessions"
             case .skills:    return "skills"
+            case .mcp:       return "mcp servers"
             case .cron:      return "scheduled"
             case .services:  return "services"
             case .commands:  return "commands"
@@ -25,6 +26,7 @@ final class StudioModel: ObservableObject {
             switch self {
             case .sessions:  return "bubble.left.and.bubble.right"
             case .skills:    return "sparkles"
+            case .mcp:       return "point.3.connected.trianglepath.dotted"
             case .cron:      return "clock"
             case .services:  return "server.rack"
             case .commands:  return "bolt"
@@ -35,6 +37,7 @@ final class StudioModel: ObservableObject {
             switch self {
             case .sessions:  return "Claude sessions"
             case .skills:    return "Skills (.claude/skills)"
+            case .mcp:       return "MCP servers"
             case .cron:      return "Scheduled runs"
             case .services:  return "Services"
             case .commands:  return "Commands"
@@ -46,6 +49,7 @@ final class StudioModel: ObservableObject {
     let project: Project
     let store: ProjectStore
     let skills: SkillStore
+    let mcp = MCPStore()
     let runs: RunStore
     let engine: TerminalEngine
 
@@ -86,6 +90,7 @@ final class StudioModel: ObservableObject {
             self.runs.refresh(skills: self.skills.skills.map(\.name))
         }
         runs.startPolling { [weak self] in self?.skills.skills.map(\.name) ?? [] }
+        mcp.start(project: project)
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
             Task { @MainActor in
@@ -352,6 +357,17 @@ final class StudioModel: ObservableObject {
         store.config.services.filter { (engine.serviceStatus[$0.id] ?? .stopped).isLive }.count
     }
 
+    // MARK: - MCP servers
+
+    /// Runs an interactive `claude mcp` subcommand in its own tab — sign-in flows
+    /// and `get` both print to a terminal, so they belong in one.
+    func runMCPCommand(_ subcommand: String, title: String) {
+        let tab = StudioTab(kind: .command, ref: "mcp-\(subcommand)", title: title)
+        open(tab)
+        engine.runCommandTab(key: tab.terminalKey, name: title,
+                             command: "claude mcp \(subcommand)", cwd: project.path)
+    }
+
     // MARK: - Commands
 
     /// Opens the command's tab and runs it. Pressing it again re-runs in place.
@@ -381,6 +397,22 @@ final class StudioModel: ObservableObject {
         open(StudioTab(kind: .skill, ref: skill.name, title: skill.name))
         runs.refresh(skill: skill.name)
     }
+
+    /// Opens a session that creates a new skill. The prompt names Anthropic's own
+    /// `skill-development` skill, which Claude loads by itself when the plugin is
+    /// installed; without it Claude still writes a plain SKILL.md.
+    func createSkillWithClaude() {
+        newSession(name: "new skill", prompt: Self.createSkillPrompt, autoRun: true)
+    }
+
+    static let createSkillPrompt = """
+    Create a new Claude Code skill for this project at `.claude/skills/<name>/SKILL.md`.
+
+    Use the skill-development skill for the structure and description conventions if \
+    it is available. Ask me what the skill should do and when it should trigger, then \
+    write the file with `name` and `description` in its frontmatter and keep the body \
+    focused on instructions rather than prose.
+    """
 
     /// Runs the skill in a visible Claude session.
     func runSkillVisible(_ skill: Skill) {
