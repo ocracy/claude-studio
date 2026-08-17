@@ -32,7 +32,8 @@ Sources/ClaudeStudio/
 ├── main.swift             # entry point (NSApplication; WindowGroup is NOT used)
 ├── ClaudeStudioApp.swift  # AppDelegate + main menu
 ├── Theme.swift            # single design source: color, typography, shared controls
-├── Models/Models.swift    # Project, StudioTab, SessionRecord, Skill, Schedule, Service, SkillRun
+├── Models/Models.swift    # Project, StudioTab, SessionRecord, Skill, Schedule, Service,
+│                          # ProjectCommand, SkillRun
 ├── Core/
 │   ├── Paths.swift            # ~/Library/.../Claude Studio  +  <project>/.cs
 │   ├── Shell.swift            # PATH snapshot, process helpers, port probes
@@ -49,7 +50,7 @@ Sources/ClaudeStudio/
 │   ├── Recents.swift          # recent projects + folder picker
 │   └── StudioModel.swift      # all state for one window
 └── Views/                 # Windows, RootView, WelcomeView, StudioView, Sidebar, Detail,
-                           # Sheets, SettingsWindow, Markdown, TerminalHost
+                           # Sheets, SettingsWindow, CommandPalette, Markdown, TerminalHost
 ```
 
 ## Hard-won rules
@@ -67,6 +68,11 @@ Sources/ClaudeStudio/
 - **launchd**: the PATH is EMBEDDED in the runner script; `#!/bin/zsh -l` cannot be
   trusted to read `.zshrc`. `setopt NULL_GLOB` is required — on the first run
   `*.md` matches nothing and zsh errors out.
+- **Terminal geometry**: a terminal is spawned only after its container's size has
+  stopped changing (`TerminalContainer.armPendingStart`), and `attachCommand` passes
+  NO `-x/-y` — tmux takes its size from the attaching client's pty. Passing a size
+  made tmux paint one frame at the wrong geometry, which left the TUI garbled until
+  a resize. `syncSize` pins tmux to the view afterwards.
 - **Multi-line input**: `/terminal-setup` cannot run inside tmux. Shift+Enter → `\`+CR
   and Option+Enter → ESC+CR are mapped in `TerminalEngine.installKeyMonitor`.
 - **Scrolling**: in tmux-backed terminals the wheel event is translated into

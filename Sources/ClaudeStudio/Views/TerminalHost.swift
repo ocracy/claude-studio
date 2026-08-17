@@ -30,6 +30,11 @@ final class TerminalContainer: NSView {
     /// Debounce so SwiftTerm's expensive resize path does not run on every mouse
     /// move while the window is dragged.
     private var resizeDebounce: DispatchWorkItem?
+    /// A deferred spawn waits for the geometry to STOP changing, not merely to be
+    /// non-zero: the container is briefly full-window wide before the sidebar is
+    /// laid out, and a terminal started at that width draws at the wrong column
+    /// count until something resizes it.
+    private var startDebounce: DispatchWorkItem?
 
     func attach(_ terminal: LocalProcessTerminalView) {
         if current === terminal { return }
@@ -51,22 +56,33 @@ final class TerminalContainer: NSView {
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true
-            // The view now has its real geometry — safe to spawn.
-            (view as? StudioTerminalView)?.runPendingStart()
+            self.armPendingStart()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak terminal] in
             guard let view = terminal, view.window != nil else { return }
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true
-            (view as? StudioTerminalView)?.runPendingStart()
         }
+    }
+
+    /// Re-arms the deferred spawn; every size change pushes it further out, so it
+    /// fires once the layout has been quiet for a moment.
+    private func armPendingStart() {
+        guard (current as? StudioTerminalView)?.hasPendingStart == true else { return }
+        startDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            (self?.current as? StudioTerminalView)?.runPendingStart()
+        }
+        startDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         guard let terminal = current, newSize.width > 0, newSize.height > 0 else { return }
         terminal.setFrameSize(newSize)
+        armPendingStart()
 
         resizeDebounce?.cancel()
         let work = DispatchWorkItem { [weak terminal] in
@@ -74,7 +90,6 @@ final class TerminalContainer: NSView {
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true
-            (view as? StudioTerminalView)?.runPendingStart()
         }
         resizeDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)

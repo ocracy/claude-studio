@@ -100,6 +100,17 @@ enum Tmux {
         return out
     }
 
+    /// Pins every client of the session to an exact size, then repaints. Called
+    /// once the terminal view has settled, so tmux and the view agree to the column.
+    static func setClientSize(_ session: String, cols: Int, rows: Int) {
+        guard cols > 0, rows > 0 else { return }
+        let r = run(["list-clients", "-t", session, "-F", "#{client_name}"])
+        guard r.status == 0 else { return }
+        for client in r.out.split(separator: "\n") where !client.isEmpty {
+            _ = run(["refresh-client", "-t", String(client), "-C", "\(cols)x\(rows)"])
+        }
+    }
+
     /// Forces every client attached to the session to repaint. tmux only redraws
     /// on its own when something changes, so a client that attached mid-frame can
     /// otherwise sit on a partially drawn screen.
@@ -127,15 +138,18 @@ enum Tmux {
     /// `-A -D`: attach to the session if it exists (detaching the old client),
     /// otherwise create it running `inner`. One call means both "resume" and
     /// "start".
-    static func attachCommand(session: String, cols: Int, rows: Int,
-                              env: [String: String], inner: String?) -> String {
+    ///
+    /// Deliberately WITHOUT `-x/-y`: the size is left to the attaching client's
+    /// pty. Passing a size here meant tmux drew one frame at that geometry before
+    /// the client corrected it, and a TUI painted during that frame stayed garbled
+    /// until something resized it.
+    static func attachCommand(session: String, env: [String: String], inner: String?) -> String {
         var parts = [
             "exec", Shell.quoted(path ?? "tmux"),
             "-S", Shell.quoted(socketPath),
             "-f", Shell.quoted(Paths.tmuxConfig.path),
             "new-session", "-A", "-D",
             "-s", Shell.quoted(session),
-            "-x", "\(cols)", "-y", "\(rows)",
         ]
         for (k, v) in env.sorted(by: { $0.key < $1.key }) {
             parts.append("-e")

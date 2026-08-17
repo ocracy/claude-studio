@@ -312,7 +312,8 @@ private struct TabBar: View {
         case .service:
             guard let id = UUID(uuidString: tab.ref) else { return Theme.idle }
             return (model.engine.serviceStatus[id] ?? .stopped).color
-        case .terminal:     return model.engine.isLive(tab.terminalKey) ? Theme.running : Theme.idle
+        case .terminal, .command:
+            return model.engine.isLive(tab.terminalKey) ? Theme.running : Theme.idle
         case .skill, .cron: return Theme.text3
         }
     }

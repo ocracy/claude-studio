@@ -20,7 +20,7 @@ struct ContentArea: View {
     @ViewBuilder
     private func content(for tab: StudioTab) -> some View {
         switch tab.kind {
-        case .session, .terminal, .service:
+        case .session, .terminal, .service, .command:
             TerminalPane(model: model, tab: tab)
         case .skill:
             if let skill = model.skills.skill(named: tab.ref) {
@@ -154,6 +154,17 @@ private struct TerminalPane: View {
             IconButton(icon: "clear", help: "Clear screen") {
                 model.engine.clear(key: tab.terminalKey)
             }
+        case .command:
+            if let command = commandValue {
+                SmallButton(title: model.engine.isLive(tab.terminalKey) ? "Running…" : "Run again",
+                            icon: "play.fill",
+                            prominent: !model.engine.isLive(tab.terminalKey)) {
+                    model.runCommand(command)
+                }
+                IconButton(icon: "clear", help: "Clear screen") {
+                    model.engine.clear(key: tab.terminalKey)
+                }
+            }
         default:
             EmptyView()
         }
@@ -181,6 +192,11 @@ private struct TerminalPane: View {
         default:
             break
         }
+    }
+
+    private var commandValue: ProjectCommand? {
+        guard tab.kind == .command, let id = UUID(uuidString: tab.ref) else { return nil }
+        return model.store.command(id)
     }
 
     private var serviceValue: Service? {
@@ -217,6 +233,9 @@ private struct TerminalPane: View {
     private var meta: String {
         switch tab.kind {
         case .service: return serviceValue?.command ?? ""
+        case .command:
+            guard let command = commandValue else { return "" }
+            return command.resolvedCwd(projectPath: model.project.path)
         case .session: return Tmux.isAvailable ? tab.ref : "no tmux"
         case .terminal:
             guard let id = UUID(uuidString: tab.ref), let terminal = model.store.terminal(id)

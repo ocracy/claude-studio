@@ -210,6 +210,13 @@ struct CommandPalette: View {
             })
         }
 
+        for command in model.store.config.commands {
+            out.append(PaletteItem(id: "x-\(command.id)", icon: "bolt", group: "Command",
+                                   title: command.name, subtitle: command.command) {
+                model.runCommand(command)
+            })
+        }
+
         for terminal in model.store.config.terminals {
             out.append(PaletteItem(id: "t-\(terminal.id)", icon: "terminal", group: "Terminal",
                                    title: terminal.name) {

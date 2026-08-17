@@ -143,6 +143,48 @@ struct ServiceEditor: View {
     }
 }
 
+// MARK: - Command settings
+
+struct CommandEditor: View {
+    @ObservedObject var model: StudioModel
+    @State var command: ProjectCommand
+    let isNew: Bool
+    let onDismiss: () -> Void
+
+    var body: some View {
+        SheetShell(title: isNew ? "New command" : command.name,
+                   destructive: isNew ? nil : ("Delete command", {
+                       model.removeCommand(command)
+                       onDismiss()
+                   }),
+                   confirm: ("Save", save),
+                   onDismiss: onDismiss) {
+            Field(label: "name") {
+                TextField("build", text: $command.name)
+                    .textFieldStyle(.plain).font(Theme.ui(12.5))
+            }
+            Field(label: "command") {
+                TextField("npm run build", text: $command.command)
+                    .textFieldStyle(.plain).font(Theme.mono(12))
+            }
+            Field(label: "directory") {
+                TextField(model.project.path, text: $command.cwd)
+                    .textFieldStyle(.plain).font(Theme.mono(12))
+            }
+            Text("Runs once in its own tab and shows the exit code in place. No port, no auto-start.")
+                .font(Theme.ui(11))
+                .foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func save() {
+        guard command.name.nilIfEmpty != nil, command.command.nilIfEmpty != nil else { return }
+        if isNew { model.store.addCommand(command) } else { model.store.updateCommand(command) }
+        onDismiss()
+    }
+}
+
 // MARK: - Schedule settings
 
 struct ScheduleEditor: View {

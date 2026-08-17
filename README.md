@@ -50,6 +50,12 @@ markdown report into `.cs/runs/<skill>/`, and the app shows the history with sta
 timestamp and produced output side by side. There is no database: the reports *are*
 the state, so a run that happened while the app was closed simply appears.
 
+### One-shot commands
+`npm run build`, `php artisan optimize`, a deploy script — commands live in their own
+sidebar section, own no port and never auto-start. Press one and it runs in its own
+tab, in the project directory, with the exit code shown in place; press again to
+re-run. Or run it in the background and get told when it finishes.
+
 ### Dev services
 `npm run dev`, `php artisan serve`, workers, queues — start, stop and restart them
 with port-aware status, auto-start on open, crash detection, and detection of
@@ -57,6 +63,8 @@ services already started outside the app.
 
 ### Terminals that remember
 Manually opened shells are tmux-backed too: same directory, same history, next time.
+Drop a file, folder or image onto a terminal and its path is typed in — which is how
+Claude Code reads images and files.
 
 ### Fast by construction
 Terminal views live in the runtime, not in the view tree. Switching tabs only chooses
@@ -103,6 +111,7 @@ inside the project:
 ├── .claude/skills/…        # skills (Claude Code's own layout; untouched)
 └── .cs/
     ├── services.json       # services            ← share with your team
+    ├── commands.json       # one-shot commands   ← share with your team
     ├── schedules.json      # scheduled runs      ← share with your team
     ├── terminals.json      # terminals           ← share with your team
     ├── sessions.json       # session records     (machine specific)
@@ -165,6 +174,8 @@ duration_sec: 8
 | ⌘T | New tab (a session on a Claude tab, a terminal otherwise) |
 | ⇧⌘T | New terminal |
 | ⌘, | Settings |
+| ⌘P | Command palette |
+| ⌘1…⌘9 | Go to tab |
 | ⌘W | Close tab |
 | ⇧⌘] / ⇧⌘[ | Next / previous tab |
 

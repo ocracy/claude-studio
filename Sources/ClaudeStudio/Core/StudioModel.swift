@@ -8,7 +8,7 @@ import AppKit
 final class StudioModel: ObservableObject {
 
     enum Pane: String, CaseIterable, Identifiable {
-        case sessions, skills, cron, services, terminals
+        case sessions, skills, cron, services, commands, terminals
         var id: String { rawValue }
 
         var title: String {
@@ -17,6 +17,7 @@ final class StudioModel: ObservableObject {
             case .skills:    return "skills"
             case .cron:      return "scheduled"
             case .services:  return "services"
+            case .commands:  return "commands"
             case .terminals: return "terminals"
             }
         }
@@ -26,6 +27,7 @@ final class StudioModel: ObservableObject {
             case .skills:    return "sparkles"
             case .cron:      return "clock"
             case .services:  return "server.rack"
+            case .commands:  return "bolt"
             case .terminals: return "terminal"
             }
         }
@@ -35,6 +37,7 @@ final class StudioModel: ObservableObject {
             case .skills:    return "Skills (.claude/skills)"
             case .cron:      return "Scheduled runs"
             case .services:  return "Services"
+            case .commands:  return "Commands"
             case .terminals: return "Terminals"
             }
         }
@@ -194,6 +197,10 @@ final class StudioModel: ObservableObject {
         for record in store.config.sessions {
             guard let sid = engine.claudeSIDs[record.tabKey], sid != record.claudeSID else { continue }
             store.touchSession(tmux: record.tmux, claudeSID: sid)
+            // Tag the tmux session too, so a session adopted on a later launch (or
+            // from another machine) still knows which conversation it belongs to.
+            let name = record.tmux
+            Task.detached(priority: .utility) { Tmux.setOption(name, "@cs_sid", sid) }
         }
     }
 
@@ -230,12 +237,10 @@ final class StudioModel: ObservableObject {
         let alive = liveSessions.contains(record.tmux)
         var resume: String?
         if !alive, let sid = record.claudeSID {
-            if ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid) {
-                resume = sid
-            } else {
-                // Stale record: do not try again.
-                store.updateSession({ var copy = record; copy.claudeSID = nil; return copy }())
-            }
+            // The id is kept even when there is no transcript yet: clearing it would
+            // permanently forfeit a resume for a conversation that may still be
+            // written. The check is one stat call, so it is repeatedevery time.
+            if ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid) { resume = sid }
         }
 
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
@@ -347,6 +352,29 @@ final class StudioModel: ObservableObject {
         store.config.services.filter { (engine.serviceStatus[$0.id] ?? .stopped).isLive }.count
     }
 
+    // MARK: - Commands
+
+    /// Opens the command's tab and runs it. Pressing it again re-runs in place.
+    func runCommand(_ command: ProjectCommand) {
+        let tab = StudioTab(kind: .command, ref: command.id.uuidString, title: command.name)
+        open(tab)
+        engine.runCommandTab(key: tab.terminalKey, name: command.name,
+                             command: command.command,
+                             cwd: command.resolvedCwd(projectPath: project.path))
+    }
+
+    func runCommandInBackground(_ command: ProjectCommand) {
+        engine.runInBackground(name: command.name, command: command.command,
+                               cwd: command.resolvedCwd(projectPath: project.path))
+    }
+
+    func removeCommand(_ command: ProjectCommand) {
+        let key = "command:\(command.id.uuidString)"
+        closeTab(id: key, killSession: false)
+        engine.discard(key)
+        store.removeCommand(command.id)
+    }
+
     // MARK: - Skills
 
     func openSkill(_ skill: Skill) {
@@ -398,7 +426,7 @@ final class StudioModel: ObservableObject {
         }
 
         tabs.remove(at: index)
-        if tab.kind == .service { engine.discard(tab.terminalKey) }
+        if tab.kind == .service || tab.kind == .command { engine.discard(tab.terminalKey) }
         if activeTabID == id {
             activeTabID = tabs.indices.contains(index) ? tabs[index].id : tabs.last?.id
         }

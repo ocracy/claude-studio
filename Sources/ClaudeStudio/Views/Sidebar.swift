@@ -7,6 +7,9 @@ struct Sidebar: View {
 
     @State private var serviceSheet: Service?
     @State private var addingService = false
+    @State private var commandSheet: ProjectCommand?
+    @State private var addingCommand = false
+    @State private var addMenu = false
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
     @State private var sessionManager = false
@@ -25,6 +28,7 @@ struct Sidebar: View {
                     case .skills:    skillsList
                     case .cron:      cronList
                     case .services:  servicesList
+                    case .commands:  commandsList
                     case .terminals: terminalsList
                     }
                 }
@@ -44,6 +48,12 @@ struct Sidebar: View {
         }
         .sheet(item: $scheduleSheet) { schedule in
             ScheduleEditor(model: model, schedule: schedule) { scheduleSheet = nil }
+        }
+        .sheet(item: $commandSheet) { command in
+            CommandEditor(model: model, command: command, isNew: addingCommand) {
+                commandSheet = nil
+                addingCommand = false
+            }
         }
         .sheet(isPresented: $sessionManager) {
             SessionManager(model: model) { sessionManager = false }
@@ -66,6 +76,26 @@ struct Sidebar: View {
                 .popover(isPresented: $sessionMenu, arrowEdge: .bottom) {
                     SessionOpener(model: model) { sessionMenu = false }
                 }
+            } else if model.pane == .services || model.pane == .commands {
+                // One button, two things to create: a long-running service or a
+                // one-shot command. They live in different panes but are added here.
+                IconButton(icon: "plus", help: "Add a service or command") { addMenu = true }
+                    .popover(isPresented: $addMenu, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            addMenuItem("New service", icon: "server.rack",
+                                        detail: "long-running, port aware") {
+                                addMenu = false
+                                newService()
+                            }
+                            addMenuItem("New command", icon: "bolt",
+                                        detail: "runs once in a tab") {
+                                addMenu = false
+                                newCommand()
+                            }
+                        }
+                        .padding(6)
+                        .frame(width: 250)
+                    }
             } else {
                 IconButton(icon: "plus", help: addHelp, action: add)
             }
@@ -95,6 +125,7 @@ struct Sidebar: View {
         case .skills:    return "\(model.skills.skills.count) skills · .claude/skills"
         case .cron:      return "\(model.store.activeSchedules.count) active schedules"
         case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) running"
+        case .commands:  return "\(model.store.config.commands.count) commands"
         case .terminals: return "\(model.store.config.terminals.count) terminals"
         }
     }
@@ -105,6 +136,7 @@ struct Sidebar: View {
         case .skills:    return "Create a new skill with Claude"
         case .cron:      return "Schedule a skill"
         case .services:  return "Add a service"
+        case .commands:  return "Add a command"
         case .terminals: return "New terminal (⌘T)"
         }
     }
@@ -119,11 +151,44 @@ struct Sidebar: View {
             guard let first = model.skills.skills.first else { return }
             scheduleSheet = model.store.schedule(for: first.name) ?? Schedule(skill: first.name)
         case .services:
-            addingService = true
-            serviceSheet = Service(name: "new service", command: "")
+            newService()
+        case .commands:
+            newCommand()
         case .terminals:
             model.newTerminal()
         }
+    }
+
+    /// A new service starts out pointing at the project root, spelled out, so it
+    /// is obvious what it will run in and easy to change.
+    private func newService() {
+        addingService = true
+        serviceSheet = Service(name: "", command: "", cwd: model.project.path)
+    }
+
+    private func newCommand() {
+        addingCommand = true
+        commandSheet = ProjectCommand(name: "", command: "", cwd: model.project.path)
+    }
+
+    private func addMenuItem(_ title: String, icon: String, detail: String,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HoverRow(padding: EdgeInsets(top: 7, leading: 8, bottom: 7, trailing: 8)) {
+                HStack(spacing: 9) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
+                        Text(detail).font(Theme.ui(10.5)).foregroundStyle(Theme.text3)
+                    }
+                    Spacer()
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var newSkillPrompt: String {
@@ -347,6 +412,32 @@ struct Sidebar: View {
                         model.engine.stopService(service)
                         model.store.removeService(service.id)
                     }
+                }
+        }
+    }
+
+    // MARK: - Commands
+
+    @ViewBuilder private var commandsList: some View {
+        if model.store.config.commands.isEmpty {
+            emptyHint("No commands defined.", action: "Add a command", perform: newCommand)
+        }
+        ForEach(model.store.config.commands) { command in
+            let key = "command:\(command.id.uuidString)"
+            row(selected: model.activeTabID == key,
+                dot: model.engine.isLive(key) ? Theme.running : Theme.idle,
+                title: command.name,
+                meta: command.command,
+                trailing: {
+                    IconButton(icon: "play.fill", help: "Run") { model.runCommand(command) }
+                },
+                action: { model.runCommand(command) })
+                .contextMenu {
+                    Button("Run") { model.runCommand(command) }
+                    Button("Run in background") { model.runCommandInBackground(command) }
+                    Button("Settings…") { commandSheet = command }
+                    Divider()
+                    Button("Delete command") { model.removeCommand(command) }
                 }
         }
     }

@@ -19,6 +19,7 @@ final class StudioTerminalView: LocalProcessTerminalView {
     private var pendingStart: (() -> Void)?
 
     var isSized: Bool { window != nil && frame.width > 120 && frame.height > 60 }
+    var hasPendingStart: Bool { pendingStart != nil }
 
     func deferStart(_ work: @escaping () -> Void) { pendingStart = work }
 
@@ -26,6 +27,71 @@ final class StudioTerminalView: LocalProcessTerminalView {
         guard isSized, let work = pendingStart else { return }
         pendingStart = nil
         work()
+    }
+
+    // MARK: - Drag and drop
+
+    private var dragRegistered = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard !dragRegistered else { return }
+        dragRegistered = true
+        registerForDraggedTypes([.fileURL, .png, .tiff, .string])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
+
+    /// Dropping a file, folder or image types its path into the terminal, which is
+    /// what Claude Code expects: it reads images and files from paths. Image data
+    /// carried without a file (a screenshot dragged from Preview) is written to a
+    /// temporary file first, so it can be referenced the same way.
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let board = sender.draggingPasteboard
+        var paths: [String] = []
+
+        if let urls = board.readObjects(forClasses: [NSURL.self]) as? [URL] {
+            paths = urls.compactMap { $0.isFileURL ? $0.path : nil }
+        }
+
+        if paths.isEmpty, let data = board.data(forType: .png) ?? board.data(forType: .tiff) {
+            if let path = Self.writeDroppedImage(data) { paths = [path] }
+        }
+
+        if paths.isEmpty, let text = board.string(forType: .string) {
+            send(source: self, data: ArraySlice(Array(text.utf8)))
+            return true
+        }
+
+        guard !paths.isEmpty else { return false }
+        let text = paths.map(Self.escapedForShell).joined(separator: " ") + " "
+        send(source: self, data: ArraySlice(Array(text.utf8)))
+        return true
+    }
+
+    /// Escapes the characters a shell (and Claude's input box) would otherwise eat.
+    private static func escapedForShell(_ path: String) -> String {
+        var out = ""
+        for character in path {
+            if " \t\"'\\()[]{}$&;|<>*?!`~#".contains(character) { out.append("\\") }
+            out.append(character)
+        }
+        return out
+    }
+
+    private static func writeDroppedImage(_ data: Data) -> String? {
+        let dir = Paths.appSupport.appendingPathComponent("dropped", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let png: Data
+        if let rep = NSBitmapImageRep(data: data),
+           let converted = rep.representation(using: .png, properties: [:]) {
+            png = converted
+        } else {
+            png = data
+        }
+        let url = dir.appendingPathComponent("drop-\(Int(Date().timeIntervalSince1970)).png")
+        do { try png.write(to: url) } catch { return nil }
+        return url.path
     }
 }
 
@@ -53,6 +119,8 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     private var starting: Set<String> = []
     /// Commands running invisibly (they announce themselves when done).
     private var backgroundKeys: [String: String] = [:]
+    /// Command tabs, so their exit can be reported in place.
+    private var commandNames: [String: String] = [:]
     private var scrollMonitor: Any?
     private var keyMonitor: Any?
     private var lastScrollSend = Date.distantPast
@@ -147,8 +215,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         let wrapped: String
         if Tmux.isAvailable {
             v.tmuxSession = session
-            wrapped = Tmux.attachCommand(session: session, cols: cols, rows: rows,
-                                         env: hookEnv, inner: inner)
+            wrapped = Tmux.attachCommand(session: session, env: hookEnv, inner: inner)
         } else {
             // Without tmux, a plain non-persistent spawn — the app still works.
             wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; \(inner)"
@@ -163,13 +230,14 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                 Tmux.setOption(session, "@cs_project", project.shortID)
                 Tmux.setOption(session, "@cs_title", title)
                 Tmux.touch(session)
+                // Tag the session with the conversation id so a session adopted on
+                // another launch can still be resumed.
+                if let sid = resumeSID { Tmux.setOption(session, "@cs_sid", sid) }
             }
-            // A reattached session may still be drawn at the previous client's size;
-            // ask tmux for a full repaint once the TUI has started.
-            after(0.9) { [weak self] in
-                Tmux.refreshClients(of: session)
-                self?.redraw(key: key)
-            }
+            // Pin tmux to the view's settled geometry and repaint: a reattached
+            // session is otherwise still drawn at the previous client's size.
+            after(0.9) { [weak self] in self?.syncSize(key: key, session: session) }
+            after(1.8) { [weak self] in self?.syncSize(key: key, session: session) }
         }
 
         // With auto-run off the prompt is typed into the box but not sent — the
@@ -206,8 +274,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         let wrapped: String
         if Tmux.isAvailable {
             v.tmuxSession = session
-            wrapped = Tmux.attachCommand(session: session, cols: cols, rows: rows,
-                                         env: [:], inner: inner)
+            wrapped = Tmux.attachCommand(session: session, env: [:], inner: inner)
         } else {
             wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; \(inner)"
         }
@@ -220,11 +287,20 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                 Tmux.setOption(session, "@cs_title", title)
                 Tmux.setOption(session, "@cs_kind", "shell")
             }
-            after(0.9) { [weak self] in
-                Tmux.refreshClients(of: session)
-                self?.redraw(key: key)
-            }
+            after(0.9) { [weak self] in self?.syncSize(key: key, session: session) }
         }
+    }
+
+    /// Makes tmux adopt exactly the columns and rows the view now reports.
+    private func syncSize(key: String, session: String) {
+        guard let v = views[key] else { return }
+        let cols = v.getTerminal().cols
+        let rows = v.getTerminal().rows
+        Task.detached(priority: .userInitiated) {
+            Tmux.setClientSize(session, cols: cols, rows: rows)
+            Tmux.refreshClients(of: session)
+        }
+        redraw(key: key)
     }
 
     // MARK: - Services (direct PTY)
@@ -329,6 +405,30 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                     else { self.checkReadiness(id, port: port, attempt: attempt + 1) }
                 }
             }
+        }
+    }
+
+    /// Runs a project command in its own tab: plain PTY, no tmux, exit code shown
+    /// in place. Re-running simply spawns again in the same tab.
+    func runCommandTab(key: String, name: String, command: String, cwd: String) {
+        let v = view(for: key)
+        if v.process?.running == true { return }
+        let expanded = (cwd as NSString).expandingTildeInPath
+        feed(key: key, "\r\n\u{1B}[2m— \(command)  (\(expanded)) —\u{1B}[0m\r\n")
+
+        whenSized(v) { [weak self] in
+            guard let self else { return }
+            let cols = max(20, v.getTerminal().cols)
+            let rows = max(5, v.getTerminal().rows)
+            var env = self.baseEnvironment
+            env.append("COLUMNS=\(cols)")
+            env.append("LINES=\(rows)")
+            self.commandNames[key] = name
+            v.startProcess(executable: "/bin/zsh",
+                           args: ["-l", "-i", "-c",
+                                  "stty cols \(cols) rows \(rows) 2>/dev/null; "
+                                  + "cd \(Shell.quoted(expanded)) && \(command)"],
+                           environment: env, execName: nil)
         }
     }
 
@@ -507,6 +607,17 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                     detail: ok ? "Finished." : "Failed (exit \(exitCode ?? -1)).",
                     ok: ok)
                 self.views.removeValue(forKey: key)
+                return
+            }
+
+            if let name = self.commandNames[key] {
+                let code = exitCode ?? 0
+                let colour = code == 0 ? "32" : "31"
+                self.feed(key: key,
+                          "\r\n\u{1B}[\(colour)m— \(name) exited with code \(code) —\u{1B}[0m\r\n")
+                AppSettings.shared.announceFinished(title: name,
+                                                    detail: code == 0 ? "Finished." : "Exit code \(code).",
+                                                    ok: code == 0)
                 return
             }
 

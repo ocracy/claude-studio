@@ -52,7 +52,7 @@ struct Project: Identifiable, Hashable, Codable {
 /// A tab in the main area. Its id is stable: the terminal view cache and the
 /// tmux session are both keyed on it.
 struct StudioTab: Identifiable, Hashable, Codable {
-    enum Kind: String, Codable { case session, terminal, service, skill, cron }
+    enum Kind: String, Codable { case session, terminal, service, command, skill, cron }
 
     var id: String
     var kind: Kind
@@ -221,6 +221,28 @@ enum ServiceStatus: String, Codable {
     }
 
     var isLive: Bool { self == .running || self == .starting || self == .external }
+}
+
+// MARK: - Project command
+
+/// A one-shot command bound to the project (`npm run build`, `php artisan optimize`).
+/// Unlike a service it owns no port and never auto-starts: pressing it runs the
+/// command in its own tab and shows the exit code in place.
+struct ProjectCommand: Identifiable, Hashable, Codable {
+    var id: UUID = UUID()
+    var name: String
+    var command: String
+    /// Empty means the project root.
+    var cwd: String = ""
+
+    func resolvedCwd(projectPath: String) -> String {
+        let trimmed = cwd.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return projectPath }
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+            return (trimmed as NSString).expandingTildeInPath
+        }
+        return URL(fileURLWithPath: projectPath).appendingPathComponent(trimmed).path
+    }
 }
 
 // MARK: - Manually opened terminal

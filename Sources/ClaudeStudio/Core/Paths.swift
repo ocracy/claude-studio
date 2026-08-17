@@ -61,6 +61,10 @@ enum Paths {
         csDir(project).appendingPathComponent("services.json")
     }
 
+    static func commands(_ project: Project) -> URL {
+        csDir(project).appendingPathComponent("commands.json")
+    }
+
     static func terminals(_ project: Project) -> URL {
         csDir(project).appendingPathComponent("terminals.json")
     }
