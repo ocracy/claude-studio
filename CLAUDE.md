@@ -33,7 +33,7 @@ Sources/ClaudeStudio/
 ├── ClaudeStudioApp.swift  # AppDelegate + main menu
 ├── Theme.swift            # single design source: color, typography, shared controls
 ├── Models/Models.swift    # Project, StudioTab, SessionRecord, Skill, Schedule, Service,
-│                          # ProjectCommand, SkillRun
+│                          # ClaudeCommand, ProjectScript, SkillRun
 ├── Core/
 │   ├── Paths.swift            # ~/Library/.../Claude Studio  +  <project>/.cs
 │   ├── Shell.swift            # PATH snapshot, process helpers, port probes
@@ -42,6 +42,7 @@ Sources/ClaudeStudio/
 │   ├── ProjectConfig.swift    # .cs/*.json + launchd sync
 │   ├── Skills.swift           # .claude/skills scanner + frontmatter + directory watcher
 │   ├── MCP.swift              # MCP servers: reads Claude's config, mutates via claude mcp
+│   ├── ClaudeCommands.swift   # .claude/commands scanner (slash commands)
 │   ├── Runs.swift             # run reports (the reports are the state)
 │   ├── Scheduler.swift        # runner script + launchd plist
 │   ├── HookBridge.swift       # Claude Code hooks → session state
@@ -65,15 +66,22 @@ Sources/ClaudeStudio/
 - **`Project.shortID`**: never `hashValue` — Swift seeds it per process, which would
   orphan every tmux session and launchd job on the next launch. FNV-1a is used.
 - **Spawning**: always `/bin/zsh -l -i -c`; `-i` is mandatory (PATH lives in
-  `.zshrc`). Prefix commands with `stty cols C rows R` and inject `Shell.userPath`.
+  `.zshrc`), and `Shell.userPath` is injected. Services and scripts may prefix
+  `stty cols C rows R`; interactive TUIs must NOT (see terminal geometry).
 - **launchd**: the PATH is EMBEDDED in the runner script; `#!/bin/zsh -l` cannot be
   trusted to read `.zshrc`. `setopt NULL_GLOB` is required — on the first run
   `*.md` matches nothing and zsh errors out.
+- **Naming**: a **command** is Claude's own slash command (`.claude/commands`); a
+  **script** is a one-shot shell command we store in `.cs/scripts.json`. Do not mix
+  the two — `commands.json` was the old name for scripts and is migrated on load.
 - **Terminal geometry**: a terminal is spawned only after its container's size has
   stopped changing (`TerminalContainer.armPendingStart`), and `attachCommand` passes
   NO `-x/-y` — tmux takes its size from the attaching client's pty. Passing a size
   made tmux paint one frame at the wrong geometry, which left the TUI garbled until
-  a resize. `syncSize` pins tmux to the view afterwards.
+  a resize. Without tmux, never stamp `stty cols/rows` either — SwiftTerm's column
+  count is stale at spawn, and that is exactly what made the drawing wrong on
+  machines with no tmux. `settleGeometry` then moves the size by one column and back,
+  because a TUI only re-lays-out on SIGWINCH.
 - **Multi-line input**: `/terminal-setup` cannot run inside tmux. Shift+Enter → `\`+CR
   and Option+Enter → ESC+CR are mapped in `TerminalEngine.installKeyMonitor`.
 - **Scrolling**: in tmux-backed terminals the wheel event is translated into

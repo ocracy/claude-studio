@@ -7,8 +7,8 @@ struct Sidebar: View {
 
     @State private var serviceSheet: Service?
     @State private var addingService = false
-    @State private var commandSheet: ProjectCommand?
-    @State private var addingCommand = false
+    @State private var scriptSheet: ProjectScript?
+    @State private var addingScript = false
     @State private var addMenu = false
     @State private var mcpSheet: MCPServer?
     @State private var scheduleSheet: Schedule?
@@ -30,7 +30,8 @@ struct Sidebar: View {
                     case .mcp:       mcpList
                     case .cron:      cronList
                     case .services:  servicesList
-                    case .commands:  commandsList
+                    case .commands:  claudeCommandsList
+                    case .scripts:   scriptsList
                     case .terminals: terminalsList
                     }
                 }
@@ -42,7 +43,10 @@ struct Sidebar: View {
         }
         .frame(maxHeight: .infinity)
         .background(Theme.chrome)
-        .onChange(of: model.pane) { if model.pane == .mcp { model.mcp.scan() } }
+        .onChange(of: model.pane) {
+            if model.pane == .mcp { model.mcp.scan() }
+            if model.pane == .commands { model.claudeCommands.scan(project: model.project) }
+        }
         .sheet(item: $serviceSheet) { service in
             ServiceEditor(model: model, service: service, isNew: addingService) {
                 serviceSheet = nil
@@ -52,10 +56,10 @@ struct Sidebar: View {
         .sheet(item: $scheduleSheet) { schedule in
             ScheduleEditor(model: model, schedule: schedule) { scheduleSheet = nil }
         }
-        .sheet(item: $commandSheet) { command in
-            CommandEditor(model: model, command: command, isNew: addingCommand) {
-                commandSheet = nil
-                addingCommand = false
+        .sheet(item: $scriptSheet) { script in
+            ScriptEditor(model: model, script: script, isNew: addingScript) {
+                scriptSheet = nil
+                addingScript = false
             }
         }
         .sheet(item: $mcpSheet) { server in
@@ -89,10 +93,10 @@ struct Sidebar: View {
                 IconButton(icon: "plus", help: "Add an MCP server") {
                     mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
                 }
-            } else if model.pane == .services || model.pane == .commands {
+            } else if model.pane == .services || model.pane == .scripts {
                 // One button, two things to create: a long-running service or a
-                // one-shot command. They live in different panes but are added here.
-                IconButton(icon: "plus", help: "Add a service or command") { addMenu = true }
+                // one-shot script. They live in different panes but are added here.
+                IconButton(icon: "plus", help: "Add a service or script") { addMenu = true }
                     .popover(isPresented: $addMenu, arrowEdge: .bottom) {
                         VStack(alignment: .leading, spacing: 1) {
                             addMenuItem("New service", icon: "server.rack",
@@ -100,10 +104,10 @@ struct Sidebar: View {
                                 addMenu = false
                                 newService()
                             }
-                            addMenuItem("New command", icon: "bolt",
+                            addMenuItem("New script", icon: "bolt",
                                         detail: "runs once in a tab") {
                                 addMenu = false
-                                newCommand()
+                                newScript()
                             }
                         }
                         .padding(6)
@@ -141,7 +145,8 @@ struct Sidebar: View {
                                 : "\(model.mcp.servers.count) servers · claude mcp"
         case .cron:      return "\(model.store.activeSchedules.count) active schedules"
         case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) running"
-        case .commands:  return "\(model.store.config.commands.count) commands"
+        case .commands:  return "\(model.claudeCommands.commands.count) commands · .claude/commands"
+        case .scripts:   return "\(model.store.config.scripts.count) scripts"
         case .terminals: return "\(model.store.config.terminals.count) terminals"
         }
     }
@@ -153,7 +158,8 @@ struct Sidebar: View {
         case .mcp:       return "Add an MCP server"
         case .cron:      return "Schedule a skill"
         case .services:  return "Add a service"
-        case .commands:  return "Add a command"
+        case .commands:  return "Create a command with Claude"
+        case .scripts:   return "Add a script"
         case .terminals: return "New terminal (⌘T)"
         }
     }
@@ -172,7 +178,9 @@ struct Sidebar: View {
         case .services:
             newService()
         case .commands:
-            newCommand()
+            model.createCommandWithClaude()
+        case .scripts:
+            newScript()
         case .terminals:
             model.newTerminal()
         }
@@ -185,9 +193,9 @@ struct Sidebar: View {
         serviceSheet = Service(name: "", command: "", cwd: model.project.path)
     }
 
-    private func newCommand() {
-        addingCommand = true
-        commandSheet = ProjectCommand(name: "", command: "", cwd: model.project.path)
+    private func newScript() {
+        addingScript = true
+        scriptSheet = ProjectScript(name: "", command: "", cwd: model.project.path)
     }
 
     private func addMenuItem(_ title: String, icon: String, detail: String,
@@ -467,28 +475,60 @@ struct Sidebar: View {
         }
     }
 
-    // MARK: - Commands
+    // MARK: - Claude commands
 
-    @ViewBuilder private var commandsList: some View {
-        if model.store.config.commands.isEmpty {
-            emptyHint("No commands defined.", action: "Add a command", perform: newCommand)
+    @ViewBuilder private var claudeCommandsList: some View {
+        if model.claudeCommands.commands.isEmpty {
+            emptyHint("`.claude/commands` is empty.", action: "Create a command with Claude",
+                      perform: model.createCommandWithClaude)
         }
-        ForEach(model.store.config.commands) { command in
-            let key = "command:\(command.id.uuidString)"
+        ForEach(model.claudeCommands.commands) { command in
+            row(selected: model.activeTabID == "command:\(command.name)",
+                dot: Theme.accent.opacity(0.7),
+                title: command.invocation,
+                meta: command.description ?? command.argumentHint ?? "",
+                trailing: {
+                    if command.scope == .global {
+                        Text("global")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.text3)
+                            .padding(.horizontal, 5).padding(.vertical, 1.5)
+                            .background(Capsule().strokeBorder(Theme.separator))
+                    }
+                    IconButton(icon: "play.fill", help: "Run in a session") {
+                        model.runClaudeCommand(command)
+                    }
+                },
+                action: { model.openClaudeCommand(command) })
+                .contextMenu {
+                    Button("Run in a session") { model.runClaudeCommand(command) }
+                    Button("Open file") { NSWorkspace.shared.open(command.url) }
+                }
+        }
+    }
+
+    // MARK: - Scripts
+
+    @ViewBuilder private var scriptsList: some View {
+        if model.store.config.scripts.isEmpty {
+            emptyHint("No scripts defined.", action: "Add a script", perform: newScript)
+        }
+        ForEach(model.store.config.scripts) { script in
+            let key = "script:\(script.id.uuidString)"
             row(selected: model.activeTabID == key,
                 dot: model.engine.isLive(key) ? Theme.running : Theme.idle,
-                title: command.name,
-                meta: command.command,
+                title: script.name,
+                meta: script.command,
                 trailing: {
-                    IconButton(icon: "play.fill", help: "Run") { model.runCommand(command) }
+                    IconButton(icon: "play.fill", help: "Run") { model.runScript(script) }
                 },
-                action: { model.runCommand(command) })
+                action: { model.runScript(script) })
                 .contextMenu {
-                    Button("Run") { model.runCommand(command) }
-                    Button("Run in background") { model.runCommandInBackground(command) }
-                    Button("Settings…") { commandSheet = command }
+                    Button("Run") { model.runScript(script) }
+                    Button("Run in background") { model.runScriptInBackground(script) }
+                    Button("Settings…") { scriptSheet = script }
                     Divider()
-                    Button("Delete command") { model.removeCommand(command) }
+                    Button("Delete script") { model.removeScript(script) }
                 }
         }
     }

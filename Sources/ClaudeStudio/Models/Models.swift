@@ -52,7 +52,7 @@ struct Project: Identifiable, Hashable, Codable {
 /// A tab in the main area. Its id is stable: the terminal view cache and the
 /// tmux session are both keyed on it.
 struct StudioTab: Identifiable, Hashable, Codable {
-    enum Kind: String, Codable { case session, terminal, service, command, skill, cron }
+    enum Kind: String, Codable { case session, terminal, service, script, command, skill, cron }
 
     var id: String
     var kind: Kind
@@ -111,7 +111,7 @@ enum Attention: String, Codable {
 
 // MARK: - Skill
 
-/// Projedeki (ya da global) bir Claude Code skill'i.
+/// A Claude Code skill, in the project or global.
 struct Skill: Identifiable, Hashable {
     var name: String
     var description: String?
@@ -121,8 +121,29 @@ struct Skill: Identifiable, Hashable {
     var id: String { "\(scope.rawValue):\(name)" }
 
     enum Scope: String { case project, global
-        var label: String { self == .project ? "proje" : "genel" }
+        var label: String { self == .project ? "project" : "global" }
     }
+}
+
+// MARK: - Claude command
+
+/// A Claude Code slash command, read from Claude's own layout:
+///
+///   .claude/commands/<name>.md          → /name
+///   .claude/commands/<dir>/<name>.md    → /dir:name
+///
+/// Project commands shadow global ones of the same name, matching Claude.
+struct ClaudeCommand: Identifiable, Hashable {
+    var name: String
+    var description: String?
+    var argumentHint: String?
+    var url: URL
+    var scope: Skill.Scope
+
+    var id: String { "\(scope.rawValue):\(name)" }
+
+    /// How Claude is invoked: `/name` — with the hint when the command takes one.
+    var invocation: String { "/\(name)" }
 }
 
 // MARK: - Schedule
@@ -223,12 +244,15 @@ enum ServiceStatus: String, Codable {
     var isLive: Bool { self == .running || self == .starting || self == .external }
 }
 
-// MARK: - Project command
+// MARK: - Project script
 
-/// A one-shot command bound to the project (`npm run build`, `php artisan optimize`).
-/// Unlike a service it owns no port and never auto-starts: pressing it runs the
-/// command in its own tab and shows the exit code in place.
-struct ProjectCommand: Identifiable, Hashable, Codable {
+/// A one-shot shell command bound to the project (`npm run build`,
+/// `php artisan optimize`). Unlike a service it owns no port and never auto-starts:
+/// pressing it runs the command in its own tab and shows the exit code in place.
+///
+/// Named "script" to keep it apart from a **Claude command**, which is a slash
+/// command in `.claude/commands` — a different thing entirely.
+struct ProjectScript: Identifiable, Hashable, Codable {
     var id: UUID = UUID()
     var name: String
     var command: String

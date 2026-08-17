@@ -60,11 +60,20 @@ to this machine) — with a badge saying which. Adding and removing goes through
 "Check connections" runs `claude mcp list` and marks each server connected, needing
 authentication or failed; HTTP servers can be signed in to from the list.
 
-### One-shot commands
-`npm run build`, `php artisan optimize`, a deploy script — commands live in their own
-sidebar section, own no port and never auto-start. Press one and it runs in its own
-tab, in the project directory, with the exit code shown in place; press again to
-re-run. Or run it in the background and get told when it finishes.
+### Claude commands
+The **commands** section lists the slash commands Claude Code will offer in this
+project, read from its own layout — `.claude/commands/<name>.md`, with
+`<dir>/<name>.md` namespaced as `/dir:name`, and your global `~/.claude/commands`
+alongside them (shadowed by project commands, as Claude resolves them). Each command
+opens as a page with its body rendered; **Run in a session** starts a Claude session
+with `/name` typed in — sent straight away unless the command takes an argument, in
+which case you fill it in first. The "+" opens a session that writes a new one.
+
+### Scripts
+`npm run build`, `php artisan optimize`, a deploy script — **scripts** are one-shot
+shell commands. They own no port and never auto-start: press one and it runs in its
+own tab in the project directory with the exit code shown in place; press again to
+re-run, or run it in the background and get told when it finishes.
 
 ### Dev services
 `npm run dev`, `php artisan serve`, workers, queues — start, stop and restart them
@@ -94,10 +103,13 @@ xattr -cr "/Applications/Claude Studio.app" && open -a "Claude Studio"
 Or build from source:
 
 ```bash
-brew install tmux          # required for persistent sessions
 git clone https://github.com/ocracy/claude-studio && cd claude-studio
-./install.sh               # builds and installs into /Applications
+./install.sh               # installs tmux if missing, builds, installs into /Applications
 ```
+
+`tmux` is what makes sessions persist; `install.sh` installs it with Homebrew when it
+is absent. Without it the app still runs, but sessions die with it — the status bar
+says so.
 
 Open a project straight from the shell, or drop a folder on the app icon:
 
@@ -118,11 +130,12 @@ inside the project:
 
 ```
 <project>/
-├── .claude/skills/…        # skills (Claude Code's own layout; untouched)
-├── .mcp.json               # MCP servers (Claude Code's own file; untouched)
+├── .claude/skills/…        # skills           (Claude Code's own layout; untouched)
+├── .claude/commands/…      # slash commands   (Claude Code's own layout; untouched)
+├── .mcp.json               # MCP servers      (Claude Code's own file; untouched)
 └── .cs/
     ├── services.json       # services            ← share with your team
-    ├── commands.json       # one-shot commands   ← share with your team
+    ├── scripts.json        # one-shot scripts    ← share with your team
     ├── schedules.json      # scheduled runs      ← share with your team
     ├── terminals.json      # terminals           ← share with your team
     ├── sessions.json       # session records     (machine specific)
@@ -187,6 +200,9 @@ duration_sec: 8
 | ⌘, | Settings |
 | ⌘P | Command palette (sessions, skills, commands, services, MCP, workspaces) |
 | ⌘1…⌘9 | Go to tab |
+
+The sidebar sections can be reordered: drag an icon in the rail, or right-click it for
+"Move up" / "Move down". Double-clicking the header zooms the window.
 | ⌘W | Close tab |
 | ⇧⌘] / ⇧⌘[ | Next / previous tab |
 

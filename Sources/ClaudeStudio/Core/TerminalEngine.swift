@@ -218,12 +218,18 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             wrapped = Tmux.attachCommand(session: session, env: hookEnv, inner: inner)
         } else {
             // Without tmux, a plain non-persistent spawn — the app still works.
-            wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; \(inner)"
+            //
+            // NO `stty` here: SwiftTerm reports a stale column count at this moment,
+            // and stamping it onto the pty makes the TUI draw at the wrong width
+            // until something resizes the window. SwiftTerm's own TIOCSWINSZ, which
+            // follows layout, is the authority.
+            wrapped = inner
         }
 
         v.startProcess(executable: "/bin/zsh", args: ["-l", "-i", "-c", wrapped],
                        environment: env, execName: nil)
         after(1.0) { [weak self] in self?.starting.remove(key) }
+        settleGeometry(key: key, session: Tmux.isAvailable ? session : nil)
 
         if Tmux.isAvailable {
             after(0.6) {
@@ -234,10 +240,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                 // another launch can still be resumed.
                 if let sid = resumeSID { Tmux.setOption(session, "@cs_sid", sid) }
             }
-            // Pin tmux to the view's settled geometry and repaint: a reattached
-            // session is otherwise still drawn at the previous client's size.
-            after(0.9) { [weak self] in self?.syncSize(key: key, session: session) }
-            after(1.8) { [weak self] in self?.syncSize(key: key, session: session) }
+
         }
 
         // With auto-run off the prompt is typed into the box but not sent — the
@@ -276,31 +279,56 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             v.tmuxSession = session
             wrapped = Tmux.attachCommand(session: session, env: [:], inner: inner)
         } else {
-            wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; \(inner)"
+            wrapped = inner
         }
         v.startProcess(executable: "/bin/zsh", args: ["-l", "-i", "-c", wrapped],
                        environment: env, execName: nil)
         after(1.0) { [weak self] in self?.starting.remove(key) }
+        settleGeometry(key: key, session: Tmux.isAvailable ? session : nil)
         if Tmux.isAvailable {
             after(0.6) {
                 Tmux.setOption(session, "@cs_project", project.shortID)
                 Tmux.setOption(session, "@cs_title", title)
                 Tmux.setOption(session, "@cs_kind", "shell")
             }
-            after(0.9) { [weak self] in self?.syncSize(key: key, session: session) }
         }
     }
 
-    /// Makes tmux adopt exactly the columns and rows the view now reports.
-    private func syncSize(key: String, session: String) {
-        guard let v = views[key] else { return }
-        let cols = v.getTerminal().cols
-        let rows = v.getTerminal().rows
-        Task.detached(priority: .userInitiated) {
-            Tmux.setClientSize(session, cols: cols, rows: rows)
-            Tmux.refreshClients(of: session)
+    /// Makes the child agree with the view about the terminal size.
+    ///
+    /// A TUI only re-lays-out when it receives SIGWINCH, so telling it the size it
+    /// already believes changes nothing — the size has to actually move. One column
+    /// is taken away and given back: with tmux through `refresh-client`, otherwise by
+    /// nudging the view's frame, which makes SwiftTerm re-send TIOCSWINSZ. This is
+    /// what the user was doing by hand when resizing the window fixed the drawing.
+    private func settleGeometry(key: String, session: String?) {
+        for delay in [0.8, 2.0] {
+            after(delay) { [weak self] in
+                guard let self, let v = self.views[key], v.window != nil else { return }
+                let cols = v.getTerminal().cols
+                let rows = v.getTerminal().rows
+                guard cols > 2, rows > 2 else { return }
+
+                if let session {
+                    Task.detached(priority: .userInitiated) {
+                        Tmux.setClientSize(session, cols: cols - 1, rows: rows)
+                        Tmux.setClientSize(session, cols: cols, rows: rows)
+                        Tmux.refreshClients(of: session)
+                    }
+                    self.redraw(key: key)
+                } else {
+                    // Shrink by a whole character cell so the column count really
+                    // changes, then restore.
+                    let size = v.frame.size
+                    let cell = max(8, size.width / CGFloat(cols))
+                    v.setFrameSize(NSSize(width: size.width - cell, height: size.height))
+                    self.after(0.05) {
+                        v.setFrameSize(size)
+                        self.redraw(key: key)
+                    }
+                }
+            }
         }
-        redraw(key: key)
     }
 
     // MARK: - Services (direct PTY)

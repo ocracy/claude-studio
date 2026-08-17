@@ -97,6 +97,7 @@ private struct TopBar: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .headerControl()
             .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
                 ProjectMenu(model: model, onClose: { menuOpen = false; onClose() })
             }
@@ -123,24 +124,27 @@ private struct TopBar: View {
                             icon: model.runningServiceCount > 0 ? "stop.fill" : "play.fill") {
                     model.runningServiceCount > 0 ? model.stopAllServices() : model.startAllServices()
                 }
+                .headerControl()
             }
 
             if let version = updater.availableVersion {
                 SmallButton(title: "Update · \(version)", icon: "arrow.down.circle") {
                     SettingsWindow.show()
                 }
+                .headerControl()
             }
 
             IconButton(icon: "gearshape", help: "Settings (⌘,)") {
                 SettingsWindow.show()
             }
+            .headerControl()
         }
         .padding(.leading, 0)
         .padding(.trailing, 10)
         .frame(height: 42)
-        // The marker sits BEHIND the controls so a double-click on empty header
-        // space can be told apart from a click on a button (see HeaderDoubleClick).
-        .background(HeaderBackground().background(Theme.chrome))
+        // Empty header space zooms the window on a double-click, like a title bar;
+        // the controls opt out through `headerControl()` (see HeaderDoubleClick).
+        .background(Theme.chrome)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 }
@@ -215,11 +219,30 @@ private struct ProjectMenu: View {
 
 private struct ActivityRail: View {
     @ObservedObject var model: StudioModel
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var dragging: StudioModel.Pane?
 
     var body: some View {
         VStack(spacing: 4) {
-            ForEach(StudioModel.Pane.allCases) { pane in
+            ForEach(StudioModel.orderedPanes) { pane in
                 button(pane)
+                    // Drag to reorder; the context menu does the same without a drag.
+                    .onDrag {
+                        dragging = pane
+                        return NSItemProvider(object: pane.rawValue as NSString)
+                    }
+                    .onDrop(of: [.text], isTargeted: nil) { _ in
+                        guard let source = dragging, source != pane else { return false }
+                        StudioModel.movePane(source, before: pane)
+                        dragging = nil
+                        return true
+                    }
+                    .contextMenu {
+                        Button("Move up") { StudioModel.movePane(pane, by: -1) }
+                        Button("Move down") { StudioModel.movePane(pane, by: 1) }
+                        Divider()
+                        Button("Reset order") { StudioModel.resetPaneOrder() }
+                    }
             }
             Spacer()
         }
@@ -312,8 +335,9 @@ private struct TabBar: View {
         case .service:
             guard let id = UUID(uuidString: tab.ref) else { return Theme.idle }
             return (model.engine.serviceStatus[id] ?? .stopped).color
-        case .terminal, .command:
+        case .terminal, .script:
             return model.engine.isLive(tab.terminalKey) ? Theme.running : Theme.idle
+        case .command:      return Theme.accent.opacity(0.7)
         case .skill, .cron: return Theme.text3
         }
     }

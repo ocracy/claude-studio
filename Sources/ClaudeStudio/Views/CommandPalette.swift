@@ -219,10 +219,18 @@ struct CommandPalette: View {
             })
         }
 
-        for command in model.store.config.commands {
-            out.append(PaletteItem(id: "x-\(command.id)", icon: "bolt", group: "Command",
-                                   title: command.name, subtitle: command.command) {
-                model.runCommand(command)
+        for command in model.claudeCommands.commands {
+            out.append(PaletteItem(id: "cc-\(command.id)", icon: "slash.circle",
+                                   group: "Claude command", title: command.invocation,
+                                   subtitle: command.description ?? "") {
+                model.runClaudeCommand(command)
+            })
+        }
+
+        for script in model.store.config.scripts {
+            out.append(PaletteItem(id: "x-\(script.id)", icon: "bolt", group: "Script",
+                                   title: script.name, subtitle: script.command) {
+                model.runScript(script)
             })
         }
 
@@ -256,6 +264,10 @@ struct CommandPalette: View {
         out.append(PaletteItem(id: "new-skill", icon: "sparkles", group: "Action",
                                title: "Create a skill with Claude") {
             model.createSkillWithClaude()
+        })
+        out.append(PaletteItem(id: "new-command", icon: "slash.circle", group: "Action",
+                               title: "Create a Claude command") {
+            model.createCommandWithClaude()
         })
         out.append(PaletteItem(id: "check-mcp", icon: "stethoscope", group: "Action",
                                title: "Check MCP connections") {

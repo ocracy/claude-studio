@@ -8,7 +8,7 @@ import AppKit
 final class StudioModel: ObservableObject {
 
     enum Pane: String, CaseIterable, Identifiable {
-        case sessions, skills, mcp, cron, services, commands, terminals
+        case sessions, skills, commands, mcp, cron, services, scripts, terminals
         var id: String { rawValue }
 
         var title: String {
@@ -19,6 +19,7 @@ final class StudioModel: ObservableObject {
             case .cron:      return "scheduled"
             case .services:  return "services"
             case .commands:  return "commands"
+            case .scripts:   return "scripts"
             case .terminals: return "terminals"
             }
         }
@@ -29,7 +30,8 @@ final class StudioModel: ObservableObject {
             case .mcp:       return "point.3.connected.trianglepath.dotted"
             case .cron:      return "clock"
             case .services:  return "server.rack"
-            case .commands:  return "bolt"
+            case .commands:  return "slash.circle"
+            case .scripts:   return "bolt"
             case .terminals: return "terminal"
             }
         }
@@ -40,16 +42,48 @@ final class StudioModel: ObservableObject {
             case .mcp:       return "MCP servers"
             case .cron:      return "Scheduled runs"
             case .services:  return "Services"
-            case .commands:  return "Commands"
+            case .commands:  return "Claude commands (.claude/commands)"
+            case .scripts:   return "Scripts — one-shot shell commands"
             case .terminals: return "Terminals"
             }
         }
     }
 
+    /// The rail in the user's order: their saved order first, then anything a newer
+    /// version added, so nothing can disappear from the sidebar.
+    static var orderedPanes: [Pane] {
+        let saved = AppSettings.shared.railOrder
+            .split(separator: ",")
+            .compactMap { Pane(rawValue: String($0)) }
+        return saved + Pane.allCases.filter { !saved.contains($0) }
+    }
+
+    static func movePane(_ pane: Pane, by offset: Int) {
+        var order = orderedPanes
+        guard let index = order.firstIndex(of: pane) else { return }
+        let target = index + offset
+        guard order.indices.contains(target) else { return }
+        order.swapAt(index, target)
+        AppSettings.shared.railOrder = order.map(\.rawValue).joined(separator: ",")
+    }
+
+    static func movePane(_ pane: Pane, before other: Pane) {
+        guard pane != other else { return }
+        var order = orderedPanes
+        guard let from = order.firstIndex(of: pane) else { return }
+        order.remove(at: from)
+        guard let to = order.firstIndex(of: other) else { return }
+        order.insert(pane, at: to)
+        AppSettings.shared.railOrder = order.map(\.rawValue).joined(separator: ",")
+    }
+
+    static func resetPaneOrder() { AppSettings.shared.railOrder = "" }
+
     let project: Project
     let store: ProjectStore
     let skills: SkillStore
     let mcp = MCPStore()
+    let claudeCommands = CommandStore()
     let runs: RunStore
     let engine: TerminalEngine
 
@@ -91,6 +125,7 @@ final class StudioModel: ObservableObject {
         }
         runs.startPolling { [weak self] in self?.skills.skills.map(\.name) ?? [] }
         mcp.start(project: project)
+        claudeCommands.start(project: project)
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
             Task { @MainActor in
@@ -362,34 +397,65 @@ final class StudioModel: ObservableObject {
     /// Runs an interactive `claude mcp` subcommand in its own tab — sign-in flows
     /// and `get` both print to a terminal, so they belong in one.
     func runMCPCommand(_ subcommand: String, title: String) {
-        let tab = StudioTab(kind: .command, ref: "mcp-\(subcommand)", title: title)
+        let tab = StudioTab(kind: .script, ref: "mcp-\(subcommand)", title: title)
         open(tab)
         engine.runCommandTab(key: tab.terminalKey, name: title,
                              command: "claude mcp \(subcommand)", cwd: project.path)
     }
 
-    // MARK: - Commands
+    // MARK: - Scripts (one-shot shell commands)
 
-    /// Opens the command's tab and runs it. Pressing it again re-runs in place.
-    func runCommand(_ command: ProjectCommand) {
-        let tab = StudioTab(kind: .command, ref: command.id.uuidString, title: command.name)
+    /// Opens the script's tab and runs it. Pressing it again re-runs in place.
+    func runScript(_ script: ProjectScript) {
+        let tab = StudioTab(kind: .script, ref: script.id.uuidString, title: script.name)
         open(tab)
-        engine.runCommandTab(key: tab.terminalKey, name: command.name,
-                             command: command.command,
-                             cwd: command.resolvedCwd(projectPath: project.path))
+        engine.runCommandTab(key: tab.terminalKey, name: script.name,
+                             command: script.command,
+                             cwd: script.resolvedCwd(projectPath: project.path))
     }
 
-    func runCommandInBackground(_ command: ProjectCommand) {
-        engine.runInBackground(name: command.name, command: command.command,
-                               cwd: command.resolvedCwd(projectPath: project.path))
+    func runScriptInBackground(_ script: ProjectScript) {
+        engine.runInBackground(name: script.name, command: script.command,
+                               cwd: script.resolvedCwd(projectPath: project.path))
     }
 
-    func removeCommand(_ command: ProjectCommand) {
-        let key = "command:\(command.id.uuidString)"
+    func removeScript(_ script: ProjectScript) {
+        let key = "script:\(script.id.uuidString)"
         closeTab(id: key, killSession: false)
         engine.discard(key)
-        store.removeCommand(command.id)
+        store.removeScript(script.id)
     }
+
+    // MARK: - Claude commands (.claude/commands)
+
+    func openClaudeCommand(_ command: ClaudeCommand) {
+        open(StudioTab(kind: .command, ref: command.name, title: command.invocation))
+    }
+
+    /// Runs the slash command in a fresh Claude session. Commands that take an
+    /// argument are typed in but not sent, so the argument can be filled in first.
+    func runClaudeCommand(_ command: ClaudeCommand) {
+        let takesArgument = command.argumentHint != nil
+        newSession(name: command.invocation,
+                   prompt: command.invocation,
+                   autoRun: !takesArgument)
+    }
+
+    /// Opens a session that writes a new slash command, the way the skills pane
+    /// creates a skill.
+    func createCommandWithClaude() {
+        newSession(name: "new command", prompt: Self.createCommandPrompt, autoRun: true)
+    }
+
+    static let createCommandPrompt = """
+    Create a new Claude Code slash command for this project at \
+    `.claude/commands/<name>.md`.
+
+    Ask me what the command should do first. Give it frontmatter with a one-line \
+    `description` (and `argument-hint` if it takes an argument), then write the body \
+    as instructions to follow when the command runs. Use `$ARGUMENTS` where the \
+    argument belongs.
+    """
 
     // MARK: - Skills
 
@@ -458,7 +524,7 @@ final class StudioModel: ObservableObject {
         }
 
         tabs.remove(at: index)
-        if tab.kind == .service || tab.kind == .command { engine.discard(tab.terminalKey) }
+        if tab.kind == .service || tab.kind == .script { engine.discard(tab.terminalKey) }
         if activeTabID == id {
             activeTabID = tabs.indices.contains(index) ? tabs[index].id : tabs.last?.id
         }

@@ -7,7 +7,7 @@ import SwiftUI
 /// ```
 /// .cs/
 /// ├── services.json    services
-/// ├── commands.json    one-shot commands
+/// ├── scripts.json     one-shot shell commands
 /// ├── terminals.json   terminals
 /// ├── schedules.json   scheduled runs
 /// ├── sessions.json    Claude session records
@@ -20,7 +20,7 @@ import SwiftUI
 struct ProjectConfig: Codable, Equatable {
     var sessions: [SessionRecord] = []
     var services: [Service] = []
-    var commands: [ProjectCommand] = []
+    var scripts: [ProjectScript] = []
     var terminals: [TerminalTab] = []
     var schedules: [Schedule] = []
     var settings = ProjectSettings()
@@ -51,7 +51,7 @@ struct ProjectConfig: Codable, Equatable {
 
         sessions  = value(.sessions, [])
         services  = value(.services, [])
-        commands  = value(.commands, [])
+        scripts   = value(.scripts, [])
         terminals = value(.terminals, [])
         schedules = value(.schedules, [])
 
@@ -67,14 +67,14 @@ struct ProjectConfig: Codable, Equatable {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(sessions, forKey: .sessions)
         try box.encode(services, forKey: .services)
-        try box.encode(commands, forKey: .commands)
+        try box.encode(scripts, forKey: .scripts)
         try box.encode(terminals, forKey: .terminals)
         try box.encode(schedules, forKey: .schedules)
         try box.encode(settings, forKey: .settings)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sessions, services, commands, terminals, schedules, settings, sidebarWidth, lastView
+        case sessions, services, scripts, commands, terminals, schedules, settings, sidebarWidth, lastView
     }
 }
 
@@ -100,7 +100,7 @@ final class ProjectStore: ObservableObject {
 
     func session(tmux: String) -> SessionRecord? { config.sessions.first { $0.tmux == tmux } }
     func service(_ id: UUID) -> Service? { config.services.first { $0.id == id } }
-    func command(_ id: UUID) -> ProjectCommand? { config.commands.first { $0.id == id } }
+    func script(_ id: UUID) -> ProjectScript? { config.scripts.first { $0.id == id } }
     func terminal(_ id: UUID) -> TerminalTab? { config.terminals.first { $0.id == id } }
     func schedule(for skill: String) -> Schedule? { config.schedules.first { $0.skill == skill } }
 
@@ -166,18 +166,18 @@ final class ProjectStore: ObservableObject {
 
     func removeService(_ id: UUID) { mutate { $0.services.removeAll { $0.id == id } } }
 
-    // Commands
+    // Scripts
 
-    func addCommand(_ command: ProjectCommand) { mutate { $0.commands.append(command) } }
+    func addScript(_ script: ProjectScript) { mutate { $0.scripts.append(script) } }
 
-    func updateCommand(_ command: ProjectCommand) {
+    func updateScript(_ script: ProjectScript) {
         mutate {
-            guard let i = $0.commands.firstIndex(where: { $0.id == command.id }) else { return }
-            $0.commands[i] = command
+            guard let i = $0.scripts.firstIndex(where: { $0.id == script.id }) else { return }
+            $0.scripts[i] = script
         }
     }
 
-    func removeCommand(_ id: UUID) { mutate { $0.commands.removeAll { $0.id == id } } }
+    func removeScript(_ id: UUID) { mutate { $0.scripts.removeAll { $0.id == id } } }
 
     // Terminals
 
@@ -232,7 +232,16 @@ final class ProjectStore: ObservableObject {
     private static func load(_ project: Project) -> ProjectConfig {
         var config = ProjectConfig.empty
         config.services  = read([Service].self,        from: Paths.services(project))  ?? []
-        config.commands  = read([ProjectCommand].self, from: Paths.commands(project))  ?? []
+        config.scripts   = read([ProjectScript].self,  from: Paths.scripts(project))   ?? []
+        // `commands.json` was this file's name before Claude's own slash commands got
+        // a section of their own; read it once so nothing is lost.
+        if config.scripts.isEmpty,
+           let legacy = read([ProjectScript].self, from: Paths.legacyCommands(project)),
+           !legacy.isEmpty {
+            config.scripts = legacy
+            write(legacy, to: Paths.scripts(project))
+            try? FileManager.default.removeItem(at: Paths.legacyCommands(project))
+        }
         config.terminals = read([TerminalTab].self,   from: Paths.terminals(project)) ?? []
         config.schedules = read([Schedule].self,      from: Paths.schedules(project)) ?? []
         config.sessions  = read([SessionRecord].self, from: Paths.sessions(project))  ?? []
@@ -244,7 +253,7 @@ final class ProjectStore: ObservableObject {
         if FileManager.default.fileExists(atPath: legacy.path),
            let old = read(ProjectConfig.self, from: legacy) {
             if config.services.isEmpty  { config.services  = old.services }
-            if config.commands.isEmpty  { config.commands  = old.commands }
+            if config.scripts.isEmpty   { config.scripts   = old.scripts }
             if config.terminals.isEmpty { config.terminals = old.terminals }
             if config.schedules.isEmpty { config.schedules = old.schedules }
             if config.sessions.isEmpty  { config.sessions  = old.sessions }
@@ -270,7 +279,7 @@ final class ProjectStore: ObservableObject {
     private static func writeAll(_ config: ProjectConfig, project: Project) {
         Paths.ensure(Paths.csDir(project))
         write(config.services,  to: Paths.services(project))
-        write(config.commands,  to: Paths.commands(project))
+        write(config.scripts,   to: Paths.scripts(project))
         write(config.terminals, to: Paths.terminals(project))
         write(config.schedules, to: Paths.schedules(project))
         write(config.sessions,  to: Paths.sessions(project))
@@ -282,7 +291,7 @@ final class ProjectStore: ObservableObject {
     private func save(changed previous: ProjectConfig) {
         Paths.ensure(Paths.csDir(project))
         if config.services  != previous.services  { Self.write(config.services,  to: Paths.services(project)) }
-        if config.commands  != previous.commands  { Self.write(config.commands,  to: Paths.commands(project)) }
+        if config.scripts   != previous.scripts   { Self.write(config.scripts,   to: Paths.scripts(project)) }
         if config.terminals != previous.terminals { Self.write(config.terminals, to: Paths.terminals(project)) }
         if config.schedules != previous.schedules { Self.write(config.schedules, to: Paths.schedules(project)) }
         if config.sessions  != previous.sessions  { Self.write(config.sessions,  to: Paths.sessions(project)) }

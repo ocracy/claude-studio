@@ -134,17 +134,26 @@ final class StudioWindow: NSObject, NSWindowDelegate {
     var activeModel: StudioModel? { model }
 }
 
-/// Marks the empty area of the custom header.
+/// Whether the pointer is over an interactive control in the header.
 ///
-/// Nothing is drawn: it exists so hit-testing can tell "header background" from
-/// "a control in the header". `HeaderDoubleClick` uses that to decide whether a
-/// double-click should zoom the window.
-struct HeaderBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { HeaderMarkerView() }
-    func updateNSView(_ view: NSView, context: Context) {}
+/// SwiftUI knows this exactly; AppKit hit-testing does not, because everything in a
+/// SwiftUI hierarchy answers as the same hosting view. The header's controls report
+/// their hover state here, and `HeaderDoubleClick` uses it to leave their clicks
+/// alone.
+@MainActor
+final class HeaderHover: ObservableObject {
+    static let shared = HeaderHover()
+    private(set) var overControl = false
+
+    func set(_ inside: Bool) { overControl = inside }
 }
 
-final class HeaderMarkerView: NSView {}
+extension View {
+    /// Marks a header control, so a double-click on it is not taken as "zoom".
+    func headerControl() -> some View {
+        onHover { HeaderHover.shared.set($0) }
+    }
+}
 
 /// Restores the native "double-click the title bar to zoom" behaviour.
 ///
@@ -173,12 +182,9 @@ enum HeaderDoubleClick {
 
                 let point = event.locationInWindow
                 guard point.y > window.frame.height - headerHeight,
-                      point.x > trafficLightWidth
+                      point.x > trafficLightWidth,
+                      !HeaderHover.shared.overControl   // a control keeps its own click
                 else { return event }
-
-                // Only empty header space zooms; a control keeps its own click.
-                let hit = window.contentView?.hitTest(point)
-                guard hit == nil || hit is HeaderMarkerView else { return event }
 
                 window.zoom(nil)
                 return nil

@@ -24,6 +24,10 @@ final class AppSettings: ObservableObject {
     @AppStorage("terminal.fontSize")   var terminalFontSize = 12.5
     /// Reattach to the most recent session when a project opens.
     @AppStorage("session.autoAttach")  var autoAttachLastSession = true
+    /// Order of the activity rail, as comma-separated pane names. Empty means the
+    /// built-in order; unknown or missing names are ignored, so the list survives
+    /// a release that adds or removes a section.
+    @AppStorage("rail.order")          var railOrder = ""
 
     /// Selectable system sounds — all ship with macOS.
     static let sounds = ["Glass", "Ping", "Pop", "Submarine", "Blow", "Bottle",

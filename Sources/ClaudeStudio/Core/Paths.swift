@@ -49,6 +49,9 @@ enum Paths {
     static let globalSkillsDir = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/skills", isDirectory: true)
 
+    static let globalCommandsDir = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent(".claude/commands", isDirectory: true)
+
     // MARK: - Projectct layer (.cs)
 
     /// `<project>/.cs` — project-scoped settings, like Visual Studio's `.vs`.
@@ -61,7 +64,12 @@ enum Paths {
         csDir(project).appendingPathComponent("services.json")
     }
 
-    static func commands(_ project: Project) -> URL {
+    static func scripts(_ project: Project) -> URL {
+        csDir(project).appendingPathComponent("scripts.json")
+    }
+
+    /// Superseded by `scripts.json`; read once and migrated.
+    static func legacyCommands(_ project: Project) -> URL {
         csDir(project).appendingPathComponent("commands.json")
     }
 
@@ -99,6 +107,11 @@ enum Paths {
 
     static func projectSkillsDir(_ project: Project) -> URL {
         project.url.appendingPathComponent(".claude/skills", isDirectory: true)
+    }
+
+    /// Claude slash commands.
+    static func projectCommandsDir(_ project: Project) -> URL {
+        project.url.appendingPathComponent(".claude/commands", isDirectory: true)
     }
 
     @discardableResult

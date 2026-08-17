@@ -20,8 +20,14 @@ struct ContentArea: View {
     @ViewBuilder
     private func content(for tab: StudioTab) -> some View {
         switch tab.kind {
-        case .session, .terminal, .service, .command:
+        case .session, .terminal, .service, .script:
             TerminalPane(model: model, tab: tab)
+        case .command:
+            if let command = model.claudeCommands.command(named: tab.ref) {
+                ClaudeCommandPane(model: model, command: command)
+            } else {
+                message("Command not found: \(tab.ref)")
+            }
         case .skill:
             if let skill = model.skills.skill(named: tab.ref) {
                 SkillPane(model: model, skill: skill)
@@ -154,12 +160,12 @@ private struct TerminalPane: View {
             IconButton(icon: "clear", help: "Clear screen") {
                 model.engine.clear(key: tab.terminalKey)
             }
-        case .command:
-            if let command = commandValue {
+        case .script:
+            if let script = scriptValue {
                 SmallButton(title: model.engine.isLive(tab.terminalKey) ? "Running…" : "Run again",
                             icon: "play.fill",
                             prominent: !model.engine.isLive(tab.terminalKey)) {
-                    model.runCommand(command)
+                    model.runScript(script)
                 }
                 IconButton(icon: "clear", help: "Clear screen") {
                     model.engine.clear(key: tab.terminalKey)
@@ -194,9 +200,9 @@ private struct TerminalPane: View {
         }
     }
 
-    private var commandValue: ProjectCommand? {
-        guard tab.kind == .command, let id = UUID(uuidString: tab.ref) else { return nil }
-        return model.store.command(id)
+    private var scriptValue: ProjectScript? {
+        guard tab.kind == .script, let id = UUID(uuidString: tab.ref) else { return nil }
+        return model.store.script(id)
     }
 
     private var serviceValue: Service? {
@@ -233,9 +239,9 @@ private struct TerminalPane: View {
     private var meta: String {
         switch tab.kind {
         case .service: return serviceValue?.command ?? ""
-        case .command:
-            guard let command = commandValue else { return "" }
-            return command.resolvedCwd(projectPath: model.project.path)
+        case .script:
+            guard let script = scriptValue else { return "" }
+            return script.resolvedCwd(projectPath: model.project.path)
         case .session: return Tmux.isAvailable ? tab.ref : "no tmux"
         case .terminal:
             guard let id = UUID(uuidString: tab.ref), let terminal = model.store.terminal(id)
@@ -323,6 +329,70 @@ private struct SkillPane: View {
 
     private func load() {
         guard let text = try? String(contentsOf: skill.url, encoding: .utf8) else {
+            body_ = ""
+            return
+        }
+        body_ = Frontmatter.split(text).body
+    }
+}
+
+// MARK: - Claude command
+
+/// A slash command's own page: what it does, and one button to run it in a session.
+private struct ClaudeCommandPane: View {
+    @ObservedObject var model: StudioModel
+    let command: ClaudeCommand
+    @State private var body_ = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PaneHeader(title: command.invocation,
+                       state: command.scope.label,
+                       stateColor: Theme.idle,
+                       meta: command.url.path
+                        .replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                SmallButton(title: "Run in a session", icon: "play.fill", prominent: true) {
+                    model.runClaudeCommand(command)
+                }
+                IconButton(icon: "square.and.pencil", help: "Open file") {
+                    NSWorkspace.shared.open(command.url)
+                }
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let hint = command.argumentHint {
+                        HStack(spacing: 26) {
+                            fact("argument", hint)
+                            fact("invoke", "\(command.invocation) \(hint)")
+                        }
+                        .padding(.bottom, 18)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(Theme.separator).frame(height: 1)
+                        }
+                        .padding(.bottom, 20)
+                    }
+
+                    MarkdownView(text: body_.isEmpty ? "_(command body is empty)_" : body_)
+                }
+                .padding(.horizontal, 26)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onAppear(perform: load)
+        .onChange(of: command.id) { load() }
+    }
+
+    private func fact(_ key: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: key)
+            Text(value).font(Theme.mono(12)).foregroundStyle(Theme.text)
+        }
+    }
+
+    private func load() {
+        guard let text = try? String(contentsOf: command.url, encoding: .utf8) else {
             body_ = ""
             return
         }
