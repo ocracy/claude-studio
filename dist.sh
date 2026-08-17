@@ -27,10 +27,13 @@ fi
 
 echo "→ packaging…"
 rm -rf "$APP" "$ZIP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
 cp "$BIN" "$APP/Contents/MacOS/ClaudeStudio"
 chmod +x "$APP/Contents/MacOS/ClaudeStudio"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+BRIDGE="$(dirname "$BIN")/StudioBridge"
+cp "$BRIDGE" "$APP/Contents/Helpers/claude-studio-bridge"
+chmod +x "$APP/Contents/Helpers/claude-studio-bridge"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

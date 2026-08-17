@@ -152,8 +152,10 @@ final class MCPStore: ObservableObject {
         }
         switch server.transport {
         case .stdio:
-            // `--` keeps the server's own flags out of claude's parser.
-            parts += ["--", server.command] + server.args.map(Shell.quoted)
+            // `--` keeps the server's own flags out of claude's parser, and the command
+            // itself is quoted: our helper lives under "Application Support", and an
+            // unquoted path with spaces arrives as several arguments.
+            parts += ["--", Shell.quoted(server.command)] + server.args.map(Shell.quoted)
         case .http, .sse:
             parts.append(Shell.quoted(server.url))
         }

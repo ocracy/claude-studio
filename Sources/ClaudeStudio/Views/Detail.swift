@@ -87,8 +87,32 @@ private struct TerminalPane: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if tab.kind == .session, model.sessionNeedsReopen(tab.terminalKey) {
+                linkNotice
+            }
             TerminalHost(key: tab.terminalKey, engine: model.engine)
         }
+    }
+
+    /// A session reads its working directories once, at startup. When the links change
+    /// underneath it the honest thing is to say so and offer the one-click fix.
+    private var linkNotice: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "link")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.accent)
+            Text("Project links changed — reopen this session to apply them.")
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.text2)
+            Spacer()
+            SmallButton(title: "Reopen", prominent: true) {
+                model.reopenSession(tmux: tab.ref)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Theme.chrome)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 
     private var header: some View {
@@ -121,6 +145,20 @@ private struct TerminalPane: View {
             HStack(spacing: 5) {
                 StatusDot(color: stateColor)
                 Text(state).font(Theme.ui(11)).foregroundStyle(Theme.text3)
+            }
+
+            if let running = model.liveUsage(forTab: tab.terminalKey) {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.accent)
+                    Text("\(running.display) · \(model.owner(of: running.name))")
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.text2)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Theme.field))
             }
 
             Spacer(minLength: 8)
@@ -343,6 +381,13 @@ private struct ClaudeCommandPane: View {
     @ObservedObject var model: StudioModel
     let command: ClaudeCommand
     @State private var body_ = ""
+    @State private var section: Section = .definition
+
+    private enum Section: String, CaseIterable, Identifiable {
+        case definition, usage
+        var id: String { rawValue }
+        var label: String { self == .definition ? "Definition" : "Usage" }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -359,6 +404,12 @@ private struct ClaudeCommandPane: View {
                 }
             }
 
+            SubTabs(items: Section.allCases.map { ($0.rawValue, $0.label) },
+                    selected: section.rawValue) { section = Section(rawValue: $0) ?? .definition }
+
+            if section == .usage {
+                RunList(model: model, skill: command.name, showReports: false)
+            } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if let hint = command.argumentHint {
@@ -379,8 +430,12 @@ private struct ClaudeCommandPane: View {
                 .padding(.vertical, 20)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
         }
-        .onAppear(perform: load)
+        .onAppear {
+            load()
+            model.runs.refresh(skill: command.name)
+        }
         .onChange(of: command.id) { load() }
     }
 
@@ -438,8 +493,12 @@ private struct CronPane: View {
 private struct RunList: View {
     @ObservedObject var model: StudioModel
     let skill: String
+    /// Reports come from scheduled and manual runs; uses come from Claude's hooks.
+    /// They belong in one history, told apart at a glance rather than split in two.
+    var showReports = true
 
-    private var runs: [SkillRun] { model.runs.runs(for: skill) }
+    private var runs: [SkillRun] { showReports ? model.runs.runs(for: skill) : [] }
+    private var uses: [UsageEvent] { model.runs.usage(for: skill) }
 
     private var selected: SkillRun? {
         if let id = model.selectedRun[skill], let match = runs.first(where: { $0.id == id }) {
@@ -457,9 +516,11 @@ private struct RunList: View {
 
             if let run = selected {
                 output(run)
+            } else if !uses.isEmpty {
+                usageDetail
             } else {
                 VStack(spacing: 6) {
-                    Text("No runs yet.")
+                    Text(showReports ? "No runs yet." : "Not used yet.")
                         .font(Theme.ui(12.5)).foregroundStyle(Theme.text3)
                     Text(".cs/runs/\(skill)/")
                         .font(Theme.mono(10.5)).foregroundStyle(Theme.text3)
@@ -481,6 +542,42 @@ private struct RunList: View {
                     }
                     .padding(.horizontal, 10).padding(.vertical, 8)
                 }
+                if !uses.isEmpty {
+                    SectionLabel(text: "used by sessions")
+                        .padding(.horizontal, 8)
+                        .padding(.top, runs.isEmpty ? 2 : 12)
+                        .padding(.bottom, 4)
+                    ForEach(uses.prefix(40)) { use in
+                        HStack(spacing: 8) {
+                            Image(systemName: use.source == .user ? "character.cursor.ibeam"
+                                                                  : "sparkles")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 12)
+                            Text(use.at.shortStamp)
+                                .font(Theme.mono(11))
+                                .foregroundStyle(Theme.text)
+                            Spacer()
+                            if let duration = use.duration {
+                                Text(duration)
+                                    .font(Theme.mono(10.5))
+                                    .foregroundStyle(Theme.text3)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .help(use.sessionName.map { "in \($0) · \(use.source.label)" }
+                              ?? use.source.label)
+                    }
+
+                    if !runs.isEmpty {
+                        SectionLabel(text: "reports")
+                            .padding(.horizontal, 8)
+                            .padding(.top, 12)
+                            .padding(.bottom, 4)
+                    }
+                }
+
                 ForEach(runs) { run in
                     Button { model.selectedRun[skill] = run.id } label: {
                         HoverRow(selected: selected?.id == run.id,
@@ -508,6 +605,46 @@ private struct RunList: View {
                 }
             }
             .padding(6)
+        }
+    }
+
+    /// When there are no reports — the usual case for a command — the right pane
+    /// summarises how it has been used instead of showing an empty slot.
+    private var usageDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Used \(uses.count) time\(uses.count == 1 ? "" : "s")")
+                    .font(Theme.ui(13, .medium))
+                    .foregroundStyle(Theme.text)
+                ForEach(uses.prefix(40)) { use in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(use.at.shortStamp)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.text3)
+                            .frame(width: 92, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(use.sessionName ?? "a session")
+                                .font(Theme.ui(12))
+                                .foregroundStyle(Theme.text)
+                            if let args = use.args {
+                                Text(args)
+                                    .font(Theme.mono(10.5))
+                                    .foregroundStyle(Theme.text3)
+                                    .lineLimit(2)
+                            }
+                        }
+                        Spacer()
+                        Text([use.source.label, use.duration].compactMap { $0 }
+                                .joined(separator: " · "))
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(Theme.text3)
+                    }
+                    Divider().overlay(Theme.separator)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

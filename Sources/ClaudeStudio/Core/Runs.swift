@@ -99,6 +99,8 @@ final class RunStore: ObservableObject {
     @Published private(set) var runs: [String: [SkillRun]] = [:]
     /// Skills currently known to be running.
     @Published private(set) var running: Set<String> = []
+    /// skill or command name → recorded uses (newest first).
+    @Published private(set) var usage: [String: [UsageEvent]] = [:]
 
     private let project: Project
     private var pollTimer: Timer?
@@ -108,6 +110,7 @@ final class RunStore: ObservableObject {
     }
 
     func runs(for skill: String) -> [SkillRun] { runs[skill] ?? [] }
+    func usage(for name: String) -> [UsageEvent] { usage[name] ?? [] }
     func latest(for skill: String) -> SkillRun? { runs[skill]?.first }
     func isRunning(_ skill: String) -> Bool { running.contains(skill) }
 
@@ -116,18 +119,22 @@ final class RunStore: ObservableObject {
         let project = self.project
         Task.detached(priority: .utility) {
             var out: [String: [SkillRun]] = [:]
+            var used: [String: [UsageEvent]] = [:]
             var live: Set<String> = []
             for skill in skills {
                 out[skill] = Runs.list(project: project, skill: skill)
+                let events = Runs.usage(project: project, skill: skill)
+                if !events.isEmpty { used[skill] = events }
                 if let state = Runs.state(project: project, skill: skill), state.isRunning,
                    let started = state.startedAt, Date().timeIntervalSince(started) < 3600 {
                     live.insert(skill)
                 }
             }
-            let (result, active) = (out, live)
+            let (result, active, usageResult) = (out, live, used)
             await MainActor.run {
                 self.runs = result
                 self.running = active
+                self.usage = usageResult
             }
         }
     }
@@ -136,9 +143,11 @@ final class RunStore: ObservableObject {
         let project = self.project
         Task.detached(priority: .utility) {
             let list = Runs.list(project: project, skill: skill)
+            let events = Runs.usage(project: project, skill: skill)
             let state = Runs.state(project: project, skill: skill)
             await MainActor.run {
                 self.runs[skill] = list
+                self.usage[skill] = events
                 if let state, state.isRunning { self.running.insert(skill) }
                 else { self.running.remove(skill) }
             }

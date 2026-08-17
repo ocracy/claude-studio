@@ -210,6 +210,10 @@ struct CommandPalette: View {
             })
         }
 
+        for link in model.links {
+            out.append(PaleteLinkItem(link: link, model: model).item)
+        }
+
         for server in model.mcp.servers {
             out.append(PaletteItem(id: "m-\(server.id)", icon: "point.3.connected.trianglepath.dotted",
                                    group: "MCP server", title: server.name,
@@ -302,6 +306,21 @@ struct CommandPalette: View {
             index = hay.index(after: found)
         }
         return score
+    }
+}
+
+/// A linked project in the palette: opens it in its own window.
+@MainActor
+private struct PaleteLinkItem {
+    let link: ProjectLink
+    let model: StudioModel
+
+    var item: PaletteItem {
+        PaletteItem(id: "l-\(link.id)", icon: "link", group: "Linked project",
+                    title: link.name,
+                    subtitle: "\(link.allowEdits ? "edits" : "read-only") · \(link.displayPath)") {
+            WindowManager.shared.open(project: Project(path: link.path))
+        }
     }
 }
 

@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainMenuBuilder.install()
         HeaderDoubleClick.install()
+        // One consumer for the whole app: windows would race over the same spool.
+        UsageMonitor.shared.start()
 
         // Heavy setup happens in the background: hook bridge, tmux config, PATH
         // snapshot. The window never waits for them.
@@ -13,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             HookBridge.installIfNeeded()
             Tmux.ensureConfig()
             _ = Shell.userPath
+            await MainActor.run { ProjectBridge.install() }
         }
 
         // Is a new version out? Checked silently; a badge appears in the top bar.

@@ -30,6 +30,14 @@ enum Paths {
         return url
     }()
 
+    /// Raw hook events waiting to be read: one file per event, so a reader never sees
+    /// a half-written record and no offset bookkeeping is needed.
+    static let eventsDir: URL = {
+        let url = appSupport.appendingPathComponent("events", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+
     /// zsh scripts executed by launchd jobs.
     static let runnersDir: URL = {
         let url = appSupport.appendingPathComponent("runners", isDirectory: true)
@@ -37,8 +45,20 @@ enum Paths {
         return url
     }()
 
+    /// Helper binaries copied out of the bundle so their paths survive an update.
+    static let binDir: URL = {
+        let url = appSupport.appendingPathComponent("bin", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+
     static let launchAgentsDir = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+
+    /// Shared secret for phone access. Created by `Bridge/install.sh`; the app
+    /// reads it to build the QR code and rewrites it only when the user asks
+    /// for a new one.
+    static let bridgeToken = appSupport.appendingPathComponent("bridge-token")
 
     static let hookScript = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/hooks/claude-studio-hook.sh")
@@ -73,6 +93,10 @@ enum Paths {
         csDir(project).appendingPathComponent("commands.json")
     }
 
+    static func links(_ project: Project) -> URL {
+        csDir(project).appendingPathComponent("links.json")
+    }
+
     static func terminals(_ project: Project) -> URL {
         csDir(project).appendingPathComponent("terminals.json")
     }
@@ -99,6 +123,11 @@ enum Paths {
         csDir(project)
             .appendingPathComponent("runs", isDirectory: true)
             .appendingPathComponent(skill, isDirectory: true)
+    }
+
+    /// Skill and command usage, one JSON object per line, beside that skill's reports.
+    static func usageFile(_ project: Project, skill: String) -> URL {
+        runsDir(project, skill: skill).appendingPathComponent("usage.jsonl")
     }
 
     static func runState(_ project: Project, skill: String) -> URL {

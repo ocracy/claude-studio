@@ -8,6 +8,7 @@ import SwiftUI
 /// .cs/
 /// ├── services.json    services
 /// ├── scripts.json     one-shot shell commands
+/// ├── links.json       links to other Claude projects
 /// ├── terminals.json   terminals
 /// ├── schedules.json   scheduled runs
 /// ├── sessions.json    Claude session records
@@ -21,6 +22,7 @@ struct ProjectConfig: Codable, Equatable {
     var sessions: [SessionRecord] = []
     var services: [Service] = []
     var scripts: [ProjectScript] = []
+    var links: [ProjectLink] = []
     var terminals: [TerminalTab] = []
     var schedules: [Schedule] = []
     var settings = ProjectSettings()
@@ -52,6 +54,7 @@ struct ProjectConfig: Codable, Equatable {
         sessions  = value(.sessions, [])
         services  = value(.services, [])
         scripts   = value(.scripts, [])
+        links     = value(.links, [])
         terminals = value(.terminals, [])
         schedules = value(.schedules, [])
 
@@ -68,13 +71,15 @@ struct ProjectConfig: Codable, Equatable {
         try box.encode(sessions, forKey: .sessions)
         try box.encode(services, forKey: .services)
         try box.encode(scripts, forKey: .scripts)
+        try box.encode(links, forKey: .links)
         try box.encode(terminals, forKey: .terminals)
         try box.encode(schedules, forKey: .schedules)
         try box.encode(settings, forKey: .settings)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sessions, services, scripts, commands, terminals, schedules, settings, sidebarWidth, lastView
+        case sessions, services, scripts, links, commands, terminals, schedules,
+             settings, sidebarWidth, lastView
     }
 }
 
@@ -91,9 +96,35 @@ final class ProjectStore: ObservableObject {
     let project: Project
     @Published private(set) var config: ProjectConfig
 
+    /// Watches `.cs` so records written from outside this process appear here.
+    private var watcher: DirectoryWatcher?
+
+    /// Set while `save` is writing, so the watcher ignores our own writes.
+    private var isWriting = false
+
     init(project: Project) {
         self.project = project
         self.config = Self.load(project)
+        watchSessions()
+    }
+
+    /// Sessions can be created from the phone through cs-bridge while the app is
+    /// running. Without this the new tab would not appear until the project was
+    /// reopened, and the app's next write — which starts from its in-memory copy
+    /// — would erase the record the bridge just added.
+    ///
+    /// The directory is watched rather than the file: writes go through a temp
+    /// file and a rename, so the original inode is replaced and a file-level
+    /// watch would go deaf after the first change.
+    private func watchSessions() {
+        let directory = Paths.csDir(project)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        watcher = DirectoryWatcher(url: directory) { [weak self] in
+            guard let self, !self.isWriting else { return }
+            let onDisk = Self.readSessions(self.project)
+            guard onDisk != self.config.sessions else { return }
+            self.config.sessions = onDisk
+        }
     }
 
     // MARK: - Queries
@@ -101,6 +132,12 @@ final class ProjectStore: ObservableObject {
     func session(tmux: String) -> SessionRecord? { config.sessions.first { $0.tmux == tmux } }
     func service(_ id: UUID) -> Service? { config.services.first { $0.id == id } }
     func script(_ id: UUID) -> ProjectScript? { config.scripts.first { $0.id == id } }
+    func link(path: String) -> ProjectLink? { config.links.first { $0.path == path } }
+
+    /// Paths a session should be given file access to.
+    var writableLinkPaths: [String] {
+        config.links.filter { $0.allowEdits && $0.exists }.map(\.path)
+    }
     func terminal(_ id: UUID) -> TerminalTab? { config.terminals.first { $0.id == id } }
     func schedule(for skill: String) -> Schedule? { config.schedules.first { $0.skill == skill } }
 
@@ -179,6 +216,24 @@ final class ProjectStore: ObservableObject {
 
     func removeScript(_ id: UUID) { mutate { $0.scripts.removeAll { $0.id == id } } }
 
+    // Links to other projects
+
+    func addLink(_ link: ProjectLink) {
+        mutate {
+            guard !$0.links.contains(where: { $0.path == link.path }) else { return }
+            $0.links.append(link)
+        }
+    }
+
+    func updateLink(_ link: ProjectLink) {
+        mutate {
+            guard let i = $0.links.firstIndex(where: { $0.id == link.id }) else { return }
+            $0.links[i] = link
+        }
+    }
+
+    func removeLink(_ id: UUID) { mutate { $0.links.removeAll { $0.id == id } } }
+
     // Terminals
 
     func addTerminal(_ terminal: TerminalTab) { mutate { $0.terminals.append(terminal) } }
@@ -233,6 +288,7 @@ final class ProjectStore: ObservableObject {
         var config = ProjectConfig.empty
         config.services  = read([Service].self,        from: Paths.services(project))  ?? []
         config.scripts   = read([ProjectScript].self,  from: Paths.scripts(project))   ?? []
+        config.links     = read([ProjectLink].self,    from: Paths.links(project))     ?? []
         // `commands.json` was this file's name before Claude's own slash commands got
         // a section of their own; read it once so nothing is lost.
         if config.scripts.isEmpty,
@@ -264,6 +320,11 @@ final class ProjectStore: ObservableObject {
         return config
     }
 
+    /// Just the session records, re-read from disk. Used by the watcher.
+    static func readSessions(_ project: Project) -> [SessionRecord] {
+        read([SessionRecord].self, from: Paths.sessions(project)) ?? []
+    }
+
     private static func read<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
@@ -280,6 +341,7 @@ final class ProjectStore: ObservableObject {
         Paths.ensure(Paths.csDir(project))
         write(config.services,  to: Paths.services(project))
         write(config.scripts,   to: Paths.scripts(project))
+        write(config.links,     to: Paths.links(project))
         write(config.terminals, to: Paths.terminals(project))
         write(config.schedules, to: Paths.schedules(project))
         write(config.sessions,  to: Paths.sessions(project))
@@ -289,9 +351,19 @@ final class ProjectStore: ObservableObject {
     /// Writes only the section that changed, so resizing the sidebar does not
     /// touch the services file.
     private func save(changed previous: ProjectConfig) {
+        // The watcher fires on our own writes too; ignore that round trip so a
+        // save does not immediately re-read what it just wrote.
+        isWriting = true
+        defer {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.isWriting = false
+            }
+        }
+
         Paths.ensure(Paths.csDir(project))
         if config.services  != previous.services  { Self.write(config.services,  to: Paths.services(project)) }
         if config.scripts   != previous.scripts   { Self.write(config.scripts,   to: Paths.scripts(project)) }
+        if config.links     != previous.links     { Self.write(config.links,     to: Paths.links(project)) }
         if config.terminals != previous.terminals { Self.write(config.terminals, to: Paths.terminals(project)) }
         if config.schedules != previous.schedules { Self.write(config.schedules, to: Paths.schedules(project)) }
         if config.sessions  != previous.sessions  { Self.write(config.sessions,  to: Paths.sessions(project)) }

@@ -347,10 +347,22 @@ private struct TabBar: View {
 
 private struct StatusBar: View {
     @ObservedObject var model: StudioModel
+    @ObservedObject private var usage = UsageMonitor.shared
 
     var body: some View {
         HStack(spacing: 16) {
             Text(model.project.name).foregroundStyle(Theme.text2)
+
+            // What a session is running right now, and whose capability it is — the
+            // skill may belong to this project, a linked one, or your global set.
+            if let running = model.liveUsage.last?.usage {
+                HStack(spacing: 5) {
+                    StatusDot(color: Theme.accent, size: 5)
+                    Text("using \(running.display) · \(model.owner(of: running.name))")
+                        .foregroundStyle(Theme.text2)
+                }
+            }
+
             Spacer()
             Text("\(model.openSessions.count) sessions")
             Text("\(model.runningServiceCount)/\(model.store.config.services.count) services")

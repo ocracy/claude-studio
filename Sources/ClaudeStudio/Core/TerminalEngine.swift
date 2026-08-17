@@ -119,6 +119,10 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     private var starting: Set<String> = []
     /// Commands running invisibly (they announce themselves when done).
     private var backgroundKeys: [String: String] = [:]
+    /// Service id → its tmux session, for status probes and output capture.
+    private var serviceSessions: [UUID: String] = [:]
+    /// Services already announced as crashed, so the sound fires once.
+    private var announcedCrashes: Set<UUID> = []
     /// Command tabs, so their exit can be reported in place.
     private var commandNames: [String: String] = [:]
     private var scrollMonitor: Any?
@@ -167,6 +171,8 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
     func hasView(_ key: String) -> Bool { views[key] != nil }
 
+    private func engineDiscard(_ key: String) { discard(key) }
+
     /// Releases the view and its process entirely (when a tab is closed).
     func discard(_ key: String) {
         guard let v = views.removeValue(forKey: key) else { return }
@@ -182,7 +188,8 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     func startSession(key: String, session: String, project: Project,
                       title: String, resumeSID: String? = nil,
                       initialPrompt: String? = nil, autoRun: Bool = false,
-                      extraEnv: [String: String] = [:]) {
+                      extraEnv: [String: String] = [:],
+                      addDirs: [String] = []) {
         guard !starting.contains(key) else { return }
         let v = view(for: key)
         if v.process?.running == true { return }
@@ -193,7 +200,8 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
         // The hook environment is passed to the PTY and to the tmux session, so
         // the context survives even if the session is recreated.
-        var hookEnv = ["CS_TAB_ID": key, "CS_TAB_NAME": title, "CS_PROJECT": project.name]
+        var hookEnv = ["CS_TAB_ID": key, "CS_TAB_NAME": title,
+                       "CS_PROJECT": project.name, "CS_PROJECT_PATH": project.path]
         for (k, v) in extraEnv { hookEnv[k] = v }
 
         var env = baseEnvironment
@@ -202,13 +210,17 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         for (k, value) in hookEnv { env.append("\(k)=\(value)") }
 
         let trimmed = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Writable links become `--add-dir`, which is how Claude's own tools reach
+        // another project. It is read at startup only, so a link added later needs the
+        // session reopened — the UI says so rather than restarting behind your back.
+        let dirs = addDirs.map { " --add-dir \(Shell.quoted($0))" }.joined()
         let claudeCommand: String
         if let sid = resumeSID {
-            claudeCommand = "claude --resume \(Shell.quoted(sid))"
+            claudeCommand = "claude\(dirs) --resume \(Shell.quoted(sid))"
         } else if let prompt = trimmed, !prompt.isEmpty, autoRun {
-            claudeCommand = "claude \(Shell.quoted(prompt))"
+            claudeCommand = "claude\(dirs) \(Shell.quoted(prompt))"
         } else {
-            claudeCommand = "claude"
+            claudeCommand = "claude\(dirs)"
         }
         let inner = "cd \(Shell.quoted(project.path)) && exec \(claudeCommand)"
 
@@ -331,8 +343,19 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
     }
 
-    // MARK: - Services (direct PTY)
+    // MARK: - Services (tmux-backed)
 
+    /// tmux session name for a service. The `-sv-` marker keeps services out of the
+    /// Claude session list, the way `-sh-` does for terminals.
+    static func serviceSession(_ service: Service, project: Project) -> String {
+        "cs-\(project.shortID)-sv-\(service.id.uuidString.prefix(8).lowercased())"
+    }
+
+    /// Starts a service inside tmux.
+    ///
+    /// tmux, not a bare PTY: that is what lets anything outside this process — a
+    /// linked project, or you in a terminal — read what a service is printing, and it
+    /// keeps a crashed service's output and exit code on screen (`remain-on-exit`).
     func startService(_ service: Service, project: Project) {
         let key = service.id.uuidString
         let v = view(for: key)
@@ -342,34 +365,81 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         let cwd = service.resolvedCwd(projectPath: project.path)
         feed(key: key, "\r\n\u{1B}[2m— starting: \(service.command)  (\(cwd)) —\u{1B}[0m\r\n")
 
-        // Services must start without a visible tab (auto-start on open), so they
-        // do not wait for layout: their output is plain text and reflows when shown.
+        // Services must start without a visible tab (auto-start on open), so they do
+        // not wait for layout the way an interactive TUI does.
         let cols = max(80, v.getTerminal().cols)
         let rows = max(24, v.getTerminal().rows)
-        // stty stamps the PTY size from the inside on first spawn; SwiftTerm's
-        // post-layout TIOCSWINSZ still wins afterwards.
-        let wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; "
-            + "cd \(Shell.quoted(cwd)) && \(service.command)"
-
         var env = baseEnvironment
         env.append("COLUMNS=\(cols)")
         env.append("LINES=\(rows)")
+
+        let wrapped: String
+        if Tmux.isAvailable {
+            let session = Self.serviceSession(service, project: project)
+            v.tmuxSession = session
+            serviceSessions[service.id] = session
+            // `remain-on-exit` is set from INSIDE the pane, before the command runs.
+            // Setting it from outside a moment later is a race a fast-failing service
+            // wins: the pane dies, the session is destroyed, and its output — the very
+            // thing you need to see why it failed — is gone.
+            let keepAlive = "\(Shell.quoted(Tmux.path ?? "tmux")) set-option remain-on-exit on 2>/dev/null; "
+            let inner = keepAlive + "cd \(Shell.quoted(cwd)) && \(service.command)"
+            wrapped = Tmux.attachCommand(session: session, env: [:], inner: inner)
+            after(0.6) {
+                Tmux.setOption(session, "@cs_project", project.shortID)
+                Tmux.setOption(session, "@cs_title", service.name)
+                Tmux.setOption(session, "@cs_kind", "service")
+            }
+        } else {
+            wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; "
+                + "cd \(Shell.quoted(cwd)) && \(service.command)"
+        }
+
         v.startProcess(executable: "/bin/zsh", args: ["-l", "-i", "-c", wrapped],
                        environment: env, execName: nil)
 
         if let port = service.port {
             checkReadiness(service.id, port: port, attempt: 0)
         } else {
-            after(1.2) { [weak self] in
+            after(1.5) { [weak self] in
                 guard let self, self.serviceStatus[service.id] == .starting else { return }
-                self.serviceStatus[service.id] = self.isLive(key) ? .running : .crashed
+                self.serviceStatus[service.id] = self.isServiceAlive(service) ? .running : .crashed
             }
         }
     }
 
-    /// Graceful stop: Ctrl-C to the PTY → 3 s → SIGTERM → 3 s → SIGKILL.
+    /// Is the service's process still running? With tmux this is a live pane; without
+    /// it, the PTY we own.
+    private func isServiceAlive(_ service: Service) -> Bool {
+        if let session = serviceSessions[service.id] {
+            guard let state = Tmux.paneState(session) else { return false }
+            return !state.dead
+        }
+        return isLive(service.id.uuidString)
+    }
+
+    /// Reads what a service has printed — including after it died, thanks to
+    /// `remain-on-exit`.
+    func serviceOutput(_ service: Service, lines: Int = 400) -> String {
+        guard let session = serviceSessions[service.id] else { return "" }
+        return Tmux.capture(session, lines: lines)
+    }
+
+    /// Graceful stop: Ctrl-C first, then the session goes away.
     func stopService(_ service: Service) {
         let key = service.id.uuidString
+        if let session = serviceSessions[service.id], Tmux.exists(session) {
+            serviceStatus[service.id] = .stopping
+            Tmux.interrupt(session)
+            after(3) { [weak self] in
+                guard let self else { return }
+                Tmux.kill(session)
+                self.serviceSessions.removeValue(forKey: service.id)
+                self.engineDiscard(key)
+                self.serviceStatus[service.id] = .stopped
+            }
+            return
+        }
         if let v = views[key], v.process?.running == true {
             serviceStatus[service.id] = .stopping
             let pid = v.process.shellPid
@@ -545,9 +615,48 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
 
         guard Tmux.isAvailable else { return }
+        pollServiceStates()
         Task.detached(priority: .utility) {
             let titles = Tmux.paneTitles()
             await MainActor.run { self.paneTitles = titles }
+        }
+    }
+
+    /// Service status now comes from tmux: a dead pane with a non-zero status is a
+    /// crash, and the output stays on screen to be read.
+    private func pollServiceStates() {
+        let probes = serviceSessions.filter { id, _ in
+            let status = serviceStatus[id] ?? .stopped
+            return status == .running || status == .starting || status == .crashed
+        }
+        guard !probes.isEmpty else { return }
+
+        Task.detached(priority: .utility) {
+            var states: [UUID: Tmux.PaneState?] = [:]
+            for (id, session) in probes { states[id] = Tmux.paneState(session) }
+            let result = states
+            await MainActor.run {
+                for (id, state) in result {
+                    guard let state else {
+                        // Session gone: someone killed it outside the app.
+                        if self.serviceStatus[id] != .stopped { self.serviceStatus[id] = .stopped }
+                        self.serviceSessions.removeValue(forKey: id)
+                        continue
+                    }
+                    guard state.dead else {
+                        if self.serviceStatus[id] == .crashed { self.announcedCrashes.remove(id) }
+                        continue
+                    }
+                    let code = state.exitCode ?? 0
+                    self.serviceStatus[id] = code == 0 ? .stopped : .crashed
+                    if code != 0, !self.announcedCrashes.contains(id) {
+                        self.announcedCrashes.insert(id)
+                        AppSettings.shared.announceFinished(title: "Service stopped",
+                                                           detail: "Exit code \(code).",
+                                                           ok: false)
+                    }
+                }
+            }
         }
     }
 
@@ -650,6 +759,9 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             }
 
             if let id = UUID(uuidString: key) {
+                // With tmux the pane outlives the client, so status comes from
+                // `pollServiceStates`; only the tmux-less fallback reports here.
+                guard self.serviceSessions[id] == nil else { return }
                 let previous = self.serviceStatus[id] ?? .stopped
                 let code = exitCode ?? 0
                 if previous == .stopping || code == 0 {

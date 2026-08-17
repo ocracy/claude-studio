@@ -31,10 +31,13 @@ enum SettingsWindow {
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var updater = Updater.shared
+    @ObservedObject private var bridge = PhoneBridge.shared
     @State private var section: Section = .notifications
+    @State private var showToken = false
+    @State private var copied = false
 
     private enum Section: String, CaseIterable, Identifiable {
-        case notifications, terminal, sessions, about
+        case notifications, terminal, sessions, phone, about
         var id: String { rawValue }
 
         var title: String {
@@ -42,6 +45,7 @@ struct SettingsView: View {
             case .notifications: return "Notifications & sound"
             case .terminal:      return "Terminal"
             case .sessions:      return "Sessions"
+            case .phone:         return "Phone"
             case .about:         return "About"
             }
         }
@@ -50,6 +54,7 @@ struct SettingsView: View {
             case .notifications: return "bell"
             case .terminal:      return "terminal"
             case .sessions:      return "bubble.left.and.bubble.right"
+            case .phone:         return "iphone"
             case .about:         return "info.circle"
             }
         }
@@ -110,6 +115,7 @@ struct SettingsView: View {
                 case .notifications: notifications
                 case .terminal:      terminal
                 case .sessions:      sessions
+                case .phone:         phone
                 case .about:         about
                 }
             }
@@ -184,6 +190,95 @@ struct SettingsView: View {
                     last: true)
         }
         .background(card)
+    }
+
+    // MARK: - Phone
+
+    /// Point the phone's camera at the code and it is set up — no address to
+    /// type, no token to copy. The phone runs nothing; it types into the
+    /// sessions already running here.
+    private var phone: some View {
+        VStack(spacing: 0) {
+            row(bridgeTitle, note: bridgeNote) {
+                if bridge.isInstalled {
+                    Toggle("", isOn: Binding(get: { bridge.isEnabled },
+                                             set: { bridge.setEnabled($0) }))
+                        .toggleStyle(.switch)
+                        .tint(Theme.accent)
+                        .labelsHidden()
+                } else {
+                    SmallButton(title: "Refresh") { bridge.refresh() }
+                }
+            }
+
+            if let url = bridge.connectURL, bridge.isRunning {
+                VStack(spacing: 12) {
+                    if let code = bridge.qrImage(side: 180) {
+                        Image(nsImage: code)
+                            .interpolation(.none)          // keep the modules crisp
+                            .frame(width: 180, height: 180)
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(.white))
+                    }
+
+                    Text("Scan with your phone's camera, then add it to the Home Screen.")
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.text3)
+
+                    HStack(spacing: 8) {
+                        SmallButton(title: showToken ? "Hide link" : "Show link") {
+                            showToken.toggle()
+                        }
+                        SmallButton(title: copied ? "Copied" : "Copy link",
+                                    icon: copied ? "checkmark" : "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(url, forType: .string)
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                        }
+                    }
+
+                    if showToken {
+                        Text(url)
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.text2)
+                            .textSelection(.enabled)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+
+                Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 16)
+            }
+
+            row("New link",
+                note: "Replaces the token and restarts the service. Use it if a phone is lost — every device has to scan again.",
+                last: true) {
+                SmallButton(title: "Replace") { bridge.rotateToken(); showToken = false }
+                    .disabled(!bridge.isInstalled)
+            }
+        }
+        .background(card)
+        .onAppear { bridge.refresh() }
+    }
+
+    private var bridgeTitle: String {
+        bridge.isRunning ? "Reachable from your phone" : "Phone access"
+    }
+
+    private var bridgeNote: String {
+        if !bridge.isInstalled {
+            return "Not installed yet. Run Bridge/install.sh in the repository once, then come back."
+        }
+        if bridge.address == nil {
+            return "Netbird is not connected, so there is no private address to serve on. The service starts by itself once it is."
+        }
+        if !bridge.isRunning {
+            return "The service is stopped. Turn it on to open your sessions to the phone over Netbird."
+        }
+        return "Serving on \(bridge.address ?? "—"):\(PhoneBridge.port) over Netbird. Your Claude subscription on this Mac does the work; the phone only sends keystrokes."
     }
 
     private var about: some View {

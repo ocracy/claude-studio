@@ -11,6 +11,8 @@ struct Sidebar: View {
     @State private var addingScript = false
     @State private var addMenu = false
     @State private var mcpSheet: MCPServer?
+    @State private var linkSheet = false
+    @State private var mcpAddMenu = false
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
     @State private var sessionManager = false
@@ -65,6 +67,9 @@ struct Sidebar: View {
         .sheet(item: $mcpSheet) { server in
             MCPEditor(model: model, server: server) { mcpSheet = nil }
         }
+        .sheet(isPresented: $linkSheet) {
+            LinkEditor(model: model) { linkSheet = false }
+        }
         .sheet(isPresented: $sessionManager) {
             SessionManager(model: model) { sessionManager = false }
         }
@@ -90,8 +95,24 @@ struct Sidebar: View {
                 IconButton(icon: "stethoscope", help: "Check connections") {
                     model.mcp.checkHealth()
                 }
-                IconButton(icon: "plus", help: "Add an MCP server") {
-                    mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
+                IconButton(icon: "plus", help: "Add a server or link a project") {
+                    mcpAddMenu = true
+                }
+                .popover(isPresented: $mcpAddMenu, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        addMenuItem("Link a Claude project", icon: "link",
+                                    detail: "share its skills, services and files") {
+                            mcpAddMenu = false
+                            linkSheet = true
+                        }
+                        addMenuItem("Add an MCP server", icon: "point.3.connected.trianglepath.dotted",
+                                    detail: "stdio, HTTP or SSE") {
+                            mcpAddMenu = false
+                            mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
+                        }
+                    }
+                    .padding(6)
+                    .frame(width: 280)
                 }
             } else if model.pane == .services || model.pane == .scripts {
                 // One button, two things to create: a long-running service or a
@@ -142,7 +163,7 @@ struct Sidebar: View {
         case .skills:    return "\(model.skills.skills.count) skills · .claude/skills"
         case .mcp:       return model.mcp.checkingHealth
                                 ? "checking connections…"
-                                : "\(model.mcp.servers.count) servers · claude mcp"
+                                : "\(model.links.count) links · \(model.mcp.servers.count) servers"
         case .cron:      return "\(model.store.activeSchedules.count) active schedules"
         case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) running"
         case .commands:  return "\(model.claudeCommands.commands.count) commands · .claude/commands"
@@ -155,7 +176,7 @@ struct Sidebar: View {
         switch model.pane {
         case .sessions:  return "New session"
         case .skills:    return "Create a new skill with Claude"
-        case .mcp:       return "Add an MCP server"
+        case .mcp:       return "Add a server or link a project"
         case .cron:      return "Schedule a skill"
         case .services:  return "Add a service"
         case .commands:  return "Create a command with Claude"
@@ -171,7 +192,7 @@ struct Sidebar: View {
         case .skills:
             model.createSkillWithClaude()
         case .mcp:
-            mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
+            mcpAddMenu = true
         case .cron:
             guard let first = model.skills.skills.first else { return }
             scheduleSheet = model.store.schedule(for: first.name) ?? Schedule(skill: first.name)
@@ -323,8 +344,11 @@ struct Sidebar: View {
         ForEach(model.skills.skills) { skill in
             let schedule = model.store.schedule(for: skill.name)
             let last = model.runs.latest(for: skill.name)
+            let inUse = model.liveUsage.contains { $0.usage.name == skill.name }
             row(selected: model.activeTabID == "skill:\(skill.name)",
-                dot: model.runs.isRunning(skill.name) ? Theme.running : (last?.status.color ?? Theme.idle),
+                dot: inUse ? Theme.accent
+                     : model.runs.isRunning(skill.name) ? Theme.running
+                     : (last?.status.color ?? Theme.idle),
                 title: skill.name,
                 meta: skillMeta(skill: skill, schedule: schedule, last: last),
                 trailing: {
@@ -438,9 +462,48 @@ struct Sidebar: View {
     // MARK: - MCP servers
 
     @ViewBuilder private var mcpList: some View {
-        if model.mcp.servers.isEmpty {
-            emptyHint("No MCP servers configured.", action: "Add a server") {
-                mcpSheet = MCPServer(name: "", scope: .project, transport: .stdio)
+        if !model.links.isEmpty {
+            SectionLabel(text: "linked projects")
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+                .padding(.bottom, 4)
+            ForEach(model.links) { link in
+                row(selected: false,
+                    dot: link.exists ? (link.allowEdits ? Theme.accent : Theme.running)
+                                     : Theme.danger,
+                    title: link.name,
+                    meta: link.exists ? link.displayPath : "missing · \(link.displayPath)",
+                    trailing: {
+                        Text(link.allowEdits ? "edits" : "read-only")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.text3)
+                            .padding(.horizontal, 5).padding(.vertical, 1.5)
+                            .background(Capsule().strokeBorder(Theme.separator))
+                    },
+                    action: { WindowManager.shared.open(project: Project(path: link.path)) })
+                    .contextMenu {
+                        Button(link.allowEdits ? "Make read-only" : "Allow edits") {
+                            model.setLinkEdits(link, allowed: !link.allowEdits)
+                        }
+                        Button("Open in a new window") {
+                            WindowManager.shared.open(project: Project(path: link.path))
+                        }
+                        Divider()
+                        Button("Unlink") { model.unlink(link) }
+                    }
+            }
+
+            if !model.mcp.servers.isEmpty {
+                SectionLabel(text: "mcp servers")
+                    .padding(.horizontal, 8)
+                    .padding(.top, 14)
+                    .padding(.bottom, 4)
+            }
+        }
+
+        if model.mcp.servers.isEmpty && model.links.isEmpty {
+            emptyHint("Nothing connected yet.", action: "Link a Claude project") {
+                linkSheet = true
             }
         }
         ForEach(model.mcp.servers) { server in
@@ -483,8 +546,9 @@ struct Sidebar: View {
                       perform: model.createCommandWithClaude)
         }
         ForEach(model.claudeCommands.commands) { command in
+            let inUse = model.liveUsage.contains { $0.usage.name == command.name }
             row(selected: model.activeTabID == "command:\(command.name)",
-                dot: Theme.accent.opacity(0.7),
+                dot: inUse ? Theme.accent : Theme.accent.opacity(0.4),
                 title: command.invocation,
                 meta: command.description ?? command.argumentHint ?? "",
                 trailing: {

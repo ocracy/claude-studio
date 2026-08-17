@@ -143,6 +143,120 @@ struct ServiceEditor: View {
     }
 }
 
+// MARK: - Project link
+
+/// Links another local Claude project. Recent projects are offered first, because that
+/// is where the project you mean almost always is.
+struct LinkEditor: View {
+    @ObservedObject var model: StudioModel
+    let onDismiss: () -> Void
+
+    @StateObject private var recents = Recents.shared
+    @State private var chosen: Project?
+    @State private var allowEdits = false
+    @State private var failure: String?
+
+    private var candidates: [Project] {
+        recents.projects.filter { candidate in
+            candidate.path != model.project.path
+                && !model.links.contains { $0.path == candidate.path }
+        }
+    }
+
+    var body: some View {
+        SheetShell(title: "Link a Claude project",
+                   confirm: ("Link", link),
+                   onDismiss: onDismiss) {
+            Text("A link lets this project's sessions see the other project: its skills and "
+                 + "commands, its services and their output, and its files.")
+                .font(Theme.ui(11.5))
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Field(label: "project") {
+                if let chosen {
+                    HStack(spacing: 8) {
+                        Text(chosen.name).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
+                        Text(chosen.displayPath)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.text3)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                        Spacer()
+                        Button("change") { self.chosen = nil }
+                            .buttonStyle(.plain)
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.accent)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(candidates.prefix(6)) { candidate in
+                            Button { chosen = candidate } label: {
+                                HoverRow(padding: EdgeInsets(top: 5, leading: 6,
+                                                             bottom: 5, trailing: 6)) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "folder")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(Theme.text3)
+                                        Text(candidate.name)
+                                            .font(Theme.ui(12.5))
+                                            .foregroundStyle(Theme.text)
+                                        Text(candidate.displayPath)
+                                            .font(Theme.mono(10.5))
+                                            .foregroundStyle(Theme.text3)
+                                            .lineLimit(1)
+                                            .truncationMode(.head)
+                                        Spacer()
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        Button {
+                            if let picked = Recents.chooseFolder() { chosen = picked }
+                        } label: {
+                            Text("Choose a folder…")
+                                .font(Theme.ui(11.5))
+                                .foregroundStyle(Theme.accent)
+                                .padding(.leading, 6)
+                                .padding(.top, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Toggle("Allow edits in this project", isOn: $allowEdits)
+                .toggleStyle(.switch).tint(Theme.accent).font(Theme.ui(12.5))
+            Text(allowEdits
+                 ? "The project joins your working directories, so your own Read and Edit tools "
+                   + "work there. Sessions pick this up when they start — reopen an open session."
+                 : "Read-only: sessions can list its capabilities, read its files and watch its "
+                   + "services, but not change anything.")
+                .font(Theme.ui(11))
+                .foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let failure {
+                Text(failure)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func link() {
+        guard let chosen else {
+            failure = "Pick a project first."
+            return
+        }
+        model.link(project: chosen, allowEdits: allowEdits) { ok, output in
+            if ok { onDismiss() } else { failure = output.nilIfEmpty ?? "Could not register the bridge." }
+        }
+    }
+}
+
 // MARK: - MCP server
 
 /// Add or inspect an MCP server. Writing goes through `claude mcp add`, so Claude's

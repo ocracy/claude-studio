@@ -18,10 +18,14 @@ swift build -c release
 
 echo "→ packaging…"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
 cp "$BIN" "$APP/Contents/MacOS/ClaudeStudio"
 chmod +x "$APP/Contents/MacOS/ClaudeStudio"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# The project bridge: an MCP server the app registers with Claude. It is copied out of
+# the bundle into Application Support at launch, so its recorded path survives updates.
+cp ".build/release/StudioBridge" "$APP/Contents/Helpers/claude-studio-bridge"
+chmod +x "$APP/Contents/Helpers/claude-studio-bridge"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

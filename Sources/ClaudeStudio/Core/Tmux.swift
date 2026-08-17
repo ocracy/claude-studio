@@ -21,6 +21,11 @@ enum Tmux {
 
     /// Minimal config. `mouse off` is required: if tmux grabs the mouse, text
     /// selection breaks — the app routes scrolling into copy-mode itself.
+    ///
+    /// `window-size latest` lets the Mac and a phone stay attached to the same
+    /// session at once: the window follows whichever client was used last
+    /// instead of shrinking to fit both. It is today's tmux default, written
+    /// out so a future change of default cannot silently break phone access.
     static func ensureConfig() {
         let body = """
         set -g status off
@@ -33,6 +38,7 @@ enum Tmux {
         set -g focus-events off
         set -g set-clipboard off
         set -g aggressive-resize off
+        set -g window-size latest
         """
         try? body.write(to: Paths.tmuxConfig, atomically: true, encoding: .utf8)
         if run(["list-sessions"]).status == 0 {
@@ -98,6 +104,36 @@ enum Tmux {
             out[f[0]] = f[1]
         }
         return out
+    }
+
+    /// Liveness of a service pane: `nil` when the session is gone, otherwise whether
+    /// the pane is dead and, if it is, the command's exit status.
+    struct PaneState {
+        let dead: Bool
+        let exitCode: Int?
+    }
+
+    static func paneState(_ session: String) -> PaneState? {
+        let r = run(["display-message", "-p", "-t", session,
+                     "#{pane_dead}\t#{pane_dead_status}"])
+        guard r.status == 0 else { return nil }
+        let fields = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: "\t")
+        guard let first = fields.first, !first.isEmpty else { return nil }
+        let dead = first != "0"
+        let code = fields.count > 1 ? Int(fields[1]) : nil
+        return PaneState(dead: dead, exitCode: dead ? code : nil)
+    }
+
+    /// Sends Ctrl-C to the pane — the polite way to stop a service.
+    static func interrupt(_ session: String) {
+        _ = run(["send-keys", "-t", session, "C-c"])
+    }
+
+    /// The last `lines` lines of a pane, history included, wrapped lines joined.
+    static func capture(_ session: String, lines: Int = 400) -> String {
+        let r = run(["capture-pane", "-p", "-J", "-S", "-\(max(1, lines))", "-t", session])
+        return r.status == 0 ? r.out : ""
     }
 
     /// Pins every client of the session to an exact size, then repaints. Called

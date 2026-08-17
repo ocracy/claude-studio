@@ -14,6 +14,12 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm")
             ],
             path: "Sources/ClaudeStudio"
-        )
+        ),
+        // The project bridge: an MCP server shipped inside the app bundle. No
+        // SwiftTerm, no SwiftUI — it must stay a small headless binary.
+        .executableTarget(
+            name: "StudioBridge",
+            path: "Sources/StudioBridge"
+        ),
     ]
 )

@@ -43,6 +43,8 @@ Sources/ClaudeStudio/
 │   ├── Skills.swift           # .claude/skills scanner + frontmatter + directory watcher
 │   ├── MCP.swift              # MCP servers: reads Claude's config, mutates via claude mcp
 │   ├── ClaudeCommands.swift   # .claude/commands scanner (slash commands)
+│   ├── ProjectLinks.swift     # links to other projects + bridge install/registration
+│   ├── Usage.swift            # hook event spool → usage records + live state
 │   ├── Runs.swift             # run reports (the reports are the state)
 │   ├── Scheduler.swift        # runner script + launchd plist
 │   ├── HookBridge.swift       # Claude Code hooks → session state
@@ -53,6 +55,12 @@ Sources/ClaudeStudio/
 │   └── StudioModel.swift      # all state for one window
 └── Views/                 # Windows, RootView, WelcomeView, StudioView, Sidebar, Detail,
                            # Sheets, SettingsWindow, CommandPalette, Markdown, TerminalHost
+
+Sources/StudioBridge/       # second executable: the MCP server the app registers with
+                            # Claude. No SwiftTerm, no SwiftUI. It duplicates a trimmed
+                            # copy of the file formats on purpose — sharing would mean
+                            # extracting a library, since Models.swift imports SwiftUI.
+                            # `ProjectReader.shortID` MUST match `Project.shortID`.
 ```
 
 ## Hard-won rules
@@ -71,6 +79,24 @@ Sources/ClaudeStudio/
 - **launchd**: the PATH is EMBEDDED in the runner script; `#!/bin/zsh -l` cannot be
   trusted to read `.zshrc`. `setopt NULL_GLOB` is required — on the first run
   `*.md` matches nothing and zsh errors out.
+- **Services run in tmux**, like sessions and terminals, so anything outside the app can
+  read their output. `remain-on-exit` is set FROM INSIDE the pane before the command
+  runs: setting it from outside a moment later is a race a fast-failing service wins,
+  and its output dies with the session. Status comes from `#{pane_dead}` +
+  `#{pane_dead_status}` in the 1.5 s poll, not from `processTerminated`.
+- **Project links**: `.cs/links.json`. Only cwd loads a project's `.claude/`
+  configuration, so `--add-dir` grants file access but NOT the other project's skills or
+  commands — the bridge reports their file paths instead and the calling session reads
+  them. `--add-dir` is read at session start, hence the reopen hint.
+- **The bridge binary** is copied from the bundle to `Paths.binDir` and registered from
+  THERE: the updater replaces the whole bundle and the user can move the app, while an
+  MCP entry stores an absolute path. `MCPStore.add` quotes the command — our path
+  contains "Application Support".
+- **Usage tracking**: skills and commands both arrive as the `Skill` tool
+  (`tool_input.skill`, `tool_response.commandName`, `duration_ms`); a slash command the
+  user types arrives as `UserPromptExpansion` instead. The hook spools the RAW event as
+  one file per event and Swift parses it — shell JSON parsing is where hooks go to die.
+  `UsageMonitor` is app-wide: per-window consumers would race over the same spool.
 - **Naming**: a **command** is Claude's own slash command (`.claude/commands`); a
   **script** is a one-shot shell command we store in `.cs/scripts.json`. Do not mix
   the two — `commands.json` was the old name for scripts and is migrated on load.

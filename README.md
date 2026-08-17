@@ -31,6 +31,13 @@ double-clicking its title; close it and the record stays, so reopening it resume
 same conversation through `claude --resume`. A session manager lists everything the
 project owns — alive, resumable or disposable.
 
+### Skill and command usage, recorded
+Claude Studio watches Claude's own hooks, so it knows when a session actually uses a
+skill or a slash command — whether Claude chose it or you typed it. The status bar names
+what is running and whose it is (this project, a linked one, or your global set), and
+each skill and command keeps a history of its uses beside its reports, with duration and
+the session that ran it.
+
 ### Attention that reaches you
 Claude Studio installs Claude Code hooks, so the app knows when a session is working
 and when it is waiting for you: a dot lights up on the exact session, one soft tone
@@ -50,6 +57,22 @@ Any skill can be scheduled hourly, daily or weekly. Schedules are bound to
 markdown report into `.cs/runs/<skill>/`, and the app shows the history with status,
 timestamp and produced output side by side. There is no database: the reports *are*
 the state, so a run that happened while the app was closed simply appears.
+
+### Linked projects
+Link another local Claude project and this project's sessions can see it: what it can
+do (its skills, commands, scripts and services, each with the file to read), what it is
+running right now (services and terminals, alive or exited with their exit code), and
+what those are printing. A link marked **allow edits** also joins your session's working
+directories, so your own Read and Edit tools reach that project's files; a read-only
+link exposes `read_file` and `search_files` instead.
+
+No second Claude is ever started and no extra tokens are spent — the link is a small
+MCP server that reads the other project from disk and from tmux. A linked project's
+skills and commands stay *its* commands: `/name` still belongs to its own sessions, so
+the bridge hands you the markdown file and your session follows it.
+
+Because Claude reads its working directories once at startup, a session opened before a
+link needs reopening; the session header says so and offers the one click.
 
 ### MCP servers, from Claude's own configuration
 The MCP section lists every server Claude Code will load for this project, read
@@ -136,11 +159,12 @@ inside the project:
 └── .cs/
     ├── services.json       # services            ← share with your team
     ├── scripts.json        # one-shot scripts    ← share with your team
+    ├── links.json          # linked projects     ← share with your team
     ├── schedules.json      # scheduled runs      ← share with your team
     ├── terminals.json      # terminals           ← share with your team
     ├── sessions.json       # session records     (machine specific)
     ├── settings.json       # interface prefs     (machine specific)
-    └── runs/<skill>/       # run reports (.md) + .state.json
+    └── runs/<skill>/       # run reports (.md), usage.jsonl + .state.json
 ```
 
 Each section is its own file, so resizing your sidebar never dirties a file your team

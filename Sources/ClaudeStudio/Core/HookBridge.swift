@@ -16,6 +16,9 @@ enum HookBridge {
         ("Stop",             "waiting"),
         ("Notification",     "waiting"),
         ("SessionEnd",       "end"),
+        // A slash command the user types never reaches PreToolUse — Claude expands it
+        // and fires this instead, with the command's name and arguments.
+        ("UserPromptExpansion", "expansion"),
     ]
 
     static func installIfNeeded() {
@@ -49,7 +52,36 @@ enum HookBridge {
 
     [ -z "$CS_TAB_ID" ] && exit 0
 
-    dir="$HOME/Library/Application Support/Claude Studio/session-state"
+    support="$HOME/Library/Application Support/Claude Studio"
+
+    # Skill and command use is spooled RAW for the app to parse. The script stays dumb
+    # on purpose: shell JSON parsing is where hooks go to die, and Swift can do it
+    # properly a moment later. Our own context is spliced in front of the event object,
+    # which is why the first field ends with a comma and the event's leading brace is
+    # dropped.
+    esc() { printf '%s' "$1" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g'; }
+
+    case "$input" in *'"tool_name":"Skill"'*) spool=1 ;; *) spool= ;; esac
+    [ "$state" = "expansion" ] && spool=1
+    if [ -n "$spool" ]; then
+      events="$support/events"
+      mkdir -p "$events" 2>/dev/null
+      # Sessions outlive the app, so they can keep spooling with nobody draining.
+      # Unread events are worthless; cap the backlog instead of filling the disk.
+      [ "$(ls -1 "$events" 2>/dev/null | wc -l)" -gt 500 ] && rm -f "$events"/*.json 2>/dev/null
+      out="$events/$(date +%s)-$$-$RANDOM.json"
+      rest=$(printf '%s' "$input" | sed 's/^[[:space:]]*{//')
+      {
+        printf '{"cs_tab":"%s","cs_tab_name":"%s","cs_project_path":"%s","cs_at":%s,' "$(esc "$CS_TAB_ID")" "$(esc "$CS_TAB_NAME")" "$(esc "${CS_PROJECT_PATH:-$CLAUDE_PROJECT_DIR}")" "$(date +%s)"
+        if [ -n "$rest" ]; then printf '%s' "$rest"; else printf '}'; fi
+      } > "$out.tmp" 2>/dev/null
+      mv -f "$out.tmp" "$out" 2>/dev/null
+    fi
+
+    # An expansion carries no session state; it is only interesting as usage.
+    [ "$state" = "expansion" ] && exit 0
+
+    dir="$support/session-state"
     file="$dir/$CS_TAB_ID.json"
 
     if [ "$state" = "end" ]; then
@@ -58,7 +90,6 @@ enum HookBridge {
     fi
 
     mkdir -p "$dir" 2>/dev/null
-    esc() { printf '%s' "$1" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g'; }
     sid=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([0-9a-fA-F-]*\\)".*/\\1/p' | head -1)
     name=$(esc "$CS_TAB_NAME")
     project=$(esc "$CS_PROJECT")
@@ -128,6 +159,8 @@ enum HookBridge {
     struct State: Decodable {
         var state: String
         var name: String?
+        /// The project the session belongs to; written by the script all along.
+        var project: String?
         var sid: String?
         var ts: Double?
     }

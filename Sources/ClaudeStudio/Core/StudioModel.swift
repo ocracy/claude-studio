@@ -97,6 +97,37 @@ final class StudioModel: ObservableObject {
     @Published var selectedRun: [String: String] = [:]
     /// ⌘P palette visibility.
     @Published var paletteOpen = false
+    /// What the sessions of this project are running right now, from the hook monitor.
+    var liveUsage: [(tab: String, usage: UsageEvent)] {
+        UsageMonitor.shared.live
+            .filter { key, _ in tabs.contains { $0.terminalKey == key } }
+            .map { (tab: $0.key, usage: $0.value) }
+            .sorted { $0.usage.at < $1.usage.at }
+    }
+
+    /// The capability a given session is running, if any.
+    func liveUsage(forTab key: String) -> UsageEvent? { UsageMonitor.shared.live[key] }
+
+    /// Who owns a skill or command by that name: this project, another project we are
+    /// linked to, or your global `~/.claude`.
+    func owner(of name: String) -> String {
+        if skills.skill(named: name)?.scope == .project { return project.name }
+        if claudeCommands.command(named: name)?.scope == .project { return project.name }
+        for link in links {
+            let root = URL(fileURLWithPath: link.path)
+            let candidates = [".claude/skills/\(name)/SKILL.md", ".claude/skills/\(name).md",
+                              ".claude/commands/\(name).md"]
+            if candidates.contains(where: {
+                FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path)
+            }) { return link.name }
+        }
+        return "global"
+    }
+
+    /// Which linked projects a session was actually started with, per tab key. A
+    /// session cannot gain file access after the fact, so this is what tells us to
+    /// offer "reopen" instead of pretending the link already applies.
+    @Published private(set) var sessionGrants: [String: Set<String>] = [:]
 
     private var refreshTimer: Timer?
     private var autoAttachPending = true
@@ -126,6 +157,15 @@ final class StudioModel: ObservableObject {
         runs.startPolling { [weak self] in self?.skills.skills.map(\.name) ?? [] }
         mcp.start(project: project)
         claudeCommands.start(project: project)
+        // Links may arrive from version control or another machine; make sure the
+        // bridge Claude needs to read them is installed and registered.
+        if !store.config.links.isEmpty {
+            ProjectBridge.register(project: project, mcp: mcp) { ok, output in
+                if !ok, let detail = output.nilIfEmpty {
+                    NSLog("[ProjectBridge] registration failed: %@", detail)
+                }
+            }
+        }
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
             Task { @MainActor in
@@ -151,7 +191,10 @@ final class StudioModel: ObservableObject {
             $0.lastView = self.pane.rawValue
         }
 
-        for service in store.config.services { engine.stopService(service) }
+        for service in store.config.services {
+            engine.discard(service.id.uuidString)
+            Tmux.kill(TerminalEngine.serviceSession(service, project: project))
+        }
         for terminal in store.config.terminals {
             engine.discard("terminal:\(terminal.id.uuidString)")
             Tmux.kill(tmuxName(for: terminal))
@@ -187,7 +230,8 @@ final class StudioModel: ObservableObject {
         let known = Set(store.config.sessions.map(\.tmux))
         Task.detached(priority: .utility) {
             let found = Tmux.sessions(projectID: shortID)
-                .filter { !$0.name.contains("-sh-") && !known.contains($0.name) }
+                .filter { !$0.name.contains("-sh-") && !$0.name.contains("-sv-")
+                          && !known.contains($0.name) }
             guard !found.isEmpty else { return }
             await MainActor.run {
                 for session in found {
@@ -208,7 +252,7 @@ final class StudioModel: ObservableObject {
         let shortID = project.shortID
         Task.detached(priority: .utility) {
             let names = Set(Tmux.sessions(projectID: shortID)
-                .filter { !$0.name.contains("-sh-") }
+                .filter { !$0.name.contains("-sh-") && !$0.name.contains("-sv-") }
                 .map(\.name))
             await MainActor.run {
                 self.liveSessions = names
@@ -251,9 +295,11 @@ final class StudioModel: ObservableObject {
         let record = SessionRecord.make(projectShortID: project.shortID, name: title)
         store.addSession(record)
         open(StudioTab(kind: .session, ref: record.tmux, title: title))
+        let grants = store.writableLinkPaths
+        sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
                             title: title, initialPrompt: prompt, autoRun: autoRun,
-                            extraEnv: extraEnv)
+                            extraEnv: extraEnv, addDirs: grants)
         liveSessions.insert(record.tmux)
         syncSessionContext()
         return record
@@ -283,8 +329,10 @@ final class StudioModel: ObservableObject {
             if ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid) { resume = sid }
         }
 
+        let grants = store.writableLinkPaths
+        sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
-                            title: record.name, resumeSID: resume)
+                            title: record.name, resumeSID: resume, addDirs: grants)
         store.touchSession(tmux: record.tmux)
         liveSessions.insert(record.tmux)
         syncSessionContext()
@@ -390,6 +438,50 @@ final class StudioModel: ObservableObject {
 
     var runningServiceCount: Int {
         store.config.services.filter { (engine.serviceStatus[$0.id] ?? .stopped).isLive }.count
+    }
+
+    // MARK: - Linked projects
+
+    var links: [ProjectLink] { store.config.links }
+
+    /// Links a project and makes sure the bridge is registered with Claude.
+    func link(project other: Project, allowEdits: Bool,
+              completion: ((Bool, String) -> Void)? = nil) {
+        guard other.path != project.path else {
+            completion?(false, "A project cannot be linked to itself.")
+            return
+        }
+        store.addLink(ProjectLink(project: other, allowEdits: allowEdits))
+        ProjectBridge.register(project: project, mcp: mcp) { ok, output in
+            self.mcp.scan()
+            completion?(ok, output)
+        }
+    }
+
+    func setLinkEdits(_ link: ProjectLink, allowed: Bool) {
+        var updated = link
+        updated.allowEdits = allowed
+        store.updateLink(updated)
+    }
+
+    func unlink(_ link: ProjectLink) { store.removeLink(link.id) }
+
+    /// Sessions that were started before the current set of writable links, and so
+    /// cannot see them yet.
+    func sessionNeedsReopen(_ tabKey: String) -> Bool {
+        guard let granted = sessionGrants[tabKey] else { return !store.writableLinkPaths.isEmpty }
+        return granted != Set(store.writableLinkPaths)
+    }
+
+    /// Closes and reopens a session so it picks up the current links. The conversation
+    /// is resumed, so nothing is lost.
+    func reopenSession(tmux: String) {
+        guard let record = store.session(tmux: tmux) else { return }
+        closeSession(record)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, let fresh = self.store.session(tmux: tmux) else { return }
+            self.openSession(fresh)
+        }
     }
 
     // MARK: - MCP servers
