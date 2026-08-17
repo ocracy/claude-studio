@@ -11,24 +11,41 @@
 // exclusively through the /term proxy below, so there is one door and one key.
 
 import { createServer, request as httpRequest } from "node:http"
+import { createServer as createSecureServer } from "node:https"
 import { connect } from "node:net"
 import { readFileSync, statSync } from "node:fs"
 import { extname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { timingSafeEqual } from "node:crypto"
 
-import { tokenFile } from "./lib/paths.mjs"
+import { appSupport, tokenFile } from "./lib/paths.mjs"
 import { assertMatchesSwift } from "./lib/shortid.mjs"
 import { addSession, removeSession, touchSession } from "./lib/sessions.mjs"
 import { locate, readProjects, snapshot } from "./lib/state.mjs"
 import * as tmux from "./lib/tmux.mjs"
+import * as push from "./lib/push.mjs"
+import * as watcher from "./lib/watcher.mjs"
 
 const HERE = fileURLToPath(new URL(".", import.meta.url))
 const WEB = join(HERE, "web")
 
 const PORT = Number(process.env.CS_BRIDGE_PORT || 7788)
+const TLS_PORT = Number(process.env.CS_BRIDGE_TLS_PORT || 7443)
 const HOST = process.env.CS_BRIDGE_HOST
 const TTYD_PORT = Number(process.env.CS_TTYD_PORT || 7789)
+
+const tlsDir = join(appSupport, "tls")
+const tls = (() => {
+  try {
+    return {
+      cert: readFileSync(join(tlsDir, "server.crt")),
+      key: readFileSync(join(tlsDir, "server.key")),
+      ca: readFileSync(join(tlsDir, "ca.crt")),
+    }
+  } catch {
+    return null
+  }
+})()
 
 // A drifted shortID would create sessions the Mac cannot see. Refuse to start.
 assertMatchesSwift()
@@ -43,6 +60,10 @@ if (!tmux.tmuxPath) {
   console.error("cs-bridge: tmux not found.")
   process.exit(1)
 }
+
+// A server started outside the app keeps tmux's defaults, including a status
+// bar that costs a line of the phone's screen.
+tmux.ensureConfig()
 
 const TOKEN = (() => {
   try {
@@ -122,12 +143,32 @@ function serveStatic(res, name) {
   }
   res.writeHead(200, {
     "content-type": TYPES[extname(name)] ?? "application/octet-stream",
-    "cache-control": name === "index.html" ? "no-store" : "max-age=60",
+    // Revalidate rather than cache for a minute: the phone should pick up a
+    // fixed stylesheet or script the moment it reloads, and the service worker
+    // already covers being offline.
+    "cache-control": "no-cache",
   })
   res.end(readFileSync(file))
 }
 
-const STATIC = new Set(["index.html", "app.js", "style.css", "manifest.json", "sw.js", "icon.svg"])
+const STATIC = new Set([
+  "index.html", "app.js", "style.css", "manifest.json", "sw.js", "icon.svg", "setup.html",
+  "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png",
+])
+
+/**
+ * Installability assets, served WITHOUT the token.
+ *
+ * Chrome fetches the manifest and its icons outside the page's own credential
+ * context; a 401 there reads to it as "no manifest", and instead of installing
+ * an app it drops a bookmark that opens in a tab with the address bar showing.
+ * None of these files says anything about the Mac — the icon is artwork and the
+ * manifest is four colours and a name — so exempting them costs nothing.
+ */
+const PUBLIC = new Set([
+  "manifest.json", "icon.svg",
+  "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png",
+])
 
 // ---------------------------------------------------------------- ttyd proxy
 
@@ -204,6 +245,66 @@ async function handleAPI(req, res, url) {
     return json(res, 200, { ok: true })
   }
 
+  // ── notifications ──────────────────────────────────────────────────────
+
+  // The phone has no console anyone can read. When something fails there, this
+  // is how it reaches the bridge log where it can actually be diagnosed.
+  if (req.method === "POST" && path === "/api/log") {
+    const body = await readBody(req)
+    console.error(`cs-bridge: [phone] ${String(body.message ?? "").slice(0, 500)}`)
+    return json(res, 200, { ok: true })
+  }
+
+  if (req.method === "GET" && path === "/api/push/key") {
+    // The phone needs this to subscribe; it is public by design.
+    return json(res, 200, { publicKey: push.vapidKeys().publicKey })
+  }
+
+  if (req.method === "POST" && path === "/api/push/subscribe") {
+    const body = await readBody(req)
+    if (!body.subscription?.endpoint || !body.subscription?.keys?.p256dh) {
+      return json(res, 400, { error: "invalid subscription" })
+    }
+    push.saveSubscription(body.subscription, body.preferences ?? { enabled: true })
+    return json(res, 200, { ok: true })
+  }
+
+  if (req.method === "POST" && path === "/api/push/preferences") {
+    const body = await readBody(req)
+    if (!body.endpoint) return json(res, 400, { error: "endpoint required" })
+    push.updatePreferences(body.endpoint, body.preferences ?? {})
+    return json(res, 200, { ok: true })
+  }
+
+  if (req.method === "POST" && path === "/api/push/test") {
+    const sent = await push.notify({
+      title: "Claude Studio",
+      body: "Notifications are working.",
+    })
+    return json(res, 200, { sent })
+  }
+
+  if (req.method === "POST" && path === "/api/push/unsubscribe") {
+    const body = await readBody(req)
+    if (body.endpoint) push.removeSubscription(body.endpoint)
+    return json(res, 200, { ok: true })
+  }
+
+  if (req.method === "GET" && path === "/api/push/status") {
+    const endpoint = url.searchParams.get("endpoint")
+    const known = push.readSubscriptions().find((s) => s.endpoint === endpoint)
+    return json(res, 200, { registered: Boolean(known), preferences: known?.preferences ?? null })
+  }
+
+  const scrolling = path.match(/^\/api\/sessions\/([^/]+)\/scroll$/)
+  if (req.method === "POST" && scrolling) {
+    const name = decodeURIComponent(scrolling[1])
+    if (!tmux.exists(name)) return json(res, 409, { error: "session not running" })
+    const body = await readBody(req)
+    tmux.scroll(name, body.direction === "down" ? "down" : "up", Number(body.lines) || 3)
+    return json(res, 200, { ok: true })
+  }
+
   const one = path.match(/^\/api\/sessions\/([^/]+)$/)
   if (req.method === "DELETE" && one) {
     const name = decodeURIComponent(one[1])
@@ -222,6 +323,21 @@ async function handleAPI(req, res, url) {
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || HOST}`)
 
+  // The root certificate is public by definition — it is what the phone has to
+  // fetch BEFORE it can trust the HTTPS side, so it cannot sit behind a check
+  // performed over that same HTTPS.
+  if (url.pathname === "/ca.crt") {
+    if (!tls) return json(res, 404, { error: "no certificate" })
+    res.writeHead(200, {
+      "content-type": "application/x-x509-ca-cert",
+      "content-disposition": 'attachment; filename="claude-studio.crt"',
+    })
+    return res.end(tls.ca)
+  }
+
+  const asset = url.pathname.slice(1)
+  if (PUBLIC.has(asset)) return serveStatic(res, asset)
+
   if (!authorized(req, url)) {
     res.writeHead(401, { "content-type": "text/plain; charset=utf-8" })
     return res.end("unauthorized")
@@ -239,7 +355,17 @@ async function handle(req, res) {
   try {
     if (url.pathname.startsWith("/term")) return proxyToTtyd(req, res, url)
     if (url.pathname.startsWith("/api/")) return await handleAPI(req, res, url)
-    if (url.pathname === "/") return serveStatic(res, "index.html")
+
+    // Where the QR code lands: it explains the one-time certificate step and
+    // then hands over to the HTTPS site. Served over plain HTTP by necessity —
+    // the phone cannot reach the secure side until it trusts the root.
+    if (url.pathname === "/setup") return serveStatic(res, "setup.html")
+
+    if (url.pathname === "/") {
+      // Already on HTTPS, or no certificate to offer: go straight in.
+      if (req.socket.encrypted || !tls) return serveStatic(res, "index.html")
+      return serveStatic(res, "setup.html")
+    }
     const name = url.pathname.slice(1)
     if (STATIC.has(name)) return serveStatic(res, name)
     return json(res, 404, { error: "not found" })
@@ -282,4 +408,22 @@ for (const host of [HOST, "127.0.0.1"]) {
   server.on("upgrade", handleUpgrade)
   server.on("error", (error) => console.error(`cs-bridge: ${host}: ${error.message}`))
   server.listen(PORT, host, () => console.log(`cs-bridge listening on http://${host}:${PORT}`))
+
+  // HTTPS is what unlocks service workers, notifications and installing the
+  // page as an app; the HTTP port stays up so the phone can still fetch the
+  // root certificate and read the setup page.
+  if (tls) {
+    const secure = createSecureServer({ cert: tls.cert, key: tls.key }, handle)
+    secure.on("upgrade", handleUpgrade)
+    secure.on("error", (error) => console.error(`cs-bridge: ${host} (tls): ${error.message}`))
+    secure.listen(TLS_PORT, host, () =>
+      console.log(`cs-bridge listening on https://${host}:${TLS_PORT}`))
+  }
 }
+
+if (!tls) {
+  console.warn("cs-bridge: no certificate; notifications and app install stay unavailable.")
+}
+
+// Announce sessions that hand the turn back, so the phone can stay in a pocket.
+watcher.start()

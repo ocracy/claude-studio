@@ -67,6 +67,11 @@ token="\$(cat "\$support/bridge-token" 2>/dev/null)"
 ip="\$(netbird status 2>/dev/null | awk '/NetBird IP:/ { print \$3 }' | cut -d/ -f1)"
 [[ -n "\$ip" ]] || { print -u2 "cs-bridge: Netbird is not connected; retrying later"; exit 1 }
 
+# Issue TLS material for whatever address Netbird handed out this time. The root
+# is created once and reused; only the server certificate follows the address.
+# Without HTTPS the phone gets a terminal but no notifications and no install.
+'$here/make-cert.sh' "\$ip" || print -u2 "cs-bridge: certificate step failed; continuing on HTTP only"
+
 # ttyd stays on loopback; the phone reaches it only through the bridge's /term
 # proxy, so there is a single externally reachable port.
 ttyd --port 7789 --interface lo0 --base-path /term \\
@@ -83,6 +88,7 @@ RUNNER
 
 chmod 755 "$runner"
 chmod 755 "$here/cs-attach.sh"
+chmod 755 "$here/make-cert.sh"
 
 # --- launchd ----------------------------------------------------------------
 
@@ -116,9 +122,11 @@ print ""
 print "cs-bridge installed."
 ip="$(netbird status 2>/dev/null | awk '/NetBird IP:/ { print $3 }' | cut -d/ -f1)"
 if [[ -n "$ip" ]]; then
-  print "  http://$ip:7788/?k=$(cat "$token_file")"
+  print "  http://$ip:7788/setup?k=$(cat "$token_file")"
   print ""
   print "Open Claude Studio → Settings → Phone to scan this as a QR code."
+  print "The setup page walks through trusting the certificate once, which is what"
+  print "notifications and installing it as an app depend on."
 else
   print "  Netbird is not connected yet; the agent will start once it is."
 fi

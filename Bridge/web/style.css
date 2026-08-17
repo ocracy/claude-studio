@@ -79,7 +79,9 @@ html, body {
 .bar .title span { font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar .title small { font-size: 12px; color: var(--label-2); }
 
-button {
+/* `.button` so links can carry the same affordance as real buttons — the setup
+   page uses anchors for the download and the hand-off to HTTPS. */
+button, .button {
   font: inherit;
   color: var(--label);
   background: var(--bg-raised);
@@ -87,23 +89,42 @@ button {
   border-radius: 9px;
   padding: 9px 14px;
   cursor: pointer;
+  text-decoration: none;
 }
-button:active { opacity: .6; }
+button:active, .button:active { opacity: .6; }
 
-button.primary {
+button.primary, .button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
   font-weight: 600;
 }
 
+/* A thumb needs 44px; the glyph itself has to be big enough to read as a back
+   chevron rather than a stray punctuation mark. The negative margin keeps the
+   title where it was, so the bigger target costs no layout. */
 button.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   font-size: 22px;
-  padding: 4px 8px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -6px 0;
+  padding: 0;
   color: var(--accent);
   line-height: 1;
+}
+
+/* The chevron is a single thin glyph: at icon size it reads as stray
+   punctuation. It gets its own scale, and a negative left margin so the wider
+   tap target does not push the title across. */
+#back, #settings-back {
+  font-size: 36px;
+  font-weight: 300;
+  margin-left: -12px;
 }
 
 .bar.bottom .primary { width: 100%; padding: 13px; }
@@ -174,12 +195,28 @@ button.icon {
 
 /* ── terminal ─────────────────────────────────────────────────────────── */
 
+#term-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--bg-sunken);
+}
+
 #term {
   flex: 1;
   width: 100%;
   border: 0;
   background: var(--bg-sunken);
-  min-height: 0;
+}
+
+/* Mode switch sits in the title bar: it is the one key you reach for without
+   looking (Shift+Tab cycles Claude's permission modes). */
+.mode {
+  flex: none;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--label-2);
 }
 
 /* ── composer ─────────────────────────────────────────────────────────── */
@@ -292,6 +329,56 @@ button.icon {
 
 .actions { display: flex; gap: 10px; margin-top: 20px; }
 .actions button { flex: 1; padding: 13px; }
+
+/* ── settings ─────────────────────────────────────────────────────────── */
+
+.group {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--label-2);
+  margin: 20px 0 8px 4px;
+}
+.scroll > .group:first-child { margin-top: 6px; }
+
+.group-note {
+  font-size: 12px;
+  color: var(--label-2);
+  margin: -4px 0 8px 4px;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  margin-bottom: 8px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  border: 1px solid var(--separator);
+  font-size: 15px;
+}
+.setting span { flex: 1; min-width: 0; }
+.setting small {
+  display: block;
+  font-size: 12px;
+  color: var(--label-2);
+  margin-top: 3px;
+}
+.setting input[type=checkbox] {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.setting-actions { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.setting-actions button { width: 100%; padding: 13px; }
+
+/* A failure here is the whole diagnosis, so it stays on screen and wraps
+   instead of being clipped to one line. */
+#push-note { word-break: break-word; }
 
 /* ── toast ────────────────────────────────────────────────────────────── */
 

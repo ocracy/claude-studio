@@ -61,6 +61,12 @@ Sources/StudioBridge/       # second executable: the MCP server the app register
                             # copy of the file formats on purpose — sharing would mean
                             # extracting a library, since Models.swift imports SwiftUI.
                             # `ProjectReader.shortID` MUST match `Project.shortID`.
+
+Bridge/                     # cs-bridge: phone access over Netbird. A launchd agent,
+                            # NOT part of the app — sessions stay reachable while the
+                            # app is closed. Dependency-free Node + ttyd; it reads the
+                            # same files the app writes and drives the same tmux socket.
+                            # `lib/shortid.mjs` MUST match `Project.shortID` too.
 ```
 
 ## Hard-won rules
@@ -110,6 +116,50 @@ Sources/StudioBridge/       # second executable: the MCP server the app register
   because a TUI only re-lays-out on SIGWINCH.
 - **Multi-line input**: `/terminal-setup` cannot run inside tmux. Shift+Enter → `\`+CR
   and Option+Enter → ESC+CR are mapped in `TerminalEngine.installKeyMonitor`.
+- **Phone bridge**: `Bridge/cs-attach.sh` attaches WITHOUT `-D`, so the Mac's client is
+  not dropped — `window-size latest` (written into `tmux.conf`) sizes the window from
+  the most recent client instead of shrinking to the smallest. It passes `-e CS_TAB_ID`
+  so the hook reports state and captures `session_id`, and it applies the same
+  `--resume` rule as the app: only when the transcript exists AND is non-empty. Flags
+  are built as an ARRAY — `${conf:+-f "$conf"}` hands tmux `-f <path>` as one argument
+  and it fails on the whole string as a filename. The bridge re-reads
+  `.cs/sessions.json` before every write and the app watches `.cs` (not the file:
+  atomic writes replace the inode), so neither side erases the other's records.
+- **Phone scrolling**: the scrollback is tmux's, and Claude's TUI runs on the alternate
+  screen, so the emulator has nothing of its own to scroll. `POST /scroll` enters
+  copy-mode (`-e`, which exits by itself at the bottom) exactly as the Mac does with the
+  wheel; ANY input calls `leaveCopyMode` first, or the keystrokes go to copy-mode's key
+  table instead of Claude. Never navigate the terminal iframe away (`src=about:blank`) —
+  ttyd registers `beforeunload` and the browser then asks "Leave site?"; remove the
+  element instead.
+- **TLS is not optional for the phone**: service workers, Web Push and "install as
+  app" all require a secure context, so over plain HTTP the phone gets a terminal and
+  nothing else. `Bridge/make-cert.sh` issues a root ONCE (never regenerate it — every
+  device that trusted it would break) and reissues the leaf whenever the Netbird address
+  changes; the name must be in `subjectAltName` (the common name is ignored) and the leaf
+  stays under the 825-day ceiling browsers enforce. HTTP keeps serving `/ca.crt`
+  (deliberately unauthenticated — it is the public root, and it cannot sit behind the
+  HTTPS it bootstraps) and `/setup`, which is where the QR code points.
+- **Installability**: `manifest.json` and the icons are served BEFORE the token check
+  (`PUBLIC` in `server.mjs`) — Chrome fetches the manifest outside the page's credential
+  context, and a 401 there reads as "no manifest": it then offers a bookmark that reopens
+  in a tab instead of installing an app. It also needs a raster icon of at least 192px,
+  so `Bridge/make-icons.mjs` rasterises `web/icon.svg` into PNGs (dependency-free, Node's
+  zlib plus a hand-written encoder); re-run it after changing the artwork. iOS ignores SVG
+  for `apple-touch-icon`, and only Safari can create a standalone app there.
+- **Web Push**: implemented directly (RFC 8291 encryption + RFC 8292 VAPID) in
+  `Bridge/lib/push.mjs`, no dependency — Node's crypto has P-256 ECDH, HKDF and
+  `dsaEncoding: "ieee-p1363"` for JOSE signatures. The VAPID key pair is generated once
+  and MUST NOT be regenerated: every existing subscription is bound to it. Notify on the
+  TRANSITION `working` → `waiting`, never on the state, or it fires every poll. iOS
+  delivers push only to a PWA added to the Home Screen; Android delivers to a browser tab
+  too. Always reach the subscription through `await navigator.serviceWorker.ready` — the
+  variable `register()` fills in is still empty on a fresh load, and reading it directly
+  reports a subscribed device as unsubscribed (this is what made "no device is registered"
+  unfixable from the phone). The browser can hold a subscription the Mac never stored, so
+  the settings screen re-registers whenever the Mac does not recognise the endpoint. The
+  phone has no inspectable console: failures go to `POST /api/log` and land in the bridge
+  log — reach for that before guessing.
 - **Scrolling**: in tmux-backed terminals the wheel event is translated into
   copy-mode and SWALLOWED (`return nil`). Letting SwiftTerm scroll its empty buffer
   makes the screen jitter.

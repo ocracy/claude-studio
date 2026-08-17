@@ -7,8 +7,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Claude Studio">
   <meta name="theme-color" content="#1c1c1e">
-  <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/icon.svg">
+  <!-- use-credentials: the manifest lives behind the bridge's token, and a
+       manifest fetched without cookies comes back 401 — which Chrome reports as
+       "no manifest" and quietly downgrades the install to a browser shortcut. -->
+  <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
+  <!-- iOS ignores SVG here; without a PNG the Home Screen icon is a screenshot. -->
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/style.css">
   <title>Claude Studio</title>
 </head>
@@ -19,6 +23,7 @@
   <header class="bar">
     <h1>Claude Studio</h1>
     <button id="refresh" class="icon" title="Refresh" aria-label="Refresh">⟳</button>
+    <button id="open-settings" class="icon" title="Settings" aria-label="Settings">⚙</button>
   </header>
 
   <div id="projects" class="scroll"></div>
@@ -37,18 +42,27 @@
       <small id="session-project"></small>
     </div>
     <span id="session-state" class="dot"></span>
+    <!-- Shift+Tab is how Claude Code cycles permission modes. -->
+    <button id="mode" class="mode" data-key="BTab" title="Cycle mode (Shift+Tab)">mode ⇧⇥</button>
   </header>
 
-  <!-- The real terminal, served by ttyd through the bridge's /term proxy. -->
-  <iframe id="term" title="Terminal"></iframe>
+  <!-- The real terminal, served by ttyd through the bridge's /term proxy.
+       Swiping over it scrolls tmux's scrollback; see attachScrollGesture. -->
+  <div id="term-host"></div>
 
   <footer class="composer">
     <div class="keys">
+      <button data-key="Escape">esc</button>
+      <button data-key="BSpace" aria-label="Backspace">⌫</button>
+      <button data-newline="1" aria-label="New line">⇧⏎</button>
+      <button data-key="Left" aria-label="Left">←</button>
+      <button data-key="Down" aria-label="Down">↓</button>
+      <button data-key="Up" aria-label="Up">↑</button>
+      <button data-key="Right" aria-label="Right">→</button>
+      <button data-key="Tab">tab</button>
       <button data-key="1">1</button>
       <button data-key="2">2</button>
       <button data-key="3">3</button>
-      <button data-key="Escape">esc</button>
-      <button data-key="Up">↑</button>
       <button data-key="C-c" class="warn">^C</button>
       <button id="kill" class="warn right">Close tab</button>
     </div>
@@ -88,6 +102,43 @@
     </div>
   </div>
 </div>
+
+<!-- ── Settings ─────────────────────────────────────────────────────────── -->
+<section id="settings" class="view hidden">
+  <header class="bar">
+    <button id="settings-back" class="icon" aria-label="Back">‹</button>
+    <h1>Settings</h1>
+  </header>
+
+  <div class="scroll">
+    <h2 class="group">App</h2>
+    <p id="install-note" class="group-note">Checking…</p>
+    <div class="setting-actions">
+      <button id="install" class="primary hidden">Install as an app</button>
+    </div>
+
+    <h2 class="group">Notifications</h2>
+
+    <label class="setting">
+      <span>
+        Notify me on this phone
+        <small id="push-note">Get a notification when a session finishes and needs you.</small>
+      </span>
+      <input id="push-enabled" type="checkbox">
+    </label>
+
+    <div id="push-projects-wrap" class="hidden">
+      <h2 class="group">Which projects</h2>
+      <p class="group-note">All of them, unless you pick.</p>
+      <div id="push-projects"></div>
+    </div>
+
+    <div class="setting-actions">
+      <button id="push-test">Send a test notification</button>
+      <button id="push-repair">Re-register this phone</button>
+    </div>
+  </div>
+</section>
 
 <div id="toast" class="toast hidden"></div>
 

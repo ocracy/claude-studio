@@ -4,7 +4,7 @@
 // and the terminal is a WebSocket — serving either from a cache would show a
 // stale Mac, which is worse than showing nothing.
 
-const CACHE = "cs-shell-v1"
+const CACHE = "cs-shell-v2"
 const SHELL = ["/", "/app.js", "/style.css", "/icon.svg", "/manifest.json"]
 
 self.addEventListener("install", (event) => {
@@ -19,6 +19,47 @@ self.addEventListener("activate", (event) => {
     ),
   )
   self.clients.claim()
+})
+
+// ── notifications ────────────────────────────────────────────────────────
+
+self.addEventListener("push", (event) => {
+  let message = { title: "Claude Studio", body: "A session needs you." }
+  try {
+    if (event.data) message = { ...message, ...event.data.json() }
+  } catch {
+    // A payload that will not parse is still worth showing: iOS requires a
+    // notification for every push, and dropping it would revoke permission.
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(message.title, {
+      body: message.body,
+      icon: "/icon.svg",
+      badge: "/icon.svg",
+      // One notification per session: a later one replaces the earlier.
+      tag: message.tmux || "cs",
+      data: message,
+    }),
+  )
+})
+
+// Tapping the notification should land on the session it is about.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close()
+  const target = event.notification.data?.tmux ? `/?open=${event.notification.data.tmux}` : "/"
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ("focus" in client) {
+          client.postMessage({ type: "open-session", tmux: event.notification.data?.tmux })
+          return client.focus()
+        }
+      }
+      return self.clients.openWindow(target)
+    }),
+  )
 })
 
 self.addEventListener("fetch", (event) => {

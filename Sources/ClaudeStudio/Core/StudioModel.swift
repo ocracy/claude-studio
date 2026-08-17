@@ -338,6 +338,40 @@ final class StudioModel: ObservableObject {
         syncSessionContext()
     }
 
+    /// Every conversation Claude Code recorded for this project, newest first.
+    func claudeTranscripts() -> [ClaudeTranscripts.Transcript] {
+        ClaudeTranscripts.list(projectPath: project.path)
+    }
+
+    /// Resumes a conversation straight from Claude's own transcript.
+    ///
+    /// If a record already carries that `session_id` it is simply reopened, so the
+    /// same conversation never ends up in two tmux sessions. Otherwise a new
+    /// record is created around the existing id — the conversation predates
+    /// Claude Studio, or was started outside it.
+    func resumeTranscript(_ transcript: ClaudeTranscripts.Transcript) {
+        if let existing = sessions.first(where: { $0.claudeSID == transcript.id }) {
+            openSession(existing)
+            return
+        }
+
+        // The title is a whole prompt line; a tab is a few words wide.
+        let name = transcript.title.count > 32
+            ? String(transcript.title.prefix(32)) + "…"
+            : transcript.title
+        var record = SessionRecord.make(projectShortID: project.shortID, name: name)
+        record.claudeSID = transcript.id
+        store.addSession(record)
+        open(StudioTab(kind: .session, ref: record.tmux, title: record.name))
+
+        let grants = store.writableLinkPaths
+        sessionGrants[record.tabKey] = Set(grants)
+        engine.startSession(key: record.tabKey, session: record.tmux, project: project,
+                            title: record.name, resumeSID: transcript.id, addDirs: grants)
+        liveSessions.insert(record.tmux)
+        syncSessionContext()
+    }
+
     /// Can a closed session's conversation be brought back?
     func canResume(_ record: SessionRecord) -> Bool {
         guard let sid = record.claudeSID else { return false }

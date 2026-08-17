@@ -77,6 +77,19 @@ export function exists(name) {
   return run(["has-session", "-t", name]).ok
 }
 
+/**
+ * Apply the app's tmux config to a server that is already running.
+ *
+ * `-f` is only read when the server starts, so a server that came up some other
+ * way keeps its defaults — which means a status bar eating a line of the phone's
+ * screen and no `window-size latest`. Sourcing the file has the same effect as
+ * the app's `Tmux.ensureConfig`.
+ */
+export function ensureConfig() {
+  if (!existsSync(tmuxConfig)) return
+  if (run(["list-sessions"]).ok) run(["source-file", tmuxConfig])
+}
+
 export function kill(name) {
   return run(["kill-session", "-t", name]).ok
 }
@@ -124,6 +137,7 @@ const CHUNK = 400
  * submit half the message.
  */
 export function sendText(name, text) {
+  leaveCopyMode(name)
   const lines = text.replaceAll("\r\n", "\n").split("\n")
   lines.forEach((line, index) => {
     for (let at = 0; at < line.length; at += CHUNK) {
@@ -136,9 +150,43 @@ export function sendText(name, text) {
   })
 }
 
-/** A named key: Enter, Escape, Up, C-c … */
+/** A named key: Enter, Escape, Up, BTab, BSpace, C-c … */
 export function sendKey(name, key) {
+  leaveCopyMode(name)
   run(["send-keys", "-t", name, key])
+}
+
+/**
+ * Scroll the pane.
+ *
+ * tmux owns the scrollback, and Claude's TUI runs on the alternate screen, so
+ * the terminal emulator on the phone has nothing of its own to scroll — the
+ * history only exists inside tmux. Reaching it means entering copy-mode and
+ * moving there, which is exactly what the Mac app does with the scroll wheel.
+ * `-e` leaves copy-mode automatically once the view returns to the bottom.
+ */
+export function scroll(name, direction, lines = 3) {
+  const amount = Math.min(Math.max(Math.round(lines), 1), 200)
+  if (direction === "up") {
+    run(["copy-mode", "-e", "-t", name])
+  } else if (!isInCopyMode(name)) {
+    return // already at the live screen; nothing below to scroll to
+  }
+  run(["send-keys", "-t", name, "-X", "-N", String(amount),
+       direction === "up" ? "scroll-up" : "scroll-down"])
+}
+
+function isInCopyMode(name) {
+  const result = run(["display-message", "-p", "-t", name, "#{pane_in_mode}"])
+  return result.ok && result.stdout.trim() === "1"
+}
+
+/**
+ * Typing while scrolled back would go to copy-mode's own key table instead of
+ * to Claude, so any input cancels the scroll first and returns to the prompt.
+ */
+export function leaveCopyMode(name) {
+  if (isInCopyMode(name)) run(["send-keys", "-t", name, "-X", "cancel"])
 }
 
 /**

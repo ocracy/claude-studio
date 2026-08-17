@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1c1c1e">
+  <link rel="stylesheet" href="/style.css">
+  <title>Set up Claude Studio</title>
+  <style>
+    .setup { padding: calc(var(--safe-top) + 24px) 20px calc(var(--safe-bottom) + 32px); }
+    .setup h1 { font-size: 22px; margin: 0 0 6px; }
+    .lede { color: var(--label-2); font-size: 14px; margin: 0 0 24px; }
+
+    .step {
+      display: flex;
+      gap: 14px;
+      padding: 16px;
+      margin-bottom: 10px;
+      border-radius: var(--radius);
+      background: var(--bg-raised);
+      border: 1px solid var(--separator);
+    }
+    .step .n {
+      width: 26px; height: 26px; flex: none;
+      border-radius: 50%;
+      background: var(--accent); color: #fff;
+      font-size: 14px; font-weight: 600;
+      display: grid; place-items: center;
+    }
+    .step h2 { font-size: 15px; margin: 2px 0 6px; }
+    .step p { font-size: 13px; color: var(--label-2); margin: 0 0 10px; line-height: 1.5; }
+    .step p:last-child { margin-bottom: 0; }
+    .step code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      background: var(--bg);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .step .body { flex: 1; min-width: 0; }
+
+    /* Spelled out here rather than leaning on the shared sheet: this is the one
+       page a phone sees before anything else works, so it should not depend on
+       a stylesheet revision arriving first. */
+    .setup .button {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      text-align: center;
+      text-decoration: none;
+      font: inherit;
+      border-radius: 9px;
+      border: 1px solid var(--separator);
+      background: var(--bg);
+      color: var(--label);
+    }
+    .setup .button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    .setup .button:active { opacity: .6; }
+
+    .ready {
+      display: none;
+      padding: 16px;
+      border-radius: var(--radius);
+      background: rgba(48, 209, 88, .12);
+      border: 1px solid rgba(48, 209, 88, .4);
+      margin-bottom: 18px;
+    }
+    .ready.show { display: block; }
+    .ready h2 { margin: 0 0 4px; font-size: 15px; }
+    .ready p { margin: 0 0 12px; font-size: 13px; color: var(--label-2); }
+
+    .skip { display: block; text-align: center; margin-top: 22px; font-size: 13px; color: var(--label-2); }
+  </style>
+</head>
+<body>
+
+<div class="setup">
+  <h1>Set up notifications</h1>
+  <p class="lede">
+    Your Mac serves this over your private Netbird network. To let the phone
+    install it as an app and receive notifications, it first has to trust the
+    certificate your Mac created — a one-time step.
+  </p>
+
+  <div id="ready" class="ready">
+    <h2>Certificate is trusted</h2>
+    <p>Everything is in place. Open the secure version and you are done.</p>
+    <a id="ready-link" class="button primary" href="#">Open Claude Studio</a>
+  </div>
+
+  <div class="step">
+    <span class="n">1</span>
+    <div class="body">
+      <h2>Download the certificate</h2>
+      <p>It lands in your Downloads folder as <code>claude-studio.crt</code>.</p>
+      <a class="button primary" href="/ca.crt" download>Download certificate</a>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="n">2</span>
+    <div class="body">
+      <h2>Install it on Android</h2>
+      <p>
+        Open <b>Settings</b> and search for <code>certificate</code>. Choose
+        <b>Install a certificate</b> → <b>CA certificate</b> → <b>Install anyway</b>,
+        then pick the file you just downloaded.
+      </p>
+      <p>
+        Android will warn that someone could monitor your network. That warning is
+        about certificates in general; this one was generated on your own Mac and
+        never left your machine.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="n">3</span>
+    <div class="body">
+      <h2>Come back and open the secure version</h2>
+      <p>This page notices by itself once the certificate is trusted.</p>
+      <a id="secure-link" class="button" href="#">Open the secure version</a>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="n">4</span>
+    <div class="body">
+      <h2>Install it as an app</h2>
+      <p>
+        Open the secure version, then <b>⚙ Settings</b> → <b>Install as an app</b>.
+        Chrome's <b>⋮</b> menu offers the same thing as <b>Install app</b>.
+      </p>
+      <p>
+        The entry has to say <b>Install</b>. <b>Add to Home screen</b> as a
+        <i>shortcut</i> only drops a bookmark that reopens inside Chrome, address
+        bar and all — and notifications do not work from a browser tab.
+      </p>
+      <p>
+        On an iPhone this only works in <b>Safari</b>: <b>Share</b> →
+        <b>Add to Home Screen</b>. Chrome on iOS cannot install an app.
+      </p>
+    </div>
+  </div>
+
+  <a class="skip" id="skip" href="#">Skip — just open the terminal (no notifications)</a>
+</div>
+
+<script>
+  const token = new URL(location.href).searchParams.get("k")
+  const query = token ? `?k=${encodeURIComponent(token)}` : ""
+  const secureOrigin = `https://${location.hostname}:7443`
+  const secure = `${secureOrigin}/${query}`
+
+  document.getElementById("secure-link").href = secure
+  document.getElementById("ready-link").href = secure
+  document.getElementById("skip").href = `/index.html${query}`
+
+  /**
+   * Has the certificate been trusted yet?
+   *
+   * A `no-cors` request cannot read the response, but that is not what is being
+   * asked: an untrusted certificate makes the request fail outright, while a
+   * trusted one resolves. Polling means the page flips to "ready" on its own
+   * when the user returns from Settings.
+   */
+  async function check() {
+    try {
+      await fetch(`${secureOrigin}/api/push/key${query}`, { mode: "no-cors", cache: "no-store" })
+      document.getElementById("ready").classList.add("show")
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  check()
+  setInterval(check, 4000)
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) check() })
+</script>
+
+</body>
+</html>

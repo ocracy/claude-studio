@@ -43,9 +43,16 @@ final class PhoneBridge: ObservableObject {
     }
 
     /// The link the phone opens: address, port and token in one QR code.
+    ///
+    /// It points at the setup page over plain HTTP on purpose. Notifications and
+    /// installing the page as an app require a secure context, and the phone
+    /// cannot reach the HTTPS side until it has fetched and trusted the root
+    /// certificate — which it can only download over HTTP. The setup page walks
+    /// through that once and then hands over to HTTPS; a phone that has already
+    /// done it is sent straight on.
     var connectURL: String? {
         guard let address, let token, !token.isEmpty else { return nil }
-        return "http://\(address):\(Self.port)/?k=\(token)"
+        return "http://\(address):\(Self.port)/setup?k=\(token)"
     }
 
     /// Netbird assigns this Mac a stable private address; the bridge binds to it

@@ -6,9 +6,9 @@
 
 const $ = (id) => document.getElementById(id)
 
-const views = { list: $("list"), session: $("session") }
+const views = { list: $("list"), session: $("session"), settings: $("settings") }
 let snapshot = { projects: [] }
-let current = null // { tmux, name, projectPath, projectName }
+let current = null // { tmux, name, claudeSID, projectPath, projectName }
 let timer = null
 
 // ── plumbing ─────────────────────────────────────────────────────────────
@@ -94,6 +94,7 @@ function render() {
         openSession({
           tmux: session.tmux,
           name: session.name,
+          claudeSID: session.claudeSID,
           projectPath: project.path,
           projectName: project.name,
         })
@@ -138,12 +139,19 @@ function openSession(session) {
   $("session-name").textContent = session.name
   $("session-project").textContent = session.projectName
 
-  // ttyd receives the session name, project path and tab title as URL
-  // arguments; cs-attach.sh validates them before tmux sees them.
-  const args = [session.tmux, session.projectPath, session.name]
+  // ttyd receives the session name, project path, tab title and Claude's own
+  // session id as URL arguments; cs-attach.sh validates them before tmux sees
+  // them. The last one is what lets a closed tab pick the conversation back up.
+  const args = [session.tmux, session.projectPath, session.name, session.claudeSID ?? ""]
     .map((value) => `arg=${encodeURIComponent(value)}`)
     .join("&")
-  $("term").src = `/term/?${args}`
+
+  const frame = document.createElement("iframe")
+  frame.id = "term"
+  frame.title = "Terminal"
+  frame.src = `/term/?${args}`
+  frame.addEventListener("load", () => attachScrollGesture(frame))
+  $("term-host").replaceChildren(frame)
 
   views.list.classList.add("hidden")
   views.session.classList.remove("hidden")
@@ -152,14 +160,86 @@ function openSession(session) {
 }
 
 function closeSession() {
-  // Blank the iframe so ttyd drops the connection; tmux keeps the session
-  // alive (destroy-unattached off), so nothing is lost.
-  $("term").src = "about:blank"
+  // Remove the iframe rather than pointing it at about:blank.
+  //
+  // ttyd registers a beforeunload handler, and navigating the frame away counts
+  // as leaving its page — the browser then asks "Leave site? Changes you made
+  // may not be saved". Removing the element tears the frame down without that
+  // prompt. tmux keeps the session running either way
+  // (`destroy-unattached off`), so nothing is lost by dropping the connection.
+  $("term-host").replaceChildren()
   current = null
   views.session.classList.add("hidden")
   views.list.classList.remove("hidden")
   refresh()
   poll(3000)
+}
+
+// ── scrolling ────────────────────────────────────────────────────────────
+
+let scrollPending = 0
+let scrollTimer = null
+
+/**
+ * Ask tmux to scroll. Requests are coalesced: a drag produces a stream of small
+ * deltas and one tmux call per frame would be far more than the pane needs.
+ */
+function requestScroll(lines) {
+  scrollPending += lines
+  if (scrollTimer) return
+  scrollTimer = setTimeout(async () => {
+    const amount = scrollPending
+    scrollPending = 0
+    scrollTimer = null
+    if (!current || !amount) return
+    await api(`/api/sessions/${encodeURIComponent(current.tmux)}/scroll`, {
+      method: "POST",
+      body: JSON.stringify({ direction: amount > 0 ? "up" : "down", lines: Math.abs(amount) }),
+    }).catch(() => {})
+  }, 120)
+}
+
+const LINE_HEIGHT = 18 // px of finger travel per line of scrollback
+
+/**
+ * Dragging on the terminal scrolls tmux's history.
+ *
+ * The history lives in tmux, not in the browser: Claude's TUI runs on the
+ * alternate screen, so the emulator's own buffer is empty and a normal swipe
+ * scrolls nothing. The listeners go on the frame's document — same origin, so
+ * this is allowed — and run in the capture phase so the drag is read before
+ * xterm.js decides to select text with it.
+ */
+function attachScrollGesture(frame) {
+  const doc = frame.contentDocument
+  if (!doc) return
+
+  let anchor = null
+  let carried = 0
+
+  doc.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) return
+    anchor = event.touches[0].clientY
+    carried = 0
+  }, { capture: true, passive: true })
+
+  doc.addEventListener("touchmove", (event) => {
+    if (anchor === null || event.touches.length !== 1) return
+    const y = event.touches[0].clientY
+    const travelled = y - anchor + carried
+    const lines = Math.trunc(travelled / LINE_HEIGHT)
+    if (!lines) return
+    // Dragging down reveals older output, the direction every phone uses.
+    requestScroll(lines)
+    anchor = y
+    carried = travelled - lines * LINE_HEIGHT
+  }, { capture: true, passive: true })
+
+  doc.addEventListener("touchend", () => { anchor = null }, { capture: true, passive: true })
+
+  doc.addEventListener("wheel", (event) => {
+    requestScroll(-Math.trunc(event.deltaY / LINE_HEIGHT) || (event.deltaY < 0 ? 1 : -1))
+  }, { capture: true, passive: true })
 }
 
 async function sendKeys(body) {
@@ -247,6 +327,275 @@ async function killCurrent() {
   }
 }
 
+// ── notifications ────────────────────────────────────────────────────────
+
+let registration = null
+
+async function currentSubscription() {
+  if (!("serviceWorker" in navigator)) return null
+  // Wait for the worker rather than reading the variable the registration
+  // callback fills in later: on a fresh load that callback has usually not run
+  // yet, and treating that as "no subscription" hides a device that is in fact
+  // subscribed — which is exactly what stopped the repair below from firing.
+  registration = registration ?? (await navigator.serviceWorker.ready)
+  return registration.pushManager.getSubscription()
+}
+
+/**
+ * Turn notifications on for this device.
+ *
+ * iOS only allows this from a PWA added to the Home Screen, and only from a
+ * real tap — never on load — so this runs from the switch and says plainly what
+ * went wrong rather than failing silently.
+ */
+/** Report a failure to the bridge log — the phone has no console to inspect. */
+function report(stage, error) {
+  const name = error?.name
+  const detail = `${stage}: ${name ? `${name}: ` : ""}${error?.message || error}`
+  fetch("/api/log", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: detail }),
+  }).catch(() => {})
+  return detail
+}
+
+/**
+ * Send the phone's capabilities to the bridge log.
+ *
+ * Whether push can work at all is decided by facts only the phone knows —
+ * whether the page is on HTTPS, whether it is running as an installed app,
+ * what the browser exposes. None of it is visible from the Mac, and asking a
+ * person to read it off a screen loses the details that matter.
+ */
+async function reportEnvironment() {
+  let registrations = []
+  let subscribed = false
+  try {
+    registrations = await navigator.serviceWorker.getRegistrations()
+    subscribed = Boolean(await (await navigator.serviceWorker.ready).pushManager.getSubscription())
+  } catch {
+    // Absent APIs are themselves part of the answer.
+  }
+  report("environment", {
+    name: "",
+    message: JSON.stringify({
+      origin: location.origin,
+      secure: window.isSecureContext,
+      standalone: window.matchMedia("(display-mode: standalone)").matches,
+      serviceWorker: "serviceWorker" in navigator,
+      pushManager: "PushManager" in window,
+      permission: typeof Notification === "undefined" ? "absent" : Notification.permission,
+      registrations: registrations.length,
+      subscribed,
+    }),
+  })
+}
+
+async function enablePush() {
+  if (!window.isSecureContext) {
+    throw new Error(report("secure context",
+      { name: "InsecureContext", message: `not HTTPS: ${location.origin}` }))
+  }
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    throw new Error(report("push support", {
+      name: "Unsupported",
+      message: `serviceWorker=${"serviceWorker" in navigator} pushManager=${"PushManager" in window}`,
+    }))
+  }
+
+  // Each step is reported separately: the failure is invisible on the phone and
+  // "it did not work" does not say whether the browser, the permission or the
+  // push service refused.
+  try {
+    registration = await navigator.serviceWorker.ready
+  } catch (error) {
+    throw new Error(report("service worker", error))
+  }
+
+  const permission = await Notification.requestPermission()
+  if (permission !== "granted") {
+    throw new Error(`Notifications are ${permission} in your phone's settings.`)
+  }
+
+  let publicKey
+  try {
+    ;({ publicKey } = await api("/api/push/key"))
+  } catch (error) {
+    throw new Error(report("fetching the key", error))
+  }
+
+  let subscription = await registration.pushManager.getSubscription()
+  if (!subscription) {
+    try {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlToBytes(publicKey),
+      })
+    } catch (error) {
+      // The usual causes: no network path to the push service, or Play Services
+      // missing. Both surface here as an AbortError with little detail.
+      throw new Error(report("subscribing", error))
+    }
+  }
+
+  try {
+    await api("/api/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify({
+        subscription: subscription.toJSON(),
+        preferences: { enabled: true, projects: [] },
+      }),
+    })
+  } catch (error) {
+    throw new Error(report("registering with the Mac", error))
+  }
+  return subscription
+}
+
+async function disablePush() {
+  const subscription = await currentSubscription()
+  if (!subscription) return
+  await api("/api/push/unsubscribe", {
+    method: "POST",
+    body: JSON.stringify({ endpoint: subscription.endpoint }),
+  }).catch(() => {})
+  await subscription.unsubscribe().catch(() => {})
+}
+
+function base64UrlToBytes(value) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/")
+  const raw = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, "="))
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0))
+}
+
+// ── installing as an app ─────────────────────────────────────────────────
+//
+// Chrome fires `beforeinstallprompt` only when it considers the site
+// installable (manifest reachable, a ≥192px raster icon, a service worker, a
+// trusted certificate). Holding on to the event is the only way to offer a
+// button — and its absence is itself the diagnosis, so the note says what is
+// missing rather than staying blank.
+
+let installPrompt = null
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  // Prevented so Chrome's own mini-infobar does not compete with the button.
+  event.preventDefault()
+  installPrompt = event
+  if (!views.settings.classList.contains("hidden")) renderInstall()
+})
+
+window.addEventListener("appinstalled", () => {
+  installPrompt = null
+  renderInstall()
+  toast("Installed — open it from your Home Screen")
+})
+
+const installed = () =>
+  window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true
+
+function renderInstall() {
+  const note = $("install-note")
+  const button = $("install")
+  button.classList.toggle("hidden", !installPrompt)
+
+  if (installed()) {
+    note.textContent = "Running as an installed app."
+  } else if (installPrompt) {
+    note.textContent = "Install it to lose the address bar and receive notifications."
+  } else if (!window.isSecureContext) {
+    note.textContent = "Open the HTTPS address first — a phone can only install a secure site."
+  } else if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+    // Only Safari can create a standalone app on iOS; Chrome's "Add to Home
+    // Screen" there produces a shortcut that reopens inside Chrome.
+    note.textContent = "On iPhone: open this in Safari, then Share → Add to Home Screen."
+  } else {
+    note.textContent = "Already installed, or your browser offers it from its own ⋮ menu → Install app."
+  }
+}
+
+$("install").onclick = async () => {
+  if (!installPrompt) return
+  const prompt = installPrompt
+  installPrompt = null
+  prompt.prompt()
+  await prompt.userChoice.catch(() => {})
+  renderInstall()
+}
+
+async function openSettings() {
+  views.list.classList.add("hidden")
+  views.settings.classList.remove("hidden")
+  renderInstall()
+
+  const subscription = await currentSubscription().catch(() => null)
+  const on = Boolean(subscription)
+  $("push-enabled").checked = on
+  $("push-projects-wrap").classList.toggle("hidden", !on)
+
+  if (!on) {
+    $("push-note").textContent = window.matchMedia("(display-mode: standalone)").matches
+      ? "Get a notification when a session finishes and needs you."
+      : "On iPhone, add this to your Home Screen first — notifications only work from there."
+    return
+  }
+
+  const status = await api(`/api/push/status?endpoint=${encodeURIComponent(subscription.endpoint)}`)
+    .catch(() => ({ registered: false, preferences: null }))
+
+  // The browser can hold a subscription the Mac never stored — if the
+  // registering call failed after the browser had already subscribed, the switch
+  // reads as on while the Mac has no device to notify. Repair it here rather
+  // than making the user toggle it off and on.
+  if (!status.registered) {
+    try {
+      await api("/api/push/subscribe", {
+        method: "POST",
+        body: JSON.stringify({
+          subscription: subscription.toJSON(),
+          preferences: { enabled: true, projects: [] },
+        }),
+      })
+      $("push-note").textContent = "Registered with your Mac."
+    } catch (error) {
+      $("push-note").textContent = report("re-registering", error)
+    }
+  }
+
+  renderProjectChoices(status.preferences?.projects ?? [])
+}
+
+function renderProjectChoices(selected) {
+  const container = $("push-projects")
+  container.innerHTML = ""
+  for (const project of snapshot.projects) {
+    const label = document.createElement("label")
+    label.className = "setting"
+    label.innerHTML = `<span></span><input type="checkbox">`
+    label.querySelector("span").textContent = project.name
+    const box = label.querySelector("input")
+    box.checked = selected.length === 0 || selected.includes(project.path)
+    box.onchange = saveProjectChoices
+    box.dataset.path = project.path
+    container.append(label)
+  }
+}
+
+async function saveProjectChoices() {
+  const subscription = await currentSubscription()
+  if (!subscription) return
+  const boxes = [...$("push-projects").querySelectorAll("input")]
+  const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.path)
+  // Everything ticked means "all projects", which is stored as an empty list so
+  // a project added later is included without having to come back here.
+  const projects = chosen.length === boxes.length ? [] : chosen
+  await api("/api/push/preferences", {
+    method: "POST",
+    body: JSON.stringify({ endpoint: subscription.endpoint, preferences: { projects } }),
+  }).catch((error) => toast(error.message))
+}
+
 // ── wiring ───────────────────────────────────────────────────────────────
 
 $("refresh").onclick = refresh
@@ -257,8 +606,15 @@ $("new-create").onclick = create
 $("send").onclick = send
 $("kill").onclick = killCurrent
 
-for (const button of document.querySelectorAll(".keys button[data-key]")) {
+for (const button of document.querySelectorAll("button[data-key]")) {
   button.onclick = () => sendKeys({ key: button.dataset.key })
+}
+
+// Shift+Enter is not a key tmux can name: the app maps it to a backslash
+// followed by Return, which is what Claude Code reads as "new line, keep
+// typing". Sending a bare newline through sendText produces the same pair.
+for (const button of document.querySelectorAll("button[data-newline]")) {
+  button.onclick = () => sendKeys({ text: "\n" })
 }
 
 const box = $("prompt")
@@ -279,9 +635,88 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh()
 })
 
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(() => {})
+$("open-settings").onclick = openSettings
+$("settings-back").onclick = () => {
+  views.settings.classList.add("hidden")
+  views.list.classList.remove("hidden")
 }
 
-refresh()
+$("push-enabled").onchange = async (event) => {
+  const wanted = event.target.checked
+  try {
+    if (wanted) {
+      await enablePush()
+      toast("Notifications on")
+    } else {
+      await disablePush()
+      toast("Notifications off")
+    }
+    await openSettings()
+  } catch (error) {
+    event.target.checked = !wanted
+    $("push-note").textContent = error.message
+    toast(error.message)
+    // Whatever the phone can and cannot do is the context that makes the
+    // failure above readable, so it is sent only when something went wrong.
+    reportEnvironment()
+  }
+}
+
+// Start over cleanly: drop whatever the browser is holding and subscribe again.
+// Useful when an earlier attempt left a subscription the Mac never saw.
+$("push-repair").onclick = async () => {
+  try {
+    await disablePush()
+    await enablePush()
+    toast("Registered")
+    await openSettings()
+  } catch (error) {
+    $("push-note").textContent = error.message
+    toast(error.message)
+  }
+}
+
+$("push-test").onclick = async () => {
+  try {
+    const { sent } = await api("/api/push/test", { method: "POST" })
+    toast(sent ? "Sent — check your notifications" : "No device is registered yet")
+  } catch (error) {
+    toast(error.message)
+  }
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js")
+    .then((reg) => { registration = reg })
+    .catch(() => {})
+
+  // Tapping a notification opens the session it was about.
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "open-session") openByName(event.data.tmux)
+  })
+}
+
+/** Find a tab by tmux name in the latest snapshot and open it. */
+function openByName(tmuxName) {
+  if (!tmuxName) return
+  for (const project of snapshot.projects) {
+    const session = project.sessions.find((s) => s.tmux === tmuxName)
+    if (session) {
+      views.settings.classList.add("hidden")
+      openSession({
+        tmux: session.tmux,
+        name: session.name,
+        claudeSID: session.claudeSID,
+        projectPath: project.path,
+        projectName: project.name,
+      })
+      return
+    }
+  }
+}
+
+// Opened from a notification while the app was closed.
+const requested = new URL(location.href).searchParams.get("open")
+
+refresh().then(() => { if (requested) openByName(requested) })
 poll(3000)

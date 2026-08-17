@@ -15,6 +15,7 @@ struct Sidebar: View {
     @State private var mcpAddMenu = false
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
+    @State private var transcriptMenu = false
     @State private var sessionManager = false
     @State private var renaming: String?
     @State private var renameText = ""
@@ -84,6 +85,13 @@ struct Sidebar: View {
             if model.pane == .sessions {
                 IconButton(icon: "list.bullet.rectangle", help: "Session manager") {
                     sessionManager = true
+                }
+                IconButton(icon: "clock.arrow.circlepath",
+                           help: "Claude conversations — resume one") {
+                    transcriptMenu = true
+                }
+                .popover(isPresented: $transcriptMenu, arrowEdge: .bottom) {
+                    TranscriptOpener(model: model) { transcriptMenu = false }
                 }
                 IconButton(icon: "plus", help: "New session / previous sessions") {
                     sessionMenu = true
@@ -244,7 +252,14 @@ struct Sidebar: View {
 
     @ViewBuilder private var sessionsList: some View {
         if model.openSessions.isEmpty {
-            emptyHint("No open sessions.", action: "Start a Claude session") { model.newSession() }
+            // No call to action: "+" sits right above, and repeating it here only
+            // made the pane look emptier than it is.
+            Text("No open sessions.")
+                .font(Theme.ui(12))
+                .foregroundStyle(Theme.text3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
         }
         ForEach(model.openSessions) { record in
             if renaming == record.tmux {
@@ -737,5 +752,90 @@ private struct SessionOpener: View {
     private func create() {
         model.newSession(name: name.nilIfEmpty)
         onDismiss()
+    }
+}
+
+// MARK: - Claude's own conversations
+
+/// Claude Code's transcripts for this project, straight off disk — including
+/// conversations that were never started from Claude Studio. Picking one resumes
+/// it (`claude --resume <sid>`) in a session of its own.
+private struct TranscriptOpener: View {
+    @ObservedObject var model: StudioModel
+    let onDismiss: () -> Void
+    @State private var transcripts: [ClaudeTranscripts.Transcript] = []
+    @State private var loading = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: "claude conversations")
+                .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
+
+            if loading {
+                Text("Reading transcripts…")
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.text3)
+                    .padding(.horizontal, 10).padding(.vertical, 12)
+            } else if transcripts.isEmpty {
+                Text("Claude has not recorded a conversation in this project yet.")
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.text3)
+                    .padding(.horizontal, 10).padding(.vertical, 12)
+            } else {
+                ScrollView {
+                    VStack(spacing: 1) {
+                        ForEach(transcripts) { transcript in
+                            Button {
+                                model.resumeTranscript(transcript)
+                                onDismiss()
+                            } label: {
+                                row(transcript)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 8)
+                }
+                .frame(maxHeight: 320)
+            }
+        }
+        .frame(width: 360)
+        .onAppear {
+            // Reading dozens of transcript heads is disk work, not UI work — the
+            // path is taken here so the detached task never touches the model.
+            let path = model.project.path
+            Task.detached(priority: .userInitiated) {
+                let found = ClaudeTranscripts.list(projectPath: path)
+                await MainActor.run {
+                    transcripts = found
+                    loading = false
+                }
+            }
+        }
+    }
+
+    private func row(_ transcript: ClaudeTranscripts.Transcript) -> some View {
+        let live = model.sessions.first { $0.claudeSID == transcript.id }
+            .map { model.liveSessions.contains($0.tmux) } ?? false
+        return HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
+            HStack(spacing: 8) {
+                Image(systemName: live ? "bubble.left.fill" : "arrow.uturn.backward")
+                    .font(.system(size: 10))
+                    .foregroundStyle(live ? Theme.running : Theme.text3)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(transcript.title)
+                        .font(Theme.ui(12.5))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Text("\(live ? "open" : "resume") · \(transcript.modified.relative) · \(transcript.id.prefix(8))")
+                        .font(Theme.mono(10))
+                        .foregroundStyle(Theme.text3)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+            }
+        }
     }
 }
