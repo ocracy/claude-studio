@@ -204,6 +204,13 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   `~/.claude/settings.json` that fails to parse.
 - **Concurrency**: values accumulated inside `Task.detached` are handed to
   `MainActor.run` as immutable copies (an error in the Swift 6 language mode).
+- **Private network**: the bridge binds to a Netbird OR Tailscale address and to
+  nothing else routable — never 0.0.0.0. Both are read the same way (`MeshStatus`
+  in Swift, `mesh_ip` in the runner), and Tailscale's App Store build keeps its CLI
+  inside the bundle, so the app path has to be tried, not just PATH. A Netbird
+  session expires after about a day: a phone that "suddenly stopped working" has
+  almost always hit that, which is why Settings → Phone can sign in again and
+  restart the agent instead of leaving it to a 30-second launchd throttle.
 - **Skill runs**: the runner script is the SAME for launchd, "run in background" and
   "Run now" — only "Run now" puts it in a tmux tab so it can be watched. Its `claude`
   call needs `--verbose` and `| tee -a .run.log`: print mode says nothing until the

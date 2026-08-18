@@ -80,9 +80,6 @@ private struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Strip reserved for the traffic lights — the title starts right after.
-            Color.clear.frame(width: 72, height: 1)
-
             Text("Claude Studio")
                 .font(Theme.ui(13, .semibold))
                 .foregroundStyle(theme.text)
@@ -150,9 +147,14 @@ private struct TopBar: View {
             }
             .headerControl()
         }
-        .padding(.leading, 0)
+        // Flush left, in line with the activity rail's icons below. The traffic
+        // lights sit in the transparent title bar ABOVE this row — the header is
+        // pushed down past them rather than indented around them, which is what
+        // used to leave a gap nothing filled.
+        .padding(.leading, 12)
         .padding(.trailing, 10)
-        .frame(height: 42)
+        .padding(.top, 10)
+        .frame(height: 48)
         // Empty header space zooms the window on a double-click, like a title bar;
         // the controls opt out through `headerControl()` (see HeaderDoubleClick).
         .background(theme.chrome)

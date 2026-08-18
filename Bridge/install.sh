@@ -62,12 +62,29 @@ support="\$HOME/Library/Application Support/Claude Studio"
 token="\$(cat "\$support/bridge-token" 2>/dev/null)"
 [[ -n "\$token" ]] || { print -u2 "cs-bridge: no token"; exit 1 }
 
-# Bind to the Netbird address only. If Netbird is not up yet there is no address
-# to bind to, so exit and let launchd retry — never fall back to 0.0.0.0.
-ip="\$(netbird status 2>/dev/null | awk '/NetBird IP:/ { print \$3 }' | cut -d/ -f1)"
-[[ -n "\$ip" ]] || { print -u2 "cs-bridge: Netbird is not connected; retrying later"; exit 1 }
+# Bind to the private mesh address only. Netbird and Tailscale are equally good
+# here — both hand this Mac a stable address the phone can reach — so whichever
+# is up wins. If neither is, there is no address to bind to: exit and let launchd
+# retry, and NEVER fall back to 0.0.0.0.
+mesh_ip() {
+  local found
+  found="\$(netbird status 2>/dev/null | awk '/NetBird IP:/ { print \$3 }' | cut -d/ -f1)"
+  [[ -n "\$found" ]] && { print -r -- "\$found"; return 0 }
+  # The Mac App Store build of Tailscale keeps its CLI inside the bundle and puts
+  # nothing on PATH, which is why the app path is tried at all.
+  local candidate
+  for candidate in tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale \\
+                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale"; do
+    found="\$("\$candidate" ip -4 2>/dev/null | head -1)"
+    [[ -n "\$found" ]] && { print -r -- "\$found"; return 0 }
+  done
+  return 1
+}
 
-# Issue TLS material for whatever address Netbird handed out this time. The root
+ip="\$(mesh_ip || true)"
+[[ -n "\$ip" ]] || { print -u2 "cs-bridge: no private network (Netbird/Tailscale) is connected; retrying later"; exit 1 }
+
+# Issue TLS material for whatever address the mesh handed out this time. The root
 # is created once and reused; only the server certificate follows the address.
 # Without HTTPS the phone gets a terminal but no notifications and no install.
 '$here/make-cert.sh' "\$ip" || print -u2 "cs-bridge: certificate step failed; continuing on HTTP only"
@@ -121,6 +138,13 @@ launchctl bootstrap "gui/$uid" "$plist"
 print ""
 print "cs-bridge installed."
 ip="$(netbird status 2>/dev/null | awk '/NetBird IP:/ { print $3 }' | cut -d/ -f1)"
+if [[ -z "$ip" ]]; then
+  for candidate in tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale \
+                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale"; do
+    ip="$("$candidate" ip -4 2>/dev/null | head -1)"
+    [[ -n "$ip" ]] && break
+  done
+fi
 if [[ -n "$ip" ]]; then
   print "  http://$ip:7788/setup?k=$(cat "$token_file")"
   print ""
@@ -128,6 +152,7 @@ if [[ -n "$ip" ]]; then
   print "The setup page walks through trusting the certificate once, which is what"
   print "notifications and installing it as an app depend on."
 else
-  print "  Netbird is not connected yet; the agent will start once it is."
+  print "  No private network is connected yet. Sign in to Netbird or Tailscale"
+  print "  and the agent starts by itself."
 fi
 print "  Log: $log"

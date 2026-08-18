@@ -32,6 +32,9 @@ struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var updater = Updater.shared
     @ObservedObject private var bridge = PhoneBridge.shared
+    /// The walkthrough is collapsed by default — it is six paragraphs nobody needs
+    /// to read twice, and it opens by itself while the setup is incomplete.
+    @State private var guideOpen = false
     @State private var section: Section = .notifications
     @State private var showToken = false
     @State private var copied = false
@@ -198,6 +201,79 @@ struct SettingsView: View {
     /// type, no token to copy. The phone runs nothing; it types into the
     /// sessions already running here.
     private var phone: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            meshCard
+            bridgeCard
+            guideCard
+        }
+        .onAppear {
+            bridge.refresh()
+            // Open the walkthrough by itself while something is still missing: that
+            // is exactly when someone needs it, and it is also when they have the
+            // least idea that it exists.
+            if !bridge.mesh.isConnected || !bridge.isInstalled { guideOpen = true }
+        }
+    }
+
+    // MARK: The private network
+
+    /// The phone reaches this Mac over a private mesh network and nothing else — the
+    /// bridge binds to that address alone. Its state belongs at the top of this
+    /// screen: when it is down everything below it is dead, and the reason is not
+    /// visible from anywhere else in the app.
+    private var meshCard: some View {
+        VStack(spacing: 0) {
+            row(meshTitle, note: meshNote, last: true) {
+                HStack(spacing: 8) {
+                    if bridge.mesh.isInstalled && !bridge.mesh.isConnected {
+                        SmallButton(title: "Sign in", icon: "person.badge.key",
+                                    prominent: true) { bridge.connectMesh() }
+                    }
+                    if !bridge.mesh.isInstalled {
+                        SmallButton(title: "Netbird", icon: "arrow.up.forward") {
+                            NSWorkspace.shared.open(URL(string: "https://netbird.io/download")!)
+                        }
+                        SmallButton(title: "Tailscale", icon: "arrow.up.forward") {
+                            NSWorkspace.shared.open(URL(string: "https://tailscale.com/download")!)
+                        }
+                    }
+                    SmallButton(title: "Check") { bridge.refresh() }
+                }
+            }
+        }
+        .background(card)
+    }
+
+    private var meshTitle: String {
+        guard let tool = bridge.mesh.tool else { return "Private network — not set up" }
+        return bridge.mesh.isConnected
+            ? "\(tool.name) is connected"
+            : "\(tool.name) is installed but signed out"
+    }
+
+    private var meshNote: String {
+        guard let tool = bridge.mesh.tool else {
+            return "Your phone and this Mac have to sit on the same private network. "
+                 + "Install Netbird or Tailscale here and the matching app on your phone, "
+                 + "then sign both into one account: this Mac gets a fixed private address "
+                 + "the phone can reach from anywhere, with no port opened on your router."
+        }
+        if let address = bridge.mesh.address {
+            var note = "This Mac is \(address) on your \(tool.name) network. Everything the "
+                     + "phone sends travels inside that tunnel; nothing is exposed to the internet."
+            if tool == .netbird {
+                note += " Netbird sessions expire after a day or so — if the phone suddenly "
+                      + "stops connecting, this is almost always why. Sign in again here."
+            }
+            return note
+        }
+        return "Sign in to bring the tunnel up. It opens \(tool.name)'s sign-in page in your "
+             + "browser; once the network is up the bridge starts by itself within half a minute."
+    }
+
+    // MARK: The bridge service
+
+    private var bridgeCard: some View {
         VStack(spacing: 0) {
             row(bridgeTitle, note: bridgeNote) {
                 if bridge.isInstalled {
@@ -208,6 +284,16 @@ struct SettingsView: View {
                         .labelsHidden()
                 } else {
                     SmallButton(title: "Refresh") { bridge.refresh() }
+                }
+            }
+
+            if bridge.isInstalled && bridge.mesh.isConnected && !bridge.isRunning {
+                row("The service is not listening",
+                    note: "The agent waits 30 seconds between attempts, so it lags behind the "
+                        + "network coming back. Restart it instead of waiting.") {
+                    SmallButton(title: "Restart", icon: "arrow.clockwise", prominent: true) {
+                        bridge.restart()
+                    }
                 }
             }
 
@@ -261,7 +347,99 @@ struct SettingsView: View {
             }
         }
         .background(card)
-        .onAppear { bridge.refresh() }
+    }
+
+    // MARK: How to set it up
+
+    /// The whole path, in order. Every step of it happens somewhere else — a browser,
+    /// a terminal, the phone's own Settings app — and none of those places can tell
+    /// you what the next one is.
+    private var guideCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("Setting this up, step by step")
+                    .font(Theme.ui(12.5, .medium))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                SmallButton(title: guideOpen ? "Hide" : "Show") { guideOpen.toggle() }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if guideOpen {
+                Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 16)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    step(1, "Put both devices on one private network",
+                         "Install Netbird (netbird.io) or Tailscale (tailscale.com) on this Mac "
+                       + "and the matching app on your phone, then sign both into the same "
+                       + "account. Either one gives this Mac a fixed private address the phone "
+                       + "can reach from any network, without opening a port on your router. "
+                       + "Pick one — you do not need both.")
+
+                    step(2, "Install the bridge on this Mac",
+                         "In the Claude Studio repository, run Bridge/install.sh once. It "
+                       + "installs ttyd, generates the access token and registers a launchd "
+                       + "agent, so your sessions stay reachable even while this app is closed. "
+                       + "Running it again later is safe and keeps the existing token.")
+
+                    step(3, "Scan the QR code above with the phone's camera",
+                         "The code carries the address and the token together, so there is "
+                       + "nothing to type. It lands on a setup page served over plain HTTP — "
+                       + "that page exists only to hand over the certificate in the next step.")
+
+                    step(4, "Trust the certificate, once",
+                         "Tap the link on the setup page to download the root certificate. "
+                       + "On iOS: Settings → Profile Downloaded → Install, then Settings → "
+                       + "General → About → Certificate Trust Settings and turn it on. "
+                       + "On Android: Settings → Security → Encryption & credentials → "
+                       + "Install a certificate → CA certificate. Notifications, offline use "
+                       + "and installing as an app all need HTTPS, which is what this unlocks.")
+
+                    step(5, "Add it to the Home Screen",
+                         "iOS: Share → Add to Home Screen, from Safari — Chrome cannot do it. "
+                       + "Android: the browser offers \"Install app\". This is not cosmetic: "
+                       + "iOS delivers push notifications only to a web app on the Home Screen, "
+                       + "so without this step the phone stays silent.")
+
+                    step(6, "Turn notifications on inside the phone app",
+                         "Open its menu → Notifications & settings, enable them, and send the "
+                       + "test notification to confirm. After that you get a push the moment a "
+                       + "session finishes and hands the turn back to you.")
+
+                    Text("If the phone ever stops connecting, check the private network first — "
+                       + "a signed-out mesh is what almost every failure turns out to be.")
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+        }
+        .background(card)
+    }
+
+    private func step(_ number: Int, _ title: String, _ body: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(Theme.mono(10.5, .semibold))
+                .foregroundStyle(Theme.text)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Theme.accent.opacity(0.22)))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(Theme.ui(12, .medium))
+                    .foregroundStyle(Theme.text)
+                Text(body)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(2)
+            }
+        }
     }
 
     private var bridgeTitle: String {
@@ -273,12 +451,12 @@ struct SettingsView: View {
             return "Not installed yet. Run Bridge/install.sh in the repository once, then come back."
         }
         if bridge.address == nil {
-            return "Netbird is not connected, so there is no private address to serve on. The service starts by itself once it is."
+            return "There is no private address to serve on, so the service exits and retries. It starts by itself once the network above is up."
         }
         if !bridge.isRunning {
-            return "The service is stopped. Turn it on to open your sessions to the phone over Netbird."
+            return "The service is stopped. Turn it on to open your sessions to the phone."
         }
-        return "Serving on \(bridge.address ?? "—"):\(PhoneBridge.port) over Netbird. Your Claude subscription on this Mac does the work; the phone only sends keystrokes."
+        return "Serving on \(bridge.address ?? "—"):\(PhoneBridge.port), reachable only from your private network. Your Claude subscription on this Mac does the work; the phone only sends keystrokes."
     }
 
     private var about: some View {
