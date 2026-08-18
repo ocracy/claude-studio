@@ -472,7 +472,7 @@ private struct CronPane: View {
                        meta: schedule.enabled
                              ? "next · \(schedule.nextFire?.shortStamp ?? "—")" : "") {
                 SmallButton(title: "Run now", icon: "play.fill", prominent: true) {
-                    model.runs.runInBackground(skill: schedule.skill)
+                    model.runSkillNow(schedule.skill)
                 }
                 SmallButton(title: schedule.enabled ? "Pause" : "Resume") {
                     var updated = schedule
@@ -503,6 +503,16 @@ private struct RunList: View {
     private var runs: [SkillRun] { showReports ? model.runs.runs(for: skill) : [] }
     private var uses: [UsageEvent] { model.runs.usage(for: skill) }
 
+    /// The live log is selected instead of a report while a run is in flight. A run
+    /// started by launchd or in the background has no tab of its own, so this is the
+    /// only place its output is visible.
+    @State private var watchingLive = false
+    @State private var liveLog = ""
+    @State private var liveTicker: Timer?
+
+    private var isRunning: Bool { model.runs.isRunning(skill) }
+    private var showsLive: Bool { watchingLive && isRunning }
+
     private var selected: SkillRun? {
         if let id = model.selectedRun[skill], let match = runs.first(where: { $0.id == id }) {
             return match
@@ -517,7 +527,9 @@ private struct RunList: View {
                 .background(Theme.chrome)
                 .overlay(alignment: .trailing) { Rectangle().fill(Theme.separator).frame(width: 1) }
 
-            if let run = selected {
+            if showsLive {
+                liveOutput
+            } else if let run = selected {
                 output(run)
             } else if !uses.isEmpty {
                 usageDetail
@@ -532,18 +544,87 @@ private struct RunList: View {
             }
         }
         .frame(maxHeight: .infinity)
+        // A run that starts anywhere — this pane, a background run, launchd — puts
+        // its output on screen without being asked. That is the whole point.
+        .onChange(of: isRunning) { _, running in
+            watchingLive = running
+            running ? startTicking() : stopTicking()
+        }
+        .onAppear {
+            watchingLive = isRunning
+            if isRunning { startTicking() }
+        }
+        .onDisappear { stopTicking() }
+    }
+
+    private func startTicking() {
+        liveLog = Runs.logTail(project: model.project, skill: skill)
+        liveTicker?.invalidate()
+        liveTicker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor in
+                self.liveLog = Runs.logTail(project: self.model.project, skill: self.skill)
+            }
+        }
+    }
+
+    private func stopTicking() {
+        liveTicker?.invalidate()
+        liveTicker = nil
+    }
+
+    /// What the runner is printing, refreshed every second and pinned to the bottom.
+    private var liveOutput: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                StatusDot(color: Theme.running)
+                Text("running now").font(Theme.ui(13, .medium)).foregroundStyle(Theme.text)
+                Text(".cs/runs/\(skill)/.run.log")
+                    .font(Theme.mono(10.5)).foregroundStyle(Theme.text3)
+                Spacer()
+                IconButton(icon: "doc.on.doc", help: "Copy the output") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(liveLog, forType: .string)
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(liveLog.isEmpty ? "Waiting for output…" : liveLog)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(liveLog.isEmpty ? Theme.text3 : Theme.text2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 20)
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .onChange(of: liveLog) { _, _ in
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
-                if model.runs.isRunning(skill) {
-                    HStack(spacing: 8) {
-                        StatusDot(color: Theme.running)
-                        Text("running…").font(Theme.ui(12)).foregroundStyle(Theme.text2)
-                        Spacer()
+                if isRunning {
+                    Button { watchingLive = true } label: {
+                        HoverRow(selected: showsLive,
+                                 padding: EdgeInsets(top: 7, leading: 8, bottom: 7, trailing: 8)) {
+                            HStack(spacing: 8) {
+                                StatusDot(color: Theme.running)
+                                Text("running…").font(Theme.ui(12)).foregroundStyle(Theme.text)
+                                Spacer()
+                                Text("live").font(Theme.ui(10.5)).foregroundStyle(Theme.text3)
+                            }
+                        }
                     }
-                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .buttonStyle(.plain)
                 }
                 if !uses.isEmpty {
                     SectionLabel(text: "used by sessions")
@@ -582,7 +663,10 @@ private struct RunList: View {
                 }
 
                 ForEach(runs) { run in
-                    Button { model.selectedRun[skill] = run.id } label: {
+                    Button {
+                        model.selectedRun[skill] = run.id
+                        watchingLive = false
+                    } label: {
                         HoverRow(selected: selected?.id == run.id,
                                  padding: EdgeInsets(top: 7, leading: 8, bottom: 7, trailing: 8)) {
                             HStack(spacing: 8) {
@@ -599,6 +683,7 @@ private struct RunList: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
+                        Button("Copy report") { copyReport(run) }
                         Button("Open file") { NSWorkspace.shared.open(run.url) }
                         Button("Delete") {
                             try? FileManager.default.removeItem(at: run.url)
@@ -651,6 +736,14 @@ private struct RunList: View {
         }
     }
 
+    /// Puts the report on the clipboard as it is on disk — frontmatter included, so
+    /// what is pasted is the file, not a re-rendering of it.
+    private func copyReport(_ run: SkillRun) {
+        let text = (try? String(contentsOf: run.url, encoding: .utf8)) ?? run.body
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
     private func output(_ run: SkillRun) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -664,6 +757,11 @@ private struct RunList: View {
                         Text("· \(trigger)").font(Theme.ui(11)).foregroundStyle(Theme.text3)
                     }
                     Spacer()
+                    // The report is rendered markdown, and a drag selects within one
+                    // block only — copying the whole thing needs a button.
+                    IconButton(icon: "doc.on.doc", help: "Copy the report") {
+                        copyReport(run)
+                    }
                     IconButton(icon: "arrow.up.forward.square", help: "Open file") {
                         NSWorkspace.shared.open(run.url)
                     }

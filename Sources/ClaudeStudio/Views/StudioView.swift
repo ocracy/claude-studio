@@ -380,6 +380,22 @@ private struct StatusBar: View {
                 }
             }
 
+            // A skill running with no tab of its own — a scheduled or background run —
+            // is otherwise invisible from here.
+            if let skill = model.runs.running.sorted().first {
+                Button { model.openCron(skillNamed: skill) } label: {
+                    HStack(spacing: 5) {
+                        StatusDot(color: Theme.running, size: 5)
+                        Text(model.runs.running.count > 1
+                             ? "running \(model.runs.running.count) skills"
+                             : "running \(skill)")
+                            .foregroundStyle(Theme.text2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Show the live output")
+            }
+
             Spacer()
             Text("\(model.openSessions.count) sessions")
             Text("\(model.runningServiceCount)/\(model.store.config.services.count) services")

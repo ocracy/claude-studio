@@ -420,10 +420,15 @@ struct Sidebar: View {
         }
         ForEach(model.store.config.schedules) { schedule in
             let last = model.runs.latest(for: schedule.skill)
+            let running = model.runs.isRunning(schedule.skill)
             row(selected: model.activeTabID == "cron:\(schedule.skill)",
-                dot: schedule.enabled ? (last?.status.color ?? theme.accent) : Theme.idle,
+                dot: running ? Theme.running
+                     : schedule.enabled ? (last?.status.color ?? theme.accent) : Theme.idle,
                 title: schedule.skill,
-                meta: schedule.enabled
+                // A run in flight replaces the schedule summary: what it is doing now
+                // matters more than when it will do it next.
+                meta: running ? "running now…"
+                      : schedule.enabled
                       ? "\(schedule.summary) · next \(schedule.nextFire?.shortStamp ?? "—")"
                       : "paused",
                 trailing: {
@@ -437,7 +442,10 @@ struct Sidebar: View {
                 action: { model.openCron(schedule) })
                 .contextMenu {
                     Button("Edit…") { scheduleSheet = schedule }
-                    Button("Run now") { model.runs.runInBackground(skill: schedule.skill) }
+                    Button("Run now") { model.runSkillNow(schedule.skill) }
+                    Button("Run now in background") {
+                        model.runs.runInBackground(skill: schedule.skill)
+                    }
                     Divider()
                     Button("Delete schedule") { model.store.removeSchedule(skill: schedule.skill) }
                 }

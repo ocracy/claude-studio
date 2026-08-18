@@ -204,6 +204,15 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   `~/.claude/settings.json` that fails to parse.
 - **Concurrency**: values accumulated inside `Task.detached` are handed to
   `MainActor.run` as immutable copies (an error in the Swift 6 language mode).
+- **Skill runs**: the runner script is the SAME for launchd, "run in background" and
+  "Run now" — only "Run now" puts it in a tmux tab so it can be watched. Its `claude`
+  call needs `--verbose` and `| tee -a .run.log`: print mode says nothing until the
+  end, and a plain redirect leaves the tab looking dead for minutes. `$CODE` then has
+  to come from `${pipestatus[1]}`, since `$?` after a pipe is tee's. The status shown
+  in the run list is NOT measured — it is the `status:` field the skill wrote into its
+  own report; only the "Run failed (exit N)" notification comes from the exit code.
+  `RunStore` is a separate `ObservableObject`, so `StudioModel` forwards its
+  `objectWillChange` — without that a view holding only the model redraws late.
 - **Project themes**: a project's palette (`ThemePreset` + a custom accent) lives in
   `.cs/settings.json` and reaches the interface through the `\.studioTheme`
   environment value — NEVER a mutable `Theme.accent`, because one process shows

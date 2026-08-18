@@ -113,9 +113,14 @@ enum Scheduler {
         print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"reportFile\\":\\"$CS_REPORT_FILE\\"}" > "$STATE"
 
         cd "$CS_PROJECT_PATH" || exit 1
-        claude -p \(Shell.quoted(prompt)) --permission-mode acceptEdits \\
-          >> "$CS_RUN_DIR/.run.log" 2>&1
-        CODE=$?
+        # `tee`, not a plain redirect: a manual run watches this script in a tab, and
+        # output that goes only to the log leaves that tab looking dead for minutes.
+        # `--verbose` is what makes the stream worth watching — without it print mode
+        # says nothing until the very end. `$CODE` must come from `pipestatus`, since
+        # `$?` after a pipe is tee's.
+        claude -p \(Shell.quoted(prompt)) --permission-mode acceptEdits --verbose 2>&1 \\
+          | tee -a "$CS_RUN_DIR/.run.log"
+        CODE=${pipestatus[1]}
 
         FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"finishedAt\\":\\"$FINISHED\\",\\"exitCode\\":$CODE,\\"reportFile\\":\\"$CS_REPORT_FILE\\"}" > "$STATE"

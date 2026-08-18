@@ -53,6 +53,17 @@ enum Runs {
         return run
     }
 
+    /// The tail of `.run.log` — what the runner is printing right now.
+    ///
+    /// Read whole and trimmed here rather than shelled out to `tail`: the runner caps
+    /// the file at 500 lines when it finishes, so it never grows past a few hundred KB.
+    static func logTail(project: Project, skill: String, lines: Int = 400) -> String {
+        let url = Paths.runsDir(project, skill: skill).appendingPathComponent(".run.log")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        let all = text.split(separator: "\n", omittingEmptySubsequences: false)
+        return all.suffix(lines).joined(separator: "\n")
+    }
+
     static func state(project: Project, skill: String) -> RunState? {
         guard let data = try? Data(contentsOf: Paths.runState(project, skill: skill)) else { return nil }
         let decoder = JSONDecoder()
@@ -167,6 +178,11 @@ final class RunStore: ObservableObject {
         pollTimer?.invalidate()
         pollTimer = nil
     }
+
+    /// Marks a skill as running before its state file exists. The runner writes that
+    /// file itself, but only once zsh has started — until then the pane would show
+    /// nothing at all after a press of "Run now".
+    func markRunning(_ skill: String) { running.insert(skill) }
 
     /// Runs the skill silently in the background; announces when it finishes.
     func runInBackground(skill: String) {

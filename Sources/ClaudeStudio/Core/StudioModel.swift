@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Combine
 
 /// All state for one window (one project). Views read it; the business logic
 /// lives here, not in the view layer.
@@ -137,6 +138,10 @@ final class StudioModel: ObservableObject {
 
     private var refreshTimer: Timer?
     private var autoAttachPending = true
+    /// `RunStore` is an object of its own, so a view holding only the model would not
+    /// redraw when a run starts or ends — the running marker appeared late, whenever
+    /// something else happened to publish.
+    private var runsObserver: AnyCancellable?
 
     init(project: Project) {
         self.project = project
@@ -149,6 +154,20 @@ final class StudioModel: ObservableObject {
         self.theme = store.config.settings.theme
         engine.projectName = project.name
         engine.theme = theme
+        runsObserver = runs.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
+
+    /// Opens the pane that shows a skill's runs — its schedule tab when it has one,
+    /// its skill tab otherwise.
+    func openCron(skillNamed skill: String) {
+        if let schedule = store.schedule(for: skill) {
+            openCron(schedule)
+        } else if let match = skills.skill(named: skill) {
+            open(StudioTab(kind: .skill, ref: match.name, title: match.name))
+            runs.refresh(skill: skill)
+        }
     }
 
     // MARK: - Appearance
@@ -778,6 +797,31 @@ final class StudioModel: ObservableObject {
 
     func runSkillBackground(_ skill: Skill) {
         runs.runInBackground(skill: skill.name)
+    }
+
+    /// Runs the skill's scheduled runner in a visible tab.
+    ///
+    /// The same script launchd runs, so a manual run and a scheduled one produce the
+    /// same report — but in a terminal, because "it is running somewhere" with nothing
+    /// on screen is not a state worth showing.
+    func runSkillNow(_ skill: String) {
+        Paths.ensure(Paths.runsDir(project, skill: skill))
+        let script = Scheduler.writeRunnerScript(
+            project: project, skill: skill,
+            prompt: Scheduler.promptFor(project: project, skill: skill))
+        runs.markRunning(skill)
+
+        let tab = StudioTab(kind: .script, ref: "run-\(skill)", title: "run: \(skill)")
+        open(tab)
+        engine.runCommandTab(key: tab.terminalKey, name: "run: \(skill)",
+                             command: "CS_RUN_MODE=manual /bin/zsh \(Shell.quoted(script.path))",
+                             cwd: project.path)
+        // The runner writes its report and state file at the end; the poll would find
+        // them within twenty seconds, but the pane should not lag that far behind.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            self.runs.refresh(skill: skill)
+        }
     }
 
     func openCron(_ schedule: Schedule) {
