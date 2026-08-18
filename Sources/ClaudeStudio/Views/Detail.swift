@@ -3,6 +3,7 @@ import AppKit
 
 /// Content by tab kind: terminal, skill card or run history.
 struct ContentArea: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
 
     var body: some View {
@@ -14,7 +15,7 @@ struct ContentArea: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
+        .background(theme.surface)
     }
 
     @ViewBuilder
@@ -46,7 +47,7 @@ struct ContentArea: View {
     private func message(_ text: String) -> some View {
         Text(text)
             .font(Theme.ui(12.5))
-            .foregroundStyle(Theme.text3)
+            .foregroundStyle(theme.text3)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -54,16 +55,17 @@ struct ContentArea: View {
 // MARK: - Empty state
 
 private struct EmptyStudio: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
 
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 30, weight: .ultraLight))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             Text("Pick a session, skill, schedule, service or terminal on the left")
                 .font(Theme.ui(12.5))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             HStack(spacing: 8) {
                 SmallButton(title: "Claude session", icon: "plus", prominent: true) {
                     model.newSession()
@@ -104,7 +106,7 @@ private struct TerminalPane: View {
                 .foregroundStyle(theme.accent)
             Text("Project links changed — reopen this session to apply them.")
                 .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.text2)
+                .foregroundStyle(theme.text2)
             Spacer()
             SmallButton(title: "Reopen", prominent: true) {
                 model.reopenSession(tmux: tab.ref)
@@ -112,8 +114,8 @@ private struct TerminalPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(Theme.chrome)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .background(theme.chrome)
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 
     private var header: some View {
@@ -126,7 +128,7 @@ private struct TerminalPane: View {
                     .font(Theme.ui(13, .medium))
                     .frame(maxWidth: 260)
                     .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(theme.field)
                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(theme.accent)))
                     .focused($titleFocused)
                     .onSubmit(commitRename)
@@ -137,7 +139,7 @@ private struct TerminalPane: View {
                 // under that name.
                 Text(tab.title)
                     .font(Theme.ui(13, .medium))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                     .lineLimit(1)
                     .onTapGesture(count: 2, perform: beginRename)
                     .help(renameable ? "Double-click to rename" : "")
@@ -145,7 +147,7 @@ private struct TerminalPane: View {
 
             HStack(spacing: 5) {
                 StatusDot(color: stateColor)
-                Text(state).font(Theme.ui(11)).foregroundStyle(Theme.text3)
+                Text(state).font(Theme.ui(11)).foregroundStyle(theme.text3)
             }
 
             if let running = model.liveUsage(forTab: tab.terminalKey) {
@@ -155,18 +157,18 @@ private struct TerminalPane: View {
                         .foregroundStyle(theme.accent)
                     Text("\(running.display) · \(model.owner(of: running.name))")
                         .font(Theme.ui(11))
-                        .foregroundStyle(Theme.text2)
+                        .foregroundStyle(theme.text2)
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .background(Capsule().fill(Theme.field))
+                .background(Capsule().fill(theme.field))
             }
 
             Spacer(minLength: 8)
 
             Text(meta)
                 .font(Theme.mono(10.5))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .lineLimit(1)
                 .truncationMode(.head)
 
@@ -174,8 +176,8 @@ private struct TerminalPane: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(Theme.bg)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .background(theme.surface)
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 
     @ViewBuilder private var actions: some View {
@@ -265,13 +267,13 @@ private struct TerminalPane: View {
             switch model.engine.attention[tab.terminalKey] ?? .idle {
             case .working: return Theme.running
             case .waiting: return Theme.waiting
-            case .idle:    return Theme.idle
+            case .idle:    return theme.idle
             }
         case .service:
-            guard let service = serviceValue else { return Theme.idle }
+            guard let service = serviceValue else { return theme.idle }
             return (model.engine.serviceStatus[service.id] ?? .stopped).color
         default:
-            return model.engine.isLive(tab.terminalKey) ? Theme.running : Theme.idle
+            return model.engine.isLive(tab.terminalKey) ? Theme.running : theme.idle
         }
     }
 
@@ -294,6 +296,7 @@ private struct TerminalPane: View {
 // MARK: - Skill
 
 private struct SkillPane: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let skill: Skill
     @State private var section: Section = .definition
@@ -309,7 +312,7 @@ private struct SkillPane: View {
         VStack(spacing: 0) {
             PaneHeader(title: skill.name,
                        state: model.runs.isRunning(skill.name) ? "running" : skill.scope.label,
-                       stateColor: model.runs.isRunning(skill.name) ? Theme.running : Theme.idle,
+                       stateColor: model.runs.isRunning(skill.name) ? Theme.running : theme.idle,
                        meta: skill.url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
                 SmallButton(title: "Run", icon: "play.fill", prominent: true) {
                     model.runSkillVisible(skill)
@@ -348,7 +351,7 @@ private struct SkillPane: View {
                     }
                 }
                 .padding(.bottom, 18)
-                .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+                .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
                 .padding(.bottom, 20)
 
                 MarkdownView(text: body_.isEmpty ? "_(skill body is empty)_" : body_)
@@ -362,7 +365,7 @@ private struct SkillPane: View {
     private func fact(_ key: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: key)
-            Text(value).font(Theme.ui(12)).foregroundStyle(Theme.text)
+            Text(value).font(Theme.ui(12)).foregroundStyle(theme.text)
         }
     }
 
@@ -379,6 +382,7 @@ private struct SkillPane: View {
 
 /// A slash command's own page: what it does, and one button to run it in a session.
 private struct ClaudeCommandPane: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let command: ClaudeCommand
     @State private var body_ = ""
@@ -394,7 +398,7 @@ private struct ClaudeCommandPane: View {
         VStack(spacing: 0) {
             PaneHeader(title: command.invocation,
                        state: command.scope.label,
-                       stateColor: Theme.idle,
+                       stateColor: theme.idle,
                        meta: command.url.path
                         .replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
                 SmallButton(title: "Run in a session", icon: "play.fill", prominent: true) {
@@ -420,7 +424,7 @@ private struct ClaudeCommandPane: View {
                         }
                         .padding(.bottom, 18)
                         .overlay(alignment: .bottom) {
-                            Rectangle().fill(Theme.separator).frame(height: 1)
+                            Rectangle().fill(theme.separator).frame(height: 1)
                         }
                         .padding(.bottom, 20)
                     }
@@ -443,7 +447,7 @@ private struct ClaudeCommandPane: View {
     private func fact(_ key: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: key)
-            Text(value).font(Theme.mono(12)).foregroundStyle(Theme.text)
+            Text(value).font(Theme.mono(12)).foregroundStyle(theme.text)
         }
     }
 
@@ -468,7 +472,7 @@ private struct CronPane: View {
         VStack(spacing: 0) {
             PaneHeader(title: schedule.skill,
                        state: schedule.enabled ? schedule.summary : "paused",
-                       stateColor: schedule.enabled ? theme.accent : Theme.idle,
+                       stateColor: schedule.enabled ? theme.accent : theme.idle,
                        meta: schedule.enabled
                              ? "next · \(schedule.nextFire?.shortStamp ?? "—")" : "") {
                 SmallButton(title: "Run now", icon: "play.fill", prominent: true) {
@@ -524,8 +528,8 @@ private struct RunList: View {
         HStack(spacing: 0) {
             list
                 .frame(width: 280)
-                .background(Theme.chrome)
-                .overlay(alignment: .trailing) { Rectangle().fill(Theme.separator).frame(width: 1) }
+                .background(theme.chrome)
+                .overlay(alignment: .trailing) { Rectangle().fill(theme.separator).frame(width: 1) }
 
             if showsLive {
                 liveOutput
@@ -536,9 +540,9 @@ private struct RunList: View {
             } else {
                 VStack(spacing: 6) {
                     Text(showReports ? "No runs yet." : "Not used yet.")
-                        .font(Theme.ui(12.5)).foregroundStyle(Theme.text3)
+                        .font(Theme.ui(12.5)).foregroundStyle(theme.text3)
                     Text(".cs/runs/\(skill)/")
-                        .font(Theme.mono(10.5)).foregroundStyle(Theme.text3)
+                        .font(Theme.mono(10.5)).foregroundStyle(theme.text3)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -577,9 +581,9 @@ private struct RunList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 StatusDot(color: Theme.running)
-                Text("running now").font(Theme.ui(13, .medium)).foregroundStyle(Theme.text)
+                Text("running now").font(Theme.ui(13, .medium)).foregroundStyle(theme.text)
                 Text(".cs/runs/\(skill)/.run.log")
-                    .font(Theme.mono(10.5)).foregroundStyle(Theme.text3)
+                    .font(Theme.mono(10.5)).foregroundStyle(theme.text3)
                 Spacer()
                 IconButton(icon: "doc.on.doc", help: "Copy the output") {
                     NSPasteboard.general.clearContents()
@@ -594,7 +598,7 @@ private struct RunList: View {
                 ScrollView {
                     Text(liveLog.isEmpty ? "Waiting for output…" : liveLog)
                         .font(Theme.mono(11))
-                        .foregroundStyle(liveLog.isEmpty ? Theme.text3 : Theme.text2)
+                        .foregroundStyle(liveLog.isEmpty ? theme.text3 : theme.text2)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 24)
@@ -618,9 +622,9 @@ private struct RunList: View {
                                  padding: EdgeInsets(top: 7, leading: 8, bottom: 7, trailing: 8)) {
                             HStack(spacing: 8) {
                                 StatusDot(color: Theme.running)
-                                Text("running…").font(Theme.ui(12)).foregroundStyle(Theme.text)
+                                Text("running…").font(Theme.ui(12)).foregroundStyle(theme.text)
                                 Spacer()
-                                Text("live").font(Theme.ui(10.5)).foregroundStyle(Theme.text3)
+                                Text("live").font(Theme.ui(10.5)).foregroundStyle(theme.text3)
                             }
                         }
                     }
@@ -640,12 +644,12 @@ private struct RunList: View {
                                 .frame(width: 12)
                             Text(use.at.shortStamp)
                                 .font(Theme.mono(11))
-                                .foregroundStyle(Theme.text)
+                                .foregroundStyle(theme.text)
                             Spacer()
                             if let duration = use.duration {
                                 Text(duration)
                                     .font(Theme.mono(10.5))
-                                    .foregroundStyle(Theme.text3)
+                                    .foregroundStyle(theme.text3)
                             }
                         }
                         .padding(.horizontal, 8)
@@ -673,7 +677,7 @@ private struct RunList: View {
                                 StatusDot(color: run.status.color)
                                 Text(run.startedAt?.shortStamp ?? run.fileStem)
                                     .font(Theme.mono(11))
-                                    .foregroundStyle(Theme.text)
+                                    .foregroundStyle(theme.text)
                                 Spacer()
                                 Text(run.status.label)
                                     .font(Theme.ui(10.5))
@@ -703,21 +707,21 @@ private struct RunList: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Used \(uses.count) time\(uses.count == 1 ? "" : "s")")
                     .font(Theme.ui(13, .medium))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                 ForEach(uses.prefix(40)) { use in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Text(use.at.shortStamp)
                             .font(Theme.mono(11))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                             .frame(width: 92, alignment: .leading)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(use.sessionName ?? "a session")
                                 .font(Theme.ui(12))
-                                .foregroundStyle(Theme.text)
+                                .foregroundStyle(theme.text)
                             if let args = use.args {
                                 Text(args)
                                     .font(Theme.mono(10.5))
-                                    .foregroundStyle(Theme.text3)
+                                    .foregroundStyle(theme.text3)
                                     .lineLimit(2)
                             }
                         }
@@ -725,9 +729,9 @@ private struct RunList: View {
                         Text([use.source.label, use.duration].compactMap { $0 }
                                 .joined(separator: " · "))
                             .font(Theme.ui(10.5))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                     }
-                    Divider().overlay(Theme.separator)
+                    Divider().overlay(theme.separator)
                 }
             }
             .padding(.horizontal, 24)
@@ -750,11 +754,11 @@ private struct RunList: View {
                 HStack(spacing: 10) {
                     Text(run.startedAt?.shortStamp ?? run.fileStem)
                         .font(Theme.ui(13, .medium))
-                        .foregroundStyle(Theme.text)
+                        .foregroundStyle(theme.text)
                     StatusDot(color: run.status.color)
-                    Text(run.status.label).font(Theme.ui(11)).foregroundStyle(Theme.text3)
+                    Text(run.status.label).font(Theme.ui(11)).foregroundStyle(theme.text3)
                     if let trigger = run.trigger {
-                        Text("· \(trigger)").font(Theme.ui(11)).foregroundStyle(Theme.text3)
+                        Text("· \(trigger)").font(Theme.ui(11)).foregroundStyle(theme.text3)
                     }
                     Spacer()
                     // The report is rendered markdown, and a drag selects within one
@@ -771,7 +775,7 @@ private struct RunList: View {
                 if let summary = run.summary {
                     Text(summary)
                         .font(Theme.ui(13))
-                        .foregroundStyle(Theme.text2)
+                        .foregroundStyle(theme.text2)
                         .padding(.bottom, 16)
                 }
 
@@ -797,7 +801,7 @@ struct SubTabs: View {
                 Button { onSelect(value) } label: {
                     Text(label)
                         .font(Theme.ui(12, selected == value ? .medium : .regular))
-                        .foregroundStyle(selected == value ? Theme.text : Theme.text3)
+                        .foregroundStyle(selected == value ? theme.text : theme.text3)
                         .padding(.horizontal, 14)
                         .frame(height: 30)
                         .overlay(alignment: .bottom) {
@@ -812,8 +816,8 @@ struct SubTabs: View {
             Spacer()
         }
         .padding(.leading, 8)
-        .background(Theme.bg)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .background(theme.surface)
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 }
 
@@ -821,9 +825,11 @@ struct SubTabs: View {
 
 /// The content area's header strip: title, state, optional segments, actions.
 struct PaneHeader<Actions: View>: View {
+    @Environment(\.studioTheme) private var theme
     let title: String
     var state: String = ""
-    var stateColor: Color = Theme.idle
+    /// nil = the theme's idle grey; a value overrides it (a run's status).
+    var stateColor: Color? = nil
     var meta: String = ""
     var segments: [(String, String)] = []
     var selectedSegment: String = ""
@@ -834,13 +840,13 @@ struct PaneHeader<Actions: View>: View {
         HStack(spacing: 10) {
             Text(title)
                 .font(Theme.ui(13, .medium))
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(theme.text)
                 .lineLimit(1)
 
             if !state.isEmpty {
                 HStack(spacing: 5) {
-                    StatusDot(color: stateColor)
-                    Text(state).font(Theme.ui(11)).foregroundStyle(Theme.text3)
+                    StatusDot(color: stateColor ?? theme.idle)
+                    Text(state).font(Theme.ui(11)).foregroundStyle(theme.text3)
                 }
             }
 
@@ -852,23 +858,23 @@ struct PaneHeader<Actions: View>: View {
                         Button { onSegment(value) } label: {
                             Text(label)
                                 .font(Theme.ui(11.5))
-                                .foregroundStyle(selectedSegment == value ? Theme.text : Theme.text3)
+                                .foregroundStyle(selectedSegment == value ? theme.text : theme.text3)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 3)
                                 .background(RoundedRectangle(cornerRadius: 4)
-                                    .fill(selectedSegment == value ? Theme.bg : .clear))
+                                    .fill(selectedSegment == value ? theme.surface : .clear))
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(2)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.field))
+                .background(RoundedRectangle(cornerRadius: 6).fill(theme.field))
             }
 
             if !meta.isEmpty {
                 Text(meta)
                     .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
                     .lineLimit(1)
                     .truncationMode(.head)
                     .frame(maxWidth: 280, alignment: .trailing)
@@ -878,7 +884,7 @@ struct PaneHeader<Actions: View>: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(Theme.bg)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .background(theme.surface)
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 }

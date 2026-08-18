@@ -7,6 +7,7 @@ import AppKit
 /// and inline formatting (bold, italic, `code`, links) — everything a SKILL.md
 /// file actually uses.
 struct MarkdownView: View {
+    @Environment(\.studioTheme) private var theme
     let text: String
 
     var body: some View {
@@ -25,14 +26,14 @@ struct MarkdownView: View {
         case let .heading(level, text):
             Text(inline(text))
                 .font(Theme.ui(level == 1 ? 19 : level == 2 ? 16 : 14, .semibold))
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(theme.text)
                 .padding(.top, level == 1 ? 4 : 16)
                 .padding(.bottom, 6)
 
         case let .paragraph(text):
             Text(inline(text))
                 .font(Theme.ui(13))
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(theme.text)
                 .lineSpacing(4)
                 .padding(.bottom, 10)
 
@@ -40,10 +41,10 @@ struct MarkdownView: View {
             VStack(alignment: .leading, spacing: 5) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("•").foregroundStyle(Theme.text3)
+                        Text("•").foregroundStyle(theme.text3)
                         Text(inline(item))
                             .font(Theme.ui(13))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(theme.text)
                             .lineSpacing(3)
                     }
                 }
@@ -56,10 +57,10 @@ struct MarkdownView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(index + 1).")
                             .font(Theme.mono(12))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                         Text(inline(item))
                             .font(Theme.ui(13))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(theme.text)
                             .lineSpacing(3)
                     }
                 }
@@ -71,37 +72,87 @@ struct MarkdownView: View {
                 if let language, !language.isEmpty {
                     Text(language)
                         .font(Theme.mono(10))
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(theme.text3)
                         .padding(.bottom, 5)
                 }
                 Text(body)
                     .font(Theme.mono(12))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                     .lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Theme.field)
+                    .fill(theme.field)
                     .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Theme.separator))
+                        .strokeBorder(theme.separator))
             )
             .padding(.bottom, 12)
 
         case let .quote(text):
             HStack(alignment: .top, spacing: 10) {
-                Rectangle().fill(Theme.separator).frame(width: 2)
+                Rectangle().fill(theme.separator).frame(width: 2)
                 Text(inline(text))
                     .font(Theme.ui(13))
-                    .foregroundStyle(Theme.text2)
+                    .foregroundStyle(theme.text2)
                     .lineSpacing(4)
             }
             .padding(.bottom, 12)
 
+        case let .table(header, rows):
+            table(header: header, rows: rows)
+
         case .rule:
-            Rectangle().fill(Theme.separator).frame(height: 1).padding(.vertical, 10)
+            Rectangle().fill(theme.separator).frame(height: 1).padding(.vertical, 10)
         }
+    }
+
+    /// A pipe table.
+    ///
+    /// `Grid` rather than a stack of `HStack`s: columns have to agree on their width
+    /// across every row, and that is the one thing a stack cannot do. It scrolls
+    /// horizontally because a report's table is often wider than the pane — the
+    /// alternative is columns squeezed until the numbers wrap.
+    private func table(header: [String], rows: [[String]]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(Array(header.enumerated()), id: \.offset) { _, cell in
+                        Text(inline(cell))
+                            .font(Theme.ui(11.5, .semibold))
+                            .foregroundStyle(theme.text2)
+                    }
+                }
+                .padding(.vertical, 7)
+
+                Divider().overlay(theme.separator).gridCellUnsizedAxes(.horizontal)
+
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            Text(inline(cell))
+                                .font(Theme.ui(12))
+                                .foregroundStyle(theme.text)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    if index < rows.count - 1 {
+                        Divider().overlay(theme.separator.opacity(0.5))
+                            .gridCellUnsizedAxes(.horizontal)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(theme.field.opacity(0.5))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(theme.separator))
+            )
+        }
+        .padding(.bottom, 12)
     }
 
     /// Inline formatting — `AttributedString`'s markdown parser already handles
@@ -123,7 +174,36 @@ enum MarkdownParser {
         case numbered([String])
         case code(String?, String)
         case quote(String)
+        case table(header: [String], rows: [[String]])
         case rule
+    }
+
+    /// A pipe table's separator row: `|---|:--:|---:|`. It is what distinguishes a
+    /// table from an ordinary line that happens to contain pipes, so it is matched
+    /// strictly rather than by counting bars.
+    static func isTableSeparator(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("-"), trimmed.contains("|") else { return false }
+        let cells = splitRow(trimmed)
+        guard !cells.isEmpty else { return false }
+        return cells.allSatisfy { cell in
+            let body = cell.trimmingCharacters(in: .whitespaces)
+            return !body.isEmpty && body.allSatisfy { $0 == "-" || $0 == ":" }
+        }
+    }
+
+    /// Splits `| a | b |` into its cells. Leading and trailing bars are optional,
+    /// which is how most tables in the wild are written.
+    static func splitRow(_ line: String) -> [String] {
+        var body = line.trimmingCharacters(in: .whitespaces)
+        if body.hasPrefix("|") { body.removeFirst() }
+        if body.hasSuffix("|") { body.removeLast() }
+        // `\|` is an escaped pipe inside a cell, not a column boundary.
+        return body
+            .replacingOccurrences(of: "\\|", with: "\u{0}")
+            .components(separatedBy: "|")
+            .map { $0.replacingOccurrences(of: "\u{0}", with: "|")
+                     .trimmingCharacters(in: .whitespaces) }
     }
 
     static func parse(_ text: String) -> [Block] {
@@ -183,6 +263,30 @@ enum MarkdownParser {
             if line.hasPrefix("> ") {
                 flushAll()
                 blocks.append(.quote(String(line.dropFirst(2))))
+                continue
+            }
+
+            // A pipe table: this line is the header, the next is the separator.
+            // Without looking ahead, a header row is indistinguishable from a
+            // paragraph — which is exactly how tables used to come out.
+            if line.contains("|"),
+               let next = lines.first, isTableSeparator(next) {
+                flushAll()
+                let header = splitRow(line)
+                lines = lines.dropFirst()
+                var rows: [[String]] = []
+                while let candidate = lines.first {
+                    let row = candidate.trimmingCharacters(in: .whitespaces)
+                    guard row.contains("|"), !row.isEmpty else { break }
+                    lines = lines.dropFirst()
+                    var cells = splitRow(row)
+                    // Ragged rows are common; pad or trim to the header's width so
+                    // the grid stays a grid.
+                    while cells.count < header.count { cells.append("") }
+                    if cells.count > header.count { cells = Array(cells.prefix(header.count)) }
+                    rows.append(cells)
+                }
+                blocks.append(.table(header: header, rows: rows))
                 continue
             }
 

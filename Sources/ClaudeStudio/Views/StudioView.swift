@@ -3,6 +3,7 @@ import AppKit
 
 /// Main screen: top bar · activity rail · sidebar · tabs · content · status bar.
 struct StudioView: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let onClose: () -> Void
 
@@ -14,7 +15,7 @@ struct StudioView: View {
 
             HStack(spacing: 0) {
                 ActivityRail(model: model)
-                Rectangle().fill(Theme.separator).frame(width: 1)
+                Rectangle().fill(theme.separator).frame(width: 1)
 
                 Sidebar(model: model)
                     .frame(width: model.sidebarWidth)
@@ -31,7 +32,7 @@ struct StudioView: View {
 
             StatusBar(model: model)
         }
-        .background(Theme.bg)
+        .background(theme.surface)
         .overlay {
             if model.paletteOpen { CommandPalette(model: model) }
         }
@@ -47,7 +48,7 @@ struct StudioView: View {
     /// The sidebar width is dragged to size and persisted in `.cs/settings.json`.
     private var sidebarHandle: some View {
         Rectangle()
-            .fill(draggingSidebar ? model.theme.accent : Theme.separator)
+            .fill(draggingSidebar ? model.theme.accent : theme.separator)
             .frame(width: 1)
             .overlay(Color.clear.frame(width: 7).contentShape(Rectangle()))
             .onHover { inside in
@@ -84,7 +85,7 @@ private struct TopBar: View {
 
             Text("Claude Studio")
                 .font(Theme.ui(13, .semibold))
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(theme.text)
                 .fixedSize()
 
             Button { menuOpen.toggle() } label: {
@@ -94,14 +95,14 @@ private struct TopBar: View {
                     StatusDot(color: theme.accent, size: 7)
                     Text(model.project.name)
                         .font(Theme.ui(12.5, .medium))
-                        .foregroundStyle(Theme.text)
+                        .foregroundStyle(theme.text)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(theme.text3)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 5).fill(menuOpen ? Theme.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: 5).fill(menuOpen ? theme.hover : .clear))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -114,7 +115,7 @@ private struct TopBar: View {
 
             Text(model.project.displayPath)
                 .font(Theme.mono(11))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .lineLimit(1)
                 .truncationMode(.head)
 
@@ -126,7 +127,7 @@ private struct TopBar: View {
                     Text("\(model.attentionCount) waiting")
                 }
                 .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.text2)
+                .foregroundStyle(theme.text2)
             }
 
             if !model.store.config.services.isEmpty {
@@ -155,7 +156,7 @@ private struct TopBar: View {
         // Empty header space zooms the window on a double-click, like a title bar;
         // the controls opt out through `headerControl()` (see HeaderDoubleClick).
         .background(theme.chrome)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 }
 
@@ -169,7 +170,7 @@ private struct ProjectMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             item("Appearance…", icon: "paintpalette",
-                 detail: theme.preset.name, tone: Theme.text) { onAppearance() }
+                 detail: theme.preset.name) { onAppearance() }
             item("Reveal in Finder", icon: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([model.project.url])
             }
@@ -206,17 +207,17 @@ private struct ProjectMenu: View {
     }
 
     private func item(_ title: String, icon: String, detail: String = "",
-                      tone: Color = Theme.text, action: @escaping () -> Void) -> some View {
+                      tone: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
                 HStack(spacing: 8) {
                     Image(systemName: icon).font(.system(size: 11)).frame(width: 14)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(title).font(Theme.ui(12.5)).foregroundStyle(tone)
+                        Text(title).font(Theme.ui(12.5)).foregroundStyle(tone ?? theme.text)
                         if !detail.isEmpty {
                             Text(detail)
                                 .font(Theme.mono(10))
-                                .foregroundStyle(Theme.text3)
+                                .foregroundStyle(theme.text3)
                                 .lineLimit(1)
                                 .truncationMode(.head)
                         }
@@ -272,7 +273,7 @@ private struct ActivityRail: View {
         return Button { model.pane = pane } label: {
             Image(systemName: pane.icon)
                 .font(.system(size: 16, weight: .light))
-                .foregroundStyle(selected ? Theme.text : Theme.text3)
+                .foregroundStyle(selected ? theme.text : theme.text3)
                 .frame(width: 46, height: 40)
                 .overlay(alignment: .leading) {
                     Rectangle()
@@ -308,7 +309,7 @@ private struct TabBar: View {
         }
         .frame(height: 34)
         .background(theme.chrome)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 
     private func item(_ tab: StudioTab) -> some View {
@@ -317,12 +318,12 @@ private struct TabBar: View {
             StatusDot(color: dotColor(tab), size: 5)
             Text(tab.title)
                 .font(Theme.ui(12))
-                .foregroundStyle(selected ? Theme.text : Theme.text2)
+                .foregroundStyle(selected ? theme.text : theme.text2)
                 .lineLimit(1)
             Button { model.closeTab(id: tab.id) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
                     .padding(3)
                     .contentShape(Rectangle())
             }
@@ -331,11 +332,11 @@ private struct TabBar: View {
         .padding(.leading, 12)
         .padding(.trailing, 7)
         .frame(height: 34)
-        .background(selected ? Theme.bg : Color.clear)
+        .background(selected ? theme.surface : Color.clear)
         .overlay(alignment: .top) {
             Rectangle().fill(selected ? theme.accent : .clear).frame(height: 2)
         }
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.separator).frame(width: 1) }
+        .overlay(alignment: .trailing) { Rectangle().fill(theme.separator).frame(width: 1) }
         .contentShape(Rectangle())
         .onTapGesture { model.activeTabID = tab.id }
     }
@@ -346,15 +347,15 @@ private struct TabBar: View {
             switch model.engine.attention[tab.terminalKey] ?? .idle {
             case .working: return Theme.running
             case .waiting: return Theme.waiting
-            case .idle:    return Theme.idle
+            case .idle:    return theme.idle
             }
         case .service:
-            guard let id = UUID(uuidString: tab.ref) else { return Theme.idle }
+            guard let id = UUID(uuidString: tab.ref) else { return theme.idle }
             return (model.engine.serviceStatus[id] ?? .stopped).color
         case .terminal, .script:
-            return model.engine.isLive(tab.terminalKey) ? Theme.running : Theme.idle
+            return model.engine.isLive(tab.terminalKey) ? Theme.running : theme.idle
         case .command:      return theme.accent.opacity(0.7)
-        case .skill, .cron: return Theme.text3
+        case .skill, .cron: return theme.text3
         }
     }
 }
@@ -368,7 +369,7 @@ private struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            Text(model.project.name).foregroundStyle(Theme.text2)
+            Text(model.project.name).foregroundStyle(theme.text2)
 
             // What a session is running right now, and whose capability it is — the
             // skill may belong to this project, a linked one, or your global set.
@@ -376,7 +377,7 @@ private struct StatusBar: View {
                 HStack(spacing: 5) {
                     StatusDot(color: theme.accent, size: 5)
                     Text("using \(running.display) · \(model.owner(of: running.name))")
-                        .foregroundStyle(Theme.text2)
+                        .foregroundStyle(theme.text2)
                 }
             }
 
@@ -389,7 +390,7 @@ private struct StatusBar: View {
                         Text(model.runs.running.count > 1
                              ? "running \(model.runs.running.count) skills"
                              : "running \(skill)")
-                            .foregroundStyle(Theme.text2)
+                            .foregroundStyle(theme.text2)
                     }
                 }
                 .buttonStyle(.plain)
@@ -407,10 +408,10 @@ private struct StatusBar: View {
             }
         }
         .font(Theme.mono(10.5))
-        .foregroundStyle(Theme.text3)
+        .foregroundStyle(theme.text3)
         .padding(.horizontal, 12)
         .frame(height: 24)
         .background(theme.chrome)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 }

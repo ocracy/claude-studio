@@ -216,9 +216,13 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
 - **Project themes**: a project's palette (`ThemePreset` + a custom accent) lives in
   `.cs/settings.json` and reaches the interface through the `\.studioTheme`
   environment value — NEVER a mutable `Theme.accent`, because one process shows
-  several projects at once and a global would paint every window the same. `Theme`'s
-  semantic surfaces stay as they are; only the accent, the chrome wash and the
-  terminal are themed. `ProjectSettings` decodes by hand for the same reason
+  several projects at once and a global would paint every window the same. Inside a
+  project window read `theme.surface` / `theme.text` / `theme.separator` and never
+  `Theme.bg` and friends — a palette owns the whole window, and every surface is
+  derived from the two colors it already declares. A palette with no colors of its
+  own resolves to exactly `Theme`'s semantic values, which is what keeps the default
+  native in light and dark; the welcome screen and Settings belong to no project and
+  stay on `Theme`. `ProjectSettings` decodes by hand for the same reason
   `ProjectConfig` does: the synthesized decoder throws on the keys older files lack.
   Switching back to the default palette must actively restore SwiftTerm's own values
   (`Color.terminalAppColors`, `selectedControlColor`) — "install nothing" leaves the

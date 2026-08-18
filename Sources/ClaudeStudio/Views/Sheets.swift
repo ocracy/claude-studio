@@ -6,6 +6,7 @@ import AppKit
 /// Every Claude session of the project in one list: which are alive in tmux,
 /// which can be reopened — and unwanted ones are deleted here.
 struct SessionManager: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
 
@@ -14,23 +15,23 @@ struct SessionManager: View {
             HStack {
                 Text("Session manager")
                     .font(Theme.ui(15, .semibold))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                 Spacer()
                 Text(model.project.name)
                     .font(Theme.mono(11))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
             }
             .padding(.bottom, 4)
 
             Text("Open sessions live in tmux; closed ones keep their record and reopen under the same name.")
                 .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .padding(.bottom, 14)
 
             if model.sessions.isEmpty {
                 Text("No recorded sessions.")
                     .font(Theme.ui(12.5))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
                 ScrollView {
@@ -41,8 +42,8 @@ struct SessionManager: View {
                     }
                 }
                 .frame(height: 300)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.field)
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.separator)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.field)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(theme.separator)))
             }
 
             HStack(spacing: 10) {
@@ -63,23 +64,23 @@ struct SessionManager: View {
         }
         .padding(22)
         .frame(width: 560)
-        .background(Theme.bg)
+        .background(theme.surface)
     }
 
     private func row(_ record: SessionRecord) -> some View {
         let live = model.liveSessions.contains(record.tmux)
         return HStack(spacing: 10) {
-            StatusDot(color: live ? Theme.running : Theme.idle)
+            StatusDot(color: live ? Theme.running : theme.idle)
             VStack(alignment: .leading, spacing: 2) {
-                Text(record.name).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
+                Text(record.name).font(Theme.ui(12.5)).foregroundStyle(theme.text)
                 Text("\(record.tmux) · \(record.lastUsed.relative)")
                     .font(Theme.mono(10.5))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
             }
             Spacer()
             Text(live ? "open" : (model.canResume(record) ? "resumable" : "closed"))
                 .font(Theme.ui(10.5))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             SmallButton(title: live ? "Close" : "Open") {
                 live ? model.closeSession(record) : model.openSession(record)
             }
@@ -169,16 +170,16 @@ struct LinkEditor: View {
             Text("A link lets this project's sessions see the other project: its skills and "
                  + "commands, its services and their output, and its files.")
                 .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.text2)
+                .foregroundStyle(theme.text2)
                 .fixedSize(horizontal: false, vertical: true)
 
             Field(label: "project") {
                 if let chosen {
                     HStack(spacing: 8) {
-                        Text(chosen.name).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
+                        Text(chosen.name).font(Theme.ui(12.5)).foregroundStyle(theme.text)
                         Text(chosen.displayPath)
                             .font(Theme.mono(11))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                             .lineLimit(1)
                             .truncationMode(.head)
                         Spacer()
@@ -196,13 +197,13 @@ struct LinkEditor: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "folder")
                                             .font(.system(size: 10))
-                                            .foregroundStyle(Theme.text3)
+                                            .foregroundStyle(theme.text3)
                                         Text(candidate.name)
                                             .font(Theme.ui(12.5))
-                                            .foregroundStyle(Theme.text)
+                                            .foregroundStyle(theme.text)
                                         Text(candidate.displayPath)
                                             .font(Theme.mono(10.5))
-                                            .foregroundStyle(Theme.text3)
+                                            .foregroundStyle(theme.text3)
                                             .lineLimit(1)
                                             .truncationMode(.head)
                                         Spacer()
@@ -233,7 +234,7 @@ struct LinkEditor: View {
                  : "Read-only: sessions can list its capabilities, read its files and watch its "
                    + "services, but not change anything.")
                 .font(Theme.ui(11))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let failure {
@@ -262,6 +263,7 @@ struct LinkEditor: View {
 /// own validation and scope handling stay authoritative; an existing server is shown
 /// read-only with the actions that only its CLI can perform.
 struct MCPEditor: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     @State var server: MCPServer
     let onDismiss: () -> Void
@@ -336,7 +338,7 @@ struct MCPEditor: View {
                 }
                 Text(server.scope.help)
                     .font(Theme.ui(11))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
 
                 if let failure {
                     Text(failure)
@@ -367,7 +369,7 @@ struct MCPEditor: View {
                 }
                 Text("Edit a server by removing it and adding it again — `claude mcp` has no update verb.")
                     .font(Theme.ui(11))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -384,7 +386,7 @@ struct MCPEditor: View {
             SectionLabel(text: key)
             Text(value)
                 .font(Theme.mono(11.5))
-                .foregroundStyle(Theme.text2)
+                .foregroundStyle(theme.text2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -426,6 +428,7 @@ struct MCPEditor: View {
 // MARK: - Script settings
 
 struct ScriptEditor: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     @State var script: ProjectScript
     let isNew: Bool
@@ -450,7 +453,7 @@ struct ScriptEditor: View {
             DirectoryField(projectPath: model.project.path, path: $script.cwd)
             Text("Runs once in its own tab and shows the exit code in place. No port, no auto-start.")
                 .font(Theme.ui(11))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -528,7 +531,7 @@ struct ScheduleEditor: View {
 
             Text("Runs \(schedule.summary); launchd takes over even while the app is closed. The report is written to `.cs/runs/\(schedule.skill)/`.")
                 .font(Theme.ui(11))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -542,6 +545,7 @@ struct ScheduleEditor: View {
 // MARK: - Shared shell
 
 struct SheetShell<Content: View>: View {
+    @Environment(\.studioTheme) private var theme
     let title: String
     var destructive: (String, () -> Void)?
     let confirm: (String, () -> Void)
@@ -552,7 +556,7 @@ struct SheetShell<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
                 .font(Theme.ui(15, .semibold))
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(theme.text)
 
             VStack(alignment: .leading, spacing: 12) {
                 content()
@@ -568,7 +572,7 @@ struct SheetShell<Content: View>: View {
                 }
                 Spacer()
                 Button(action: onDismiss) {
-                    Text("Cancel").font(Theme.ui(11.5)).foregroundStyle(Theme.text3)
+                    Text("Cancel").font(Theme.ui(11.5)).foregroundStyle(theme.text3)
                 }
                 .buttonStyle(.plain)
                 SmallButton(title: confirm.0, prominent: true, action: confirm.1)
@@ -577,7 +581,7 @@ struct SheetShell<Content: View>: View {
         }
         .padding(22)
         .frame(width: 440)
-        .background(Theme.bg)
+        .background(theme.surface)
     }
 }
 
@@ -591,6 +595,7 @@ struct SheetShell<Content: View>: View {
 /// "add a worker for the queue" or "this one should not auto-start" goes — the same
 /// session keeps talking, because the file is the interface, not a form.
 struct ClaudeMaker: View {
+    @Environment(\.studioTheme) private var theme
     enum Kind { case services, scripts }
 
     @ObservedObject var model: StudioModel
@@ -632,7 +637,7 @@ struct ClaudeMaker: View {
                    onDismiss: onDismiss) {
             Text(explanation)
                 .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.text2)
+                .foregroundStyle(theme.text2)
                 .fixedSize(horizontal: false, vertical: true)
 
             Field(label: "what should it do?") {
@@ -640,7 +645,7 @@ struct ClaudeMaker: View {
                     if request.isEmpty {
                         Text(placeholder)
                             .font(Theme.ui(12))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                             .padding(.top, 2)
                             .allowsHitTesting(false)
                     }
@@ -653,7 +658,7 @@ struct ClaudeMaker: View {
 
             Text("Leave it empty to let Claude decide what this project needs.")
                 .font(Theme.ui(11))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
         }
     }
 
@@ -720,6 +725,7 @@ struct DirectoryField: View {
 }
 
 struct Field<Content: View>: View {
+    @Environment(\.studioTheme) private var theme
     let label: String
     @ViewBuilder var content: () -> Content
 
@@ -731,9 +737,9 @@ struct Field<Content: View>: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Theme.field)
+                        .fill(theme.field)
                         .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(Theme.separator))
+                            .strokeBorder(theme.separator))
                 )
         }
         .frame(maxWidth: .infinity, alignment: .leading)

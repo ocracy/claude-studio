@@ -27,7 +27,7 @@ struct CommandPalette: View {
                 if results.isEmpty {
                     Text("No matches")
                         .font(Theme.ui(12))
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(theme.text3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
@@ -38,9 +38,9 @@ struct CommandPalette: View {
             .frame(width: 620)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Theme.chrome)
+                    .fill(theme.chromeBase)
                     .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Theme.separator))
+                        .strokeBorder(theme.separator))
                     .shadow(color: .black.opacity(0.28), radius: 28, y: 12)
             )
             .padding(.top, 70)
@@ -58,7 +58,7 @@ struct CommandPalette: View {
         HStack(spacing: 9) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             TextField("Search sessions, skills, services, workspaces…", text: $query)
                 .textFieldStyle(.plain)
                 .font(Theme.ui(14))
@@ -67,7 +67,7 @@ struct CommandPalette: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 
     private var list: some View {
@@ -94,34 +94,34 @@ struct CommandPalette: View {
         HStack(spacing: 10) {
             Image(systemName: item.icon)
                 .font(.system(size: 12))
-                .foregroundStyle(selected ? theme.accent : Theme.text3)
+                .foregroundStyle(selected ? theme.accent : theme.text3)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .font(Theme.ui(12.5))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                     .lineLimit(1)
                 if !item.subtitle.isEmpty {
                     Text(item.subtitle)
                         .font(Theme.ui(10.5))
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(theme.text3)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
             Text(item.group)
                 .font(Theme.ui(10))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             if !item.shortcut.isEmpty {
                 Text(item.shortcut)
                     .font(Theme.mono(10))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 6)
-            .fill(selected ? Theme.selection : .clear))
+            .fill(selected ? theme.selection : .clear))
         .contentShape(Rectangle())
     }
 

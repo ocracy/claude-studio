@@ -214,16 +214,71 @@ struct StudioTheme: Equatable {
         return luminance > 0.6 ? Color.black.opacity(0.8) : .white
     }
 
-    /// Chrome surfaces: the window background plus a faint wash of the accent.
+    /// Chrome surfaces: the sidebar and bar background plus a faint wash of the accent.
     @ViewBuilder var chrome: some View {
         ZStack {
-            Theme.chrome
+            chromeBase
             if tintChrome && !isDefault { accent.opacity(0.07) }
         }
     }
 
     /// True when nothing has been chosen — the app looks exactly as it always has.
     var isDefault: Bool { preset.id == ThemePreset.claude.id && customAccentHex.isEmpty }
+
+    // MARK: - Surfaces
+    //
+    // A palette that brings its own colors owns the whole window, not just the
+    // terminal: a report or a skill rendered in system grey next to a Dracula
+    // terminal reads as two applications. Everything here derives from the two
+    // colors the palette already declares, so a theme needs no extra values, and a
+    // palette that follows the system resolves to `Theme`'s semantic colors exactly
+    // — the default appearance is untouched, light and dark included.
+
+    /// True when the palette carries colors of its own.
+    var isThemed: Bool { !preset.followsSystem }
+
+    /// Main content background — the pane a report, a skill or a terminal sits in.
+    var surface: Color { isThemed ? Color(nsColor: terminalBG) : Theme.bg }
+
+    /// Sidebar, top bar, status bar. A step away from the surface so the two read
+    /// as separate planes, in whichever direction the palette is lit.
+    var chromeBase: Color {
+        guard isThemed else { return Theme.chrome }
+        return Color(nsColor: terminalBG.shifted(by: isLight ? -0.035 : 0.030))
+    }
+
+    var text: Color  { isThemed ? Color(nsColor: terminalFG) : Theme.text }
+    var text2: Color { isThemed ? Color(nsColor: terminalFG).opacity(0.72) : Theme.text2 }
+    var text3: Color { isThemed ? Color(nsColor: terminalFG).opacity(0.45) : Theme.text3 }
+
+    var separator: Color {
+        isThemed ? Color(nsColor: terminalFG).opacity(0.18) : Theme.separator
+    }
+    /// Card and input background.
+    var field: Color {
+        isThemed ? Color(nsColor: terminalBG.shifted(by: isLight ? -0.05 : 0.055)) : Theme.field
+    }
+    var hover: Color {
+        isThemed ? Color(nsColor: terminalFG).opacity(0.08) : Theme.hover
+    }
+    /// Selected row. Themed palettes tint it with the accent — that is the whole
+    /// point of an accent — while the default keeps macOS's own selection color.
+    var selection: Color {
+        isThemed ? accent.opacity(0.20) : Theme.selection
+    }
+
+    /// The "nothing is happening" dot. The status colors stay fixed — they are
+    /// saturated enough to read on any background — but this one is a label grey,
+    /// and a system grey on a Dracula pane is a dot nobody can see.
+    var idle: Color { isThemed ? text3 : Theme.idle }
+
+    /// Whether the palette is a light one, which decides which way its surfaces move.
+    private var isLight: Bool {
+        guard let rgb = terminalBG.usingColorSpace(.sRGB) else { return false }
+        return 0.2126 * rgb.redComponent
+             + 0.7152 * rgb.greenComponent
+             + 0.0722 * rgb.blueComponent > 0.5
+    }
 
     // MARK: Terminal
 
@@ -260,6 +315,20 @@ extension NSColor {
                   alpha:   1)
     }
 
+    /// Moves a color towards white (positive) or black (negative) by a fraction.
+    /// Used to derive a palette's second and third surfaces from its background.
+    func shifted(by amount: CGFloat) -> NSColor {
+        guard let rgb = usingColorSpace(.sRGB) else { return self }
+        func move(_ value: CGFloat) -> CGFloat {
+            min(1, max(0, amount >= 0 ? value + (1 - value) * amount
+                                      : value + value * amount))
+        }
+        return NSColor(srgbRed: move(rgb.redComponent),
+                       green: move(rgb.greenComponent),
+                       blue: move(rgb.blueComponent),
+                       alpha: rgb.alphaComponent)
+    }
+
     var hexString: String {
         guard let rgb = usingColorSpace(.sRGB) else { return "" }
         return String(format: "#%02X%02X%02X",
@@ -272,11 +341,12 @@ extension NSColor {
 /// Sidebar section heading.
 struct SectionLabel: View {
     let text: String
+    @Environment(\.studioTheme) private var studio
     var body: some View {
         Text(text.uppercased())
             .font(Theme.sectionLabel())
             .tracking(0.6)
-            .foregroundStyle(Theme.text3)
+            .foregroundStyle(studio.text3)
     }
 }
 
@@ -296,6 +366,7 @@ struct HoverRow<Content: View>: View {
     var radius: CGFloat = 5
     @ViewBuilder var content: () -> Content
     @State private var hovering = false
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         content()
@@ -303,7 +374,7 @@ struct HoverRow<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(selected ? Theme.selection : (hovering ? Theme.hover : .clear))
+                    .fill(selected ? theme.selection : (hovering ? theme.hover : .clear))
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
@@ -329,13 +400,13 @@ struct SmallButton: View {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(prominent ? theme.accent : (hovering ? Theme.hover : .clear))
+                    .fill(prominent ? theme.accent : (hovering ? theme.hover : .clear))
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(prominent ? .clear : Theme.separator)
+                            .strokeBorder(prominent ? .clear : theme.separator)
                     )
             )
-            .foregroundStyle(prominent ? theme.onAccent : Theme.text)
+            .foregroundStyle(prominent ? theme.onAccent : theme.text)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -346,17 +417,19 @@ struct SmallButton: View {
 struct IconButton: View {
     let icon: String
     var help: String = ""
-    var tint: Color = Theme.text2
+    /// nil = the theme's secondary label color; a value overrides it (status tints).
+    var tint: Color? = nil
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(hovering ? Theme.text : tint)
+                .foregroundStyle(hovering ? theme.text : (tint ?? theme.text2))
                 .frame(width: 22, height: 22)
-                .background(RoundedRectangle(cornerRadius: 5).fill(hovering ? Theme.hover : .clear))
+                .background(RoundedRectangle(cornerRadius: 5).fill(hovering ? theme.hover : .clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

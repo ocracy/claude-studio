@@ -164,13 +164,13 @@ struct Sidebar: View {
         HStack {
             Text(footerText)
                 .font(Theme.mono(10.5))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .lineLimit(1)
             Spacer()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.separator).frame(height: 1) }
+        .overlay(alignment: .top) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 
     private var footerText: String {
@@ -245,8 +245,8 @@ struct Sidebar: View {
                         .foregroundStyle(theme.accent)
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(title).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
-                        Text(detail).font(Theme.ui(10.5)).foregroundStyle(Theme.text3)
+                        Text(title).font(Theme.ui(12.5)).foregroundStyle(theme.text)
+                        Text(detail).font(Theme.ui(10.5)).foregroundStyle(theme.text3)
                     }
                     Spacer()
                 }
@@ -264,7 +264,7 @@ struct Sidebar: View {
             // made the pane look emptier than it is.
             Text("No open sessions.")
                 .font(Theme.ui(12))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 12)
@@ -281,11 +281,11 @@ struct Sidebar: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(record.name)
                                 .font(Theme.ui(12.5))
-                                .foregroundStyle(Theme.text)
+                                .foregroundStyle(theme.text)
                                 .lineLimit(1)
                             Text("\(model.attention(of: record).label) · \(record.lastUsed.relative)")
                                 .font(Theme.ui(10.5))
-                                .foregroundStyle(Theme.text3)
+                                .foregroundStyle(theme.text3)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 4)
@@ -312,7 +312,7 @@ struct Sidebar: View {
                 .padding(.bottom, 4)
             ForEach(model.pastSessions.prefix(8)) { record in
                 row(selected: false,
-                    dot: Theme.idle,
+                    dot: theme.idle,
                     title: record.name,
                     meta: model.canResume(record) ? "resumes conversation · \(record.lastUsed.relative)"
                                                   : "starts fresh · \(record.lastUsed.relative)",
@@ -339,7 +339,7 @@ struct Sidebar: View {
             .focused($renameFocused)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field)
+            .background(RoundedRectangle(cornerRadius: 5).fill(theme.field)
                 .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(theme.accent)))
             .onAppear { renameFocused = true }
             .onSubmit {
@@ -353,7 +353,7 @@ struct Sidebar: View {
         switch state {
         case .working: return Theme.running
         case .waiting: return Theme.waiting
-        case .idle:    return Theme.idle
+        case .idle:    return theme.idle
         }
     }
 
@@ -371,16 +371,16 @@ struct Sidebar: View {
             row(selected: model.activeTabID == "skill:\(skill.name)",
                 dot: inUse ? theme.accent
                      : model.runs.isRunning(skill.name) ? Theme.running
-                     : (last?.status.color ?? Theme.idle),
+                     : (last?.status.color ?? theme.idle),
                 title: skill.name,
                 meta: skillMeta(skill: skill, schedule: schedule, last: last),
                 trailing: {
                     if skill.scope == .global {
                         Text("global")
                             .font(.system(size: 9.5))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
-                            .background(Capsule().strokeBorder(Theme.separator))
+                            .background(Capsule().strokeBorder(theme.separator))
                     }
                     if schedule?.enabled == true {
                         Image(systemName: "clock").font(.system(size: 9.5))
@@ -423,7 +423,7 @@ struct Sidebar: View {
             let running = model.runs.isRunning(schedule.skill)
             row(selected: model.activeTabID == "cron:\(schedule.skill)",
                 dot: running ? Theme.running
-                     : schedule.enabled ? (last?.status.color ?? theme.accent) : Theme.idle,
+                     : schedule.enabled ? (last?.status.color ?? theme.accent) : theme.idle,
                 title: schedule.skill,
                 // A run in flight replaces the schedule summary: what it is doing now
                 // matters more than when it will do it next.
@@ -509,9 +509,9 @@ struct Sidebar: View {
                     trailing: {
                         Text(link.allowEdits ? "edits" : "read-only")
                             .font(.system(size: 9.5))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
-                            .background(Capsule().strokeBorder(Theme.separator))
+                            .background(Capsule().strokeBorder(theme.separator))
                     },
                     action: { WindowManager.shared.open(project: Project(path: link.path)) })
                     .contextMenu {
@@ -547,9 +547,9 @@ struct Sidebar: View {
                 trailing: {
                     Text(server.scope.label)
                         .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(theme.text3)
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
-                        .background(Capsule().strokeBorder(Theme.separator))
+                        .background(Capsule().strokeBorder(theme.separator))
                         .help(server.scope.help)
                 },
                 action: { mcpSheet = server })
@@ -588,9 +588,9 @@ struct Sidebar: View {
                     if command.scope == .global {
                         Text("global")
                             .font(.system(size: 9.5))
-                            .foregroundStyle(Theme.text3)
+                            .foregroundStyle(theme.text3)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
-                            .background(Capsule().strokeBorder(Theme.separator))
+                            .background(Capsule().strokeBorder(theme.separator))
                     }
                     IconButton(icon: "play.fill", help: "Run in a session") {
                         model.runClaudeCommand(command)
@@ -615,7 +615,7 @@ struct Sidebar: View {
         ForEach(model.store.config.scripts) { script in
             let key = "script:\(script.id.uuidString)"
             row(selected: model.activeTabID == key,
-                dot: model.engine.isLive(key) ? Theme.running : Theme.idle,
+                dot: model.engine.isLive(key) ? Theme.running : theme.idle,
                 title: script.name,
                 meta: script.command,
                 trailing: {
@@ -644,7 +644,7 @@ struct Sidebar: View {
         ForEach(model.store.config.terminals) { terminal in
             let key = "terminal:\(terminal.id.uuidString)"
             row(selected: model.activeTabID == key,
-                dot: model.engine.isLive(key) ? Theme.running : Theme.idle,
+                dot: model.engine.isLive(key) ? Theme.running : theme.idle,
                 title: terminal.name,
                 meta: terminal.cwd.nilIfEmpty ?? model.project.displayPath,
                 action: { model.openTerminal(terminal) })
@@ -669,12 +669,12 @@ struct Sidebar: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title)
                             .font(Theme.ui(12.5))
-                            .foregroundStyle(Theme.text)
+                            .foregroundStyle(theme.text)
                             .lineLimit(1)
                         if !meta.isEmpty {
                             Text(meta)
                                 .font(Theme.ui(10.5))
-                                .foregroundStyle(Theme.text3)
+                                .foregroundStyle(theme.text3)
                                 .lineLimit(1)
                         }
                     }
@@ -689,7 +689,7 @@ struct Sidebar: View {
     private func emptyHint(_ text: String, action: String,
                            perform: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(text).font(Theme.ui(12)).foregroundStyle(Theme.text3)
+            Text(text).font(Theme.ui(12)).foregroundStyle(theme.text3)
             Button(action: perform) {
                 Text(action).font(Theme.ui(11.5)).foregroundStyle(theme.accent)
             }
@@ -705,6 +705,7 @@ struct Sidebar: View {
 /// The list behind the "+" button: start a new session, or bring a closed one
 /// back under the same name.
 private struct SessionOpener: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
     @State private var name = ""
@@ -719,8 +720,8 @@ private struct SessionOpener: View {
                     .textFieldStyle(.plain)
                     .font(Theme.ui(12.5))
                     .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field)
-                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.separator)))
+                    .background(RoundedRectangle(cornerRadius: 5).fill(theme.field)
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(theme.separator)))
                     .onSubmit(create)
                 SmallButton(title: "Open", prominent: true, action: create)
             }
@@ -744,17 +745,17 @@ private struct SessionOpener: View {
                                         Image(systemName: model.canResume(record)
                                               ? "arrow.uturn.backward" : "bubble.left")
                                             .font(.system(size: 10))
-                                            .foregroundStyle(Theme.text3)
+                                            .foregroundStyle(theme.text3)
                                             .frame(width: 14)
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text(record.name)
                                                 .font(Theme.ui(12.5))
-                                                .foregroundStyle(Theme.text)
+                                                .foregroundStyle(theme.text)
                                             Text(model.canResume(record)
                                                  ? "resumes conversation · \(record.lastUsed.relative)"
                                                  : "starts fresh · \(record.lastUsed.relative)")
                                                 .font(Theme.ui(10.5))
-                                                .foregroundStyle(Theme.text3)
+                                                .foregroundStyle(theme.text3)
                                         }
                                         Spacer()
                                     }
@@ -784,6 +785,7 @@ private struct SessionOpener: View {
 /// conversations that were never started from Claude Studio. Picking one resumes
 /// it (`claude --resume <sid>`) in a session of its own.
 private struct TranscriptOpener: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
     @State private var transcripts: [ClaudeTranscripts.Transcript] = []
@@ -797,12 +799,12 @@ private struct TranscriptOpener: View {
             if loading {
                 Text("Reading transcripts…")
                     .font(Theme.ui(11.5))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
                     .padding(.horizontal, 10).padding(.vertical, 12)
             } else if transcripts.isEmpty {
                 Text("Claude has not recorded a conversation in this project yet.")
                     .font(Theme.ui(11.5))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
                     .padding(.horizontal, 10).padding(.vertical, 12)
             } else {
                 ScrollView {
@@ -845,16 +847,16 @@ private struct TranscriptOpener: View {
             HStack(spacing: 8) {
                 Image(systemName: live ? "bubble.left.fill" : "arrow.uturn.backward")
                     .font(.system(size: 10))
-                    .foregroundStyle(live ? Theme.running : Theme.text3)
+                    .foregroundStyle(live ? Theme.running : theme.text3)
                     .frame(width: 14)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(transcript.title)
                         .font(Theme.ui(12.5))
-                        .foregroundStyle(Theme.text)
+                        .foregroundStyle(theme.text)
                         .lineLimit(1)
                     Text("\(live ? "open" : "resume") · \(transcript.modified.relative) · \(transcript.id.prefix(8))")
                         .font(Theme.mono(10))
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(theme.text3)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)

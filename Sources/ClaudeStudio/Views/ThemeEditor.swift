@@ -38,7 +38,7 @@ struct ThemeEditor: View {
             footer
         }
         .frame(width: 520)
-        .background(Theme.bg)
+        .background(theme.surface)
     }
 
     // MARK: - Header
@@ -47,10 +47,10 @@ struct ThemeEditor: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("Appearance")
                 .font(Theme.ui(15, .semibold))
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(theme.text)
             Text(model.project.name)
                 .font(Theme.ui(12))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             Spacer()
         }
         .padding(.horizontal, 22)
@@ -75,7 +75,7 @@ struct ThemeEditor: View {
                         .frame(width: 7, height: 7)
                     Text(preset.name)
                         .font(Theme.ui(11.5, selected ? .semibold : .regular))
-                        .foregroundStyle(Theme.text)
+                        .foregroundStyle(theme.text)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if selected {
@@ -88,11 +88,11 @@ struct ThemeEditor: View {
                 .padding(.vertical, 7)
             }
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.field)
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(theme.field)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(selected ? theme.accent : Theme.separator,
+                    .strokeBorder(selected ? theme.accent : theme.separator,
                                   lineWidth: selected ? 1.5 : 1)
             )
             .contentShape(Rectangle())
@@ -107,7 +107,7 @@ struct ThemeEditor: View {
         let fg = NSColor(hex: preset.fgHex).map { Color(nsColor: $0) } ?? Color(nsColor: .labelColor)
         let swatches = preset.ansi.isEmpty
             ? [Theme.danger, Theme.running, Theme.warning, Theme.accent,
-               Theme.waiting, Theme.idle, Theme.text2, Theme.text3]
+               Theme.waiting, Theme.idle, theme.text2, theme.text3]
             : (1...8).map { Color(nsColor: NSColor(hex: preset.ansi[$0]) ?? .gray) }
 
         return VStack(alignment: .leading, spacing: 5) {
@@ -134,7 +134,7 @@ struct ThemeEditor: View {
             HStack(spacing: 10) {
                 Text("Accent")
                     .font(Theme.ui(12.5))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                     .frame(width: 96, alignment: .leading)
 
                 ColorPicker("", selection: accentBinding, supportsOpacity: false)
@@ -144,7 +144,7 @@ struct ThemeEditor: View {
                      ? "from \(theme.preset.name)"
                      : theme.customAccentHex)
                     .font(Theme.mono(11))
-                    .foregroundStyle(Theme.text3)
+                    .foregroundStyle(theme.text3)
 
                 Spacer()
 
@@ -159,13 +159,13 @@ struct ThemeEditor: View {
             HStack(spacing: 10) {
                 Text("Window tint")
                     .font(Theme.ui(12.5))
-                    .foregroundStyle(Theme.text)
+                    .foregroundStyle(theme.text)
                     .frame(width: 96, alignment: .leading)
                 Toggle("Wash the sidebar and bars with the accent", isOn: tintBinding)
                     .toggleStyle(.switch)
                     .tint(theme.accent)
                     .font(Theme.ui(12))
-                    .foregroundStyle(Theme.text2)
+                    .foregroundStyle(theme.text2)
                 Spacer()
             }
         }
@@ -199,7 +199,7 @@ struct ThemeEditor: View {
         HStack {
             Text("Saved in .cs/settings.json")
                 .font(Theme.ui(11))
-                .foregroundStyle(Theme.text3)
+                .foregroundStyle(theme.text3)
             Spacer()
             SmallButton(title: "Done", prominent: true, action: onDismiss)
         }
