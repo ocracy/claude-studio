@@ -7,6 +7,7 @@ import AppKit
 ///
 /// The list is built on demand, so a closed palette costs nothing.
 struct CommandPalette: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     @StateObject private var recents = Recents.shared
 
@@ -93,7 +94,7 @@ struct CommandPalette: View {
         HStack(spacing: 10) {
             Image(systemName: item.icon)
                 .font(.system(size: 12))
-                .foregroundStyle(selected ? Theme.accent : Theme.text3)
+                .foregroundStyle(selected ? theme.accent : Theme.text3)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
@@ -276,6 +277,10 @@ struct CommandPalette: View {
         out.append(PaletteItem(id: "check-mcp", icon: "stethoscope", group: "Action",
                                title: "Check MCP connections") {
             model.mcp.checkHealth()
+        })
+        out.append(PaletteItem(id: "appearance", icon: "paintpalette", group: "Action",
+                               title: "Appearance — project theme") {
+            model.themeSheetOpen = true
         })
         out.append(PaletteItem(id: "settings", icon: "gearshape", group: "Action",
                                title: "Settings", shortcut: "⌘,") {

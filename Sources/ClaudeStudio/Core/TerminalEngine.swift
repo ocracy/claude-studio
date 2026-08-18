@@ -130,6 +130,15 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     private var lastScrollSend = Date.distantPast
     private var pollTimer: Timer?
 
+    /// The project's palette. Set by `StudioModel`; every live view is repainted the
+    /// moment it changes, so picking a theme does not need the sessions restarted.
+    var theme: StudioTheme = .default {
+        didSet {
+            guard theme != oldValue else { return }
+            for view in views.values { paint(view) }
+        }
+    }
+
     private lazy var baseEnvironment: [String] = Self.buildEnvironment()
     /// Context for notification text; filled in by `StudioModel`.
     var projectName = ""
@@ -154,11 +163,36 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         v.processDelegate = self
         v.font = NSFont.monospacedSystemFont(
             ofSize: CGFloat(AppSettings.shared.terminalFontSize), weight: .regular)
-        v.nativeBackgroundColor = Theme.nsTermBG
-        v.nativeForegroundColor = Theme.nsTermFG
         v.getTerminal().changeScrollback(10_000)
+        paint(v)
         views[key] = v
         return v
+    }
+
+    /// Applies the project's palette to one view.
+    ///
+    /// The "no palette of its own" case must actively put SwiftTerm's own values back
+    /// — `terminalAppColors` and the caret and selection defaults it starts with —
+    /// or switching a project back to Claude would strand its sessions in the
+    /// previous theme's colors.
+    private func paint(_ v: StudioTerminalView) {
+        v.nativeBackgroundColor = theme.terminalBG
+        v.nativeForegroundColor = theme.terminalFG
+        v.caretColor = theme.isDefault ? .selectedControlColor : theme.accentNS
+        v.selectedTextBackgroundColor = theme.isDefault
+            ? NSColor(srgbRed: 0, green: 166 / 255, blue: 178 / 255, alpha: 1)
+            : theme.accentNS.withAlphaComponent(0.35)
+
+        let hexes = theme.terminalANSI
+        let palette: [SwiftTerm.Color] = hexes.count == 16
+            ? hexes.map { hex in
+                let c = NSColor(hex: hex)?.usingColorSpace(.sRGB) ?? .black
+                return SwiftTerm.Color(red8: UInt16(round(c.redComponent * 255)),
+                                       green8: UInt16(round(c.greenComponent * 255)),
+                                       blue8: UInt16(round(c.blueComponent * 255)))
+            }
+            : SwiftTerm.Color.terminalAppColors
+        v.installColors(palette)
     }
 
     func isLive(_ key: String) -> Bool { views[key]?.process?.running == true }

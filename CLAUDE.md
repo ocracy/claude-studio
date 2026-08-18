@@ -204,10 +204,21 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   `~/.claude/settings.json` that fails to parse.
 - **Concurrency**: values accumulated inside `Task.detached` are handed to
   `MainActor.run` as immutable copies (an error in the Swift 6 language mode).
+- **Project themes**: a project's palette (`ThemePreset` + a custom accent) lives in
+  `.cs/settings.json` and reaches the interface through the `\.studioTheme`
+  environment value — NEVER a mutable `Theme.accent`, because one process shows
+  several projects at once and a global would paint every window the same. `Theme`'s
+  semantic surfaces stay as they are; only the accent, the chrome wash and the
+  terminal are themed. `ProjectSettings` decodes by hand for the same reason
+  `ProjectConfig` does: the synthesized decoder throws on the keys older files lack.
+  Switching back to the default palette must actively restore SwiftTerm's own values
+  (`Color.terminalAppColors`, `selectedControlColor`) — "install nothing" leaves the
+  previous theme's colors in the running session.
 
 ## Design
 
 Restrained and native. Colors are macOS semantic colors, so light and dark appearance
-come for free; only the accent (Claude orange) and status colors are fixed. No
-decoration: system font in the UI, SF Mono in the terminal. New colors or metrics go
-in `Theme.swift` and nowhere else.
+come for free; the status colors are fixed and the accent is the project's own
+(Claude orange until one is picked). No decoration: system font in the UI, SF Mono in
+the terminal. New colors or metrics go in `Theme.swift` and nowhere else — including
+the palettes, which is why `ThemePreset.all` lives there.

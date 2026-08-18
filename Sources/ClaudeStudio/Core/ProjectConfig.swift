@@ -87,6 +87,48 @@ struct ProjectConfig: Codable, Equatable {
 struct ProjectSettings: Codable, Equatable {
     var sidebarWidth: Double = 260
     var lastView: String = "sessions"
+    /// `ThemePreset.id`. The project's palette — terminal colors and accent.
+    var themeID: String = ThemePreset.claude.id
+    /// `#RRGGBB` replacing the preset's accent. Empty = the preset's own.
+    var accentHex: String = ""
+    /// Wash the sidebar, top bar and status bar with the accent.
+    var tintChrome: Bool = true
+
+    init() {}
+
+    init(sidebarWidth: Double, lastView: String) {
+        self.sidebarWidth = sidebarWidth
+        self.lastView = lastView
+    }
+
+    /// Written by hand for the same reason `ProjectConfig`'s is: the synthesized
+    /// decoder throws on a missing key, and every settings file written before the
+    /// theme existed is missing three of them.
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? box.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        sidebarWidth = value(.sidebarWidth, 260.0)
+        lastView     = value(.lastView, "sessions")
+        themeID      = value(.themeID, ThemePreset.claude.id)
+        accentHex    = value(.accentHex, "")
+        tintChrome   = value(.tintChrome, true)
+    }
+
+    /// The resolved appearance this project is shown with.
+    var theme: StudioTheme {
+        StudioTheme(preset: .named(themeID), customAccentHex: accentHex, tintChrome: tintChrome)
+    }
+
+    /// The appearance of a project that is not open. The welcome screen marks its
+    /// recent projects with it, which is the point of giving them colors at all.
+    static func theme(of project: Project) -> StudioTheme {
+        guard let data = try? Data(contentsOf: Paths.settings(project)),
+              let settings = try? JSONDecoder().decode(ProjectSettings.self, from: data)
+        else { return .default }
+        return settings.theme
+    }
 }
 
 /// Loads the configuration, writes back only the section that changed and keeps

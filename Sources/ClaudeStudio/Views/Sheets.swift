@@ -95,6 +95,7 @@ struct SessionManager: View {
 // MARK: - Service settings
 
 struct ServiceEditor: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     @State var service: Service
     let isNew: Bool
@@ -126,7 +127,7 @@ struct ServiceEditor: View {
             }
             Toggle("Start automatically when the project opens", isOn: $service.autoStart)
                 .toggleStyle(.switch)
-                .tint(Theme.accent)
+                .tint(theme.accent)
                 .font(Theme.ui(12.5))
         }
         .onAppear { portText = service.port.map(String.init) ?? "" }
@@ -145,6 +146,7 @@ struct ServiceEditor: View {
 /// Links another local Claude project. Recent projects are offered first, because that
 /// is where the project you mean almost always is.
 struct LinkEditor: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
 
@@ -183,7 +185,7 @@ struct LinkEditor: View {
                         Button("change") { self.chosen = nil }
                             .buttonStyle(.plain)
                             .font(Theme.ui(11))
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(theme.accent)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
@@ -214,7 +216,7 @@ struct LinkEditor: View {
                         } label: {
                             Text("Choose a folder…")
                                 .font(Theme.ui(11.5))
-                                .foregroundStyle(Theme.accent)
+                                .foregroundStyle(theme.accent)
                                 .padding(.leading, 6)
                                 .padding(.top, 4)
                         }
@@ -224,7 +226,7 @@ struct LinkEditor: View {
             }
 
             Toggle("Allow edits in this project", isOn: $allowEdits)
-                .toggleStyle(.switch).tint(Theme.accent).font(Theme.ui(12.5))
+                .toggleStyle(.switch).tint(theme.accent).font(Theme.ui(12.5))
             Text(allowEdits
                  ? "The project joins your working directories, so your own Read and Edit tools "
                    + "work there. Sessions pick this up when they start — reopen an open session."
@@ -463,6 +465,7 @@ struct ScriptEditor: View {
 // MARK: - Schedule settings
 
 struct ScheduleEditor: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     @State var schedule: Schedule
     let onDismiss: () -> Void
@@ -521,7 +524,7 @@ struct ScheduleEditor: View {
             }
 
             Toggle("Schedule enabled", isOn: $schedule.enabled)
-                .toggleStyle(.switch).tint(Theme.accent).font(Theme.ui(12.5))
+                .toggleStyle(.switch).tint(theme.accent).font(Theme.ui(12.5))
 
             Text("Runs \(schedule.summary); launchd takes over even while the app is closed. The report is written to `.cs/runs/\(schedule.skill)/`.")
                 .font(Theme.ui(11))
@@ -671,6 +674,7 @@ struct ClaudeMaker: View {
 /// the system panel, or put back with one tap — all three, because a sibling
 /// directory is faster to type than to click through, and a deep one is not.
 struct DirectoryField: View {
+    @Environment(\.studioTheme) private var theme
     let projectPath: String
     @Binding var path: String
 
@@ -688,7 +692,7 @@ struct DirectoryField: View {
                     Button("project root") { path = projectPath }
                         .buttonStyle(.plain)
                         .font(Theme.ui(10.5))
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(theme.accent)
                 }
                 IconButton(icon: "folder", help: "Choose a folder…", action: choose)
             }

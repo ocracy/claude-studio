@@ -11,6 +11,10 @@ struct WelcomeView: View {
     @ObservedObject private var updater = Updater.shared
     @State private var query = ""
     @State private var sessionCounts: [String: Int] = [:]
+    /// Project path → its accent, read from each `.cs/settings.json` off the main
+    /// thread. The list is what these colors are for: telling projects apart before
+    /// one is even open.
+    @State private var accents: [String: Color] = [:]
     @FocusState private var searchFocused: Bool
 
     private var filtered: [Project] {
@@ -35,6 +39,7 @@ struct WelcomeView: View {
         .onAppear {
             recents.pruneMissing()
             loadSessionCounts()
+            loadAccents()
             searchFocused = true
         }
     }
@@ -171,6 +176,7 @@ struct WelcomeView: View {
         Button { onOpen(project) } label: {
             HoverRow(padding: EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)) {
                 HStack(spacing: 10) {
+                    StatusDot(color: accents[project.path] ?? Theme.accent, size: 7)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(project.name)
                             .font(Theme.ui(12.5, .medium))
@@ -219,6 +225,20 @@ struct WelcomeView: View {
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Each project's accent, read once in the background — the recents list can be
+    /// long and every entry means opening a small file.
+    private func loadAccents() {
+        let projects = recents.projects
+        Task.detached(priority: .utility) {
+            var found: [String: Color] = [:]
+            for project in projects {
+                found[project.path] = ProjectSettings.theme(of: project).accent
+            }
+            let result = found
+            await MainActor.run { self.accents = result }
+        }
     }
 
     /// Live session counts are read from tmux once, in the background.

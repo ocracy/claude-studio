@@ -97,6 +97,12 @@ final class StudioModel: ObservableObject {
     @Published var selectedRun: [String: String] = [:]
     /// ⌘P palette visibility.
     @Published var paletteOpen = false
+    /// Appearance sheet visibility. On the model rather than in the view, so the
+    /// command palette can open it too.
+    @Published var themeSheetOpen = false
+    /// This project's appearance. Handed to the interface through `\.studioTheme`
+    /// and to the terminals through `engine.theme`.
+    @Published private(set) var theme: StudioTheme = .default
     /// What the sessions of this project are running right now, from the hook monitor.
     var liveUsage: [(tab: String, usage: UsageEvent)] {
         UsageMonitor.shared.live
@@ -140,7 +146,23 @@ final class StudioModel: ObservableObject {
         self.engine = TerminalEngine()
         self.sidebarWidth = CGFloat(store.config.sidebarWidth)
         self.pane = Pane(rawValue: store.config.lastView) ?? .sessions
+        self.theme = store.config.settings.theme
         engine.projectName = project.name
+        engine.theme = theme
+    }
+
+    // MARK: - Appearance
+
+    /// Picks the project's palette. Written to `.cs/settings.json` and applied to the
+    /// live terminals at once — nothing has to be reopened.
+    func setTheme(presetID: String, accentHex: String, tintChrome: Bool) {
+        store.mutate {
+            $0.settings.themeID = presetID
+            $0.settings.accentHex = accentHex
+            $0.settings.tintChrome = tintChrome
+        }
+        theme = store.config.settings.theme
+        engine.theme = theme
     }
 
     // MARK: - Lifecycle

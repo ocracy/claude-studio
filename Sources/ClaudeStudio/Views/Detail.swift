@@ -78,6 +78,7 @@ private struct EmptyStudio: View {
 // MARK: - Terminal
 
 private struct TerminalPane: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let tab: StudioTab
     @State private var editingTitle = false
@@ -100,7 +101,7 @@ private struct TerminalPane: View {
         HStack(spacing: 8) {
             Image(systemName: "link")
                 .font(.system(size: 10))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(theme.accent)
             Text("Project links changed — reopen this session to apply them.")
                 .font(Theme.ui(11.5))
                 .foregroundStyle(Theme.text2)
@@ -126,7 +127,7 @@ private struct TerminalPane: View {
                     .frame(maxWidth: 260)
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field)
-                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.accent)))
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(theme.accent)))
                     .focused($titleFocused)
                     .onSubmit(commitRename)
                     .onExitCommand { editingTitle = false }
@@ -151,7 +152,7 @@ private struct TerminalPane: View {
                 HStack(spacing: 5) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(theme.accent)
                     Text("\(running.display) · \(model.owner(of: running.name))")
                         .font(Theme.ui(11))
                         .foregroundStyle(Theme.text2)
@@ -458,6 +459,7 @@ private struct ClaudeCommandPane: View {
 // MARK: - Schedule
 
 private struct CronPane: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let schedule: Schedule
     @State private var editing = false
@@ -466,7 +468,7 @@ private struct CronPane: View {
         VStack(spacing: 0) {
             PaneHeader(title: schedule.skill,
                        state: schedule.enabled ? schedule.summary : "paused",
-                       stateColor: schedule.enabled ? Theme.accent : Theme.idle,
+                       stateColor: schedule.enabled ? theme.accent : Theme.idle,
                        meta: schedule.enabled
                              ? "next · \(schedule.nextFire?.shortStamp ?? "—")" : "") {
                 SmallButton(title: "Run now", icon: "play.fill", prominent: true) {
@@ -491,6 +493,7 @@ private struct CronPane: View {
 // MARK: - Run list and output
 
 private struct RunList: View {
+    @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let skill: String
     /// Reports come from scheduled and manual runs; uses come from Claude's hooks.
@@ -552,7 +555,7 @@ private struct RunList: View {
                             Image(systemName: use.source == .user ? "character.cursor.ibeam"
                                                                   : "sparkles")
                                 .font(.system(size: 9.5))
-                                .foregroundStyle(Theme.accent)
+                                .foregroundStyle(theme.accent)
                                 .frame(width: 12)
                             Text(use.at.shortStamp)
                                 .font(Theme.mono(11))
@@ -685,6 +688,7 @@ private struct RunList: View {
 
 /// Section tabs under the header (like VS Code's editor sub-tabs).
 struct SubTabs: View {
+    @Environment(\.studioTheme) private var theme
     let items: [(String, String)]
     let selected: String
     let onSelect: (String) -> Void
@@ -700,7 +704,7 @@ struct SubTabs: View {
                         .frame(height: 30)
                         .overlay(alignment: .bottom) {
                             Rectangle()
-                                .fill(selected == value ? Theme.accent : .clear)
+                                .fill(selected == value ? theme.accent : .clear)
                                 .frame(height: 2)
                         }
                         .contentShape(Rectangle())

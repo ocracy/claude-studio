@@ -4,6 +4,7 @@ import AppKit
 /// Sidebar whose content follows the selected rail item.
 struct Sidebar: View {
     @ObservedObject var model: StudioModel
+    @Environment(\.studioTheme) private var theme
 
     @State private var serviceSheet: Service?
     @State private var addingService = false
@@ -45,7 +46,7 @@ struct Sidebar: View {
             footer
         }
         .frame(maxHeight: .infinity)
-        .background(Theme.chrome)
+        .background(theme.chrome)
         .onChange(of: model.pane) {
             if model.pane == .mcp { model.mcp.scan() }
             if model.pane == .commands { model.claudeCommands.scan(project: model.project) }
@@ -241,7 +242,7 @@ struct Sidebar: View {
                 HStack(spacing: 9) {
                     Image(systemName: icon)
                         .font(.system(size: 12))
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(theme.accent)
                         .frame(width: 16)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title).font(Theme.ui(12.5)).foregroundStyle(Theme.text)
@@ -339,7 +340,7 @@ struct Sidebar: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field)
-                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.accent)))
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(theme.accent)))
             .onAppear { renameFocused = true }
             .onSubmit {
                 model.renameSession(record, to: renameText)
@@ -368,7 +369,7 @@ struct Sidebar: View {
             let last = model.runs.latest(for: skill.name)
             let inUse = model.liveUsage.contains { $0.usage.name == skill.name }
             row(selected: model.activeTabID == "skill:\(skill.name)",
-                dot: inUse ? Theme.accent
+                dot: inUse ? theme.accent
                      : model.runs.isRunning(skill.name) ? Theme.running
                      : (last?.status.color ?? Theme.idle),
                 title: skill.name,
@@ -383,7 +384,7 @@ struct Sidebar: View {
                     }
                     if schedule?.enabled == true {
                         Image(systemName: "clock").font(.system(size: 9.5))
-                            .foregroundStyle(Theme.accent)
+                            .foregroundStyle(theme.accent)
                     }
                 },
                 action: { model.openSkill(skill) })
@@ -420,7 +421,7 @@ struct Sidebar: View {
         ForEach(model.store.config.schedules) { schedule in
             let last = model.runs.latest(for: schedule.skill)
             row(selected: model.activeTabID == "cron:\(schedule.skill)",
-                dot: schedule.enabled ? (last?.status.color ?? Theme.accent) : Theme.idle,
+                dot: schedule.enabled ? (last?.status.color ?? theme.accent) : Theme.idle,
                 title: schedule.skill,
                 meta: schedule.enabled
                       ? "\(schedule.summary) · next \(schedule.nextFire?.shortStamp ?? "—")"
@@ -493,7 +494,7 @@ struct Sidebar: View {
                 .padding(.bottom, 4)
             ForEach(model.links) { link in
                 row(selected: false,
-                    dot: link.exists ? (link.allowEdits ? Theme.accent : Theme.running)
+                    dot: link.exists ? (link.allowEdits ? theme.accent : Theme.running)
                                      : Theme.danger,
                     title: link.name,
                     meta: link.exists ? link.displayPath : "missing · \(link.displayPath)",
@@ -572,7 +573,7 @@ struct Sidebar: View {
         ForEach(model.claudeCommands.commands) { command in
             let inUse = model.liveUsage.contains { $0.usage.name == command.name }
             row(selected: model.activeTabID == "command:\(command.name)",
-                dot: inUse ? Theme.accent : Theme.accent.opacity(0.4),
+                dot: inUse ? theme.accent : theme.accent.opacity(0.4),
                 title: command.invocation,
                 meta: command.description ?? command.argumentHint ?? "",
                 trailing: {
@@ -682,7 +683,7 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(text).font(Theme.ui(12)).foregroundStyle(Theme.text3)
             Button(action: perform) {
-                Text(action).font(Theme.ui(11.5)).foregroundStyle(Theme.accent)
+                Text(action).font(Theme.ui(11.5)).foregroundStyle(theme.accent)
             }
             .buttonStyle(.plain)
         }

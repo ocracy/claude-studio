@@ -10,7 +10,7 @@ struct StudioView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar(model: model, onClose: onClose)
+            TopBar(model: model, onClose: onClose, onAppearance: { model.themeSheetOpen = true })
 
             HStack(spacing: 0) {
                 ActivityRail(model: model)
@@ -35,13 +35,19 @@ struct StudioView: View {
         .overlay {
             if model.paletteOpen { CommandPalette(model: model) }
         }
+        .sheet(isPresented: $model.themeSheetOpen) {
+            ThemeEditor(model: model, onDismiss: { model.themeSheetOpen = false })
+        }
+        // Everything below reads the project's accent from here; nothing consults a
+        // global, because a second window is showing a different project.
+        .environment(\.studioTheme, model.theme)
         .onDisappear { model.stop() }
     }
 
     /// The sidebar width is dragged to size and persisted in `.cs/settings.json`.
     private var sidebarHandle: some View {
         Rectangle()
-            .fill(draggingSidebar ? Theme.accent : Theme.separator)
+            .fill(draggingSidebar ? model.theme.accent : Theme.separator)
             .frame(width: 1)
             .overlay(Color.clear.frame(width: 7).contentShape(Rectangle()))
             .onHover { inside in
@@ -66,8 +72,10 @@ struct StudioView: View {
 private struct TopBar: View {
     @ObservedObject var model: StudioModel
     let onClose: () -> Void
+    let onAppearance: () -> Void
     @State private var menuOpen = false
     @ObservedObject private var updater = Updater.shared
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         HStack(spacing: 8) {
@@ -81,9 +89,9 @@ private struct TopBar: View {
 
             Button { menuOpen.toggle() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.text2)
+                    // The project's own color, right where its name is — this is what
+                    // tells two windows apart on a crowded screen.
+                    StatusDot(color: theme.accent, size: 7)
                     Text(model.project.name)
                         .font(Theme.ui(12.5, .medium))
                         .foregroundStyle(Theme.text)
@@ -99,7 +107,9 @@ private struct TopBar: View {
             .buttonStyle(.plain)
             .headerControl()
             .popover(isPresented: $menuOpen, arrowEdge: .bottom) {
-                ProjectMenu(model: model, onClose: { menuOpen = false; onClose() })
+                ProjectMenu(model: model,
+                            onAppearance: { menuOpen = false; onAppearance() },
+                            onClose: { menuOpen = false; onClose() })
             }
 
             Text(model.project.displayPath)
@@ -144,18 +154,22 @@ private struct TopBar: View {
         .frame(height: 42)
         // Empty header space zooms the window on a double-click, like a title bar;
         // the controls opt out through `headerControl()` (see HeaderDoubleClick).
-        .background(Theme.chrome)
+        .background(theme.chrome)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 }
 
 private struct ProjectMenu: View {
     @ObservedObject var model: StudioModel
+    let onAppearance: () -> Void
     let onClose: () -> Void
     @StateObject private var recents = Recents.shared
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
+            item("Appearance…", icon: "paintpalette",
+                 detail: theme.preset.name, tone: Theme.text) { onAppearance() }
             item("Reveal in Finder", icon: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([model.project.url])
             }
@@ -221,6 +235,7 @@ private struct ActivityRail: View {
     @ObservedObject var model: StudioModel
     @ObservedObject private var settings = AppSettings.shared
     @State private var dragging: StudioModel.Pane?
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         VStack(spacing: 4) {
@@ -249,7 +264,7 @@ private struct ActivityRail: View {
         .padding(.vertical, 8)
         .frame(width: 46)
         .frame(maxHeight: .infinity)
-        .background(Theme.chrome)
+        .background(theme.chrome)
     }
 
     private func button(_ pane: StudioModel.Pane) -> some View {
@@ -261,7 +276,7 @@ private struct ActivityRail: View {
                 .frame(width: 46, height: 40)
                 .overlay(alignment: .leading) {
                     Rectangle()
-                        .fill(selected ? Theme.accent : .clear)
+                        .fill(selected ? theme.accent : .clear)
                         .frame(width: 2)
                 }
                 .overlay(alignment: .topTrailing) {
@@ -281,6 +296,7 @@ private struct ActivityRail: View {
 
 private struct TabBar: View {
     @ObservedObject var model: StudioModel
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -291,7 +307,7 @@ private struct TabBar: View {
             }
         }
         .frame(height: 34)
-        .background(Theme.chrome)
+        .background(theme.chrome)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 
@@ -317,7 +333,7 @@ private struct TabBar: View {
         .frame(height: 34)
         .background(selected ? Theme.bg : Color.clear)
         .overlay(alignment: .top) {
-            Rectangle().fill(selected ? Theme.accent : .clear).frame(height: 2)
+            Rectangle().fill(selected ? theme.accent : .clear).frame(height: 2)
         }
         .overlay(alignment: .trailing) { Rectangle().fill(Theme.separator).frame(width: 1) }
         .contentShape(Rectangle())
@@ -337,7 +353,7 @@ private struct TabBar: View {
             return (model.engine.serviceStatus[id] ?? .stopped).color
         case .terminal, .script:
             return model.engine.isLive(tab.terminalKey) ? Theme.running : Theme.idle
-        case .command:      return Theme.accent.opacity(0.7)
+        case .command:      return theme.accent.opacity(0.7)
         case .skill, .cron: return Theme.text3
         }
     }
@@ -348,6 +364,7 @@ private struct TabBar: View {
 private struct StatusBar: View {
     @ObservedObject var model: StudioModel
     @ObservedObject private var usage = UsageMonitor.shared
+    @Environment(\.studioTheme) private var theme
 
     var body: some View {
         HStack(spacing: 16) {
@@ -357,7 +374,7 @@ private struct StatusBar: View {
             // skill may belong to this project, a linked one, or your global set.
             if let running = model.liveUsage.last?.usage {
                 HStack(spacing: 5) {
-                    StatusDot(color: Theme.accent, size: 5)
+                    StatusDot(color: theme.accent, size: 5)
                     Text("using \(running.display) · \(model.owner(of: running.name))")
                         .foregroundStyle(Theme.text2)
                 }
@@ -377,7 +394,7 @@ private struct StatusBar: View {
         .foregroundStyle(Theme.text3)
         .padding(.horizontal, 12)
         .frame(height: 24)
-        .background(Theme.chrome)
+        .background(theme.chrome)
         .overlay(alignment: .top) { Rectangle().fill(Theme.separator).frame(height: 1) }
     }
 }
