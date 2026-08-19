@@ -12,6 +12,7 @@ struct Sidebar: View {
     @State private var addingScript = false
     @State private var mcpSheet: MCPServer?
     @State private var linkSheet = false
+    @State private var editingLink: ProjectLink?
     @State private var mcpAddMenu = false
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
@@ -74,6 +75,9 @@ struct Sidebar: View {
         }
         .sheet(isPresented: $linkSheet) {
             LinkEditor(model: model) { linkSheet = false }
+        }
+        .sheet(item: $editingLink) { link in
+            LinkEditor(model: model, onDismiss: { editingLink = nil }, editing: link)
         }
         .sheet(isPresented: $sessionManager) {
             SessionManager(model: model) { sessionManager = false }
@@ -515,6 +519,7 @@ struct Sidebar: View {
                     },
                     action: { WindowManager.shared.open(project: Project(path: link.path)) })
                     .contextMenu {
+                        Button("Edit link…") { editingLink = link }
                         Button(link.allowEdits ? "Make read-only" : "Allow edits") {
                             model.setLinkEdits(link, allowed: !link.allowEdits)
                         }

@@ -31,7 +31,17 @@ let owner = ProjectReader(path: (projectPath as NSString).expandingTildeInPath)
 
 /// Links are re-read on every call, so linking or unlinking a project takes effect at
 /// once — no session restart, unlike file access.
-func links() -> [(name: String, path: String, allowEdits: Bool)] {
+struct Link {
+    let name: String
+    let path: String
+    let allowEdits: Bool
+    /// What the project is, and when to reach for it — answered by the user when the
+    /// link was made. Both may be empty; see `briefing`.
+    let role: String
+    let useWhen: String
+}
+
+func links() -> [Link] {
     let file = owner.url.appendingPathComponent(".cs/links.json")
     guard let data = try? Data(contentsOf: file),
           let array = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
@@ -40,7 +50,10 @@ func links() -> [(name: String, path: String, allowEdits: Bool)] {
         guard let path = entry.string("path") else { return nil }
         let expanded = (path as NSString).expandingTildeInPath
         let name = entry.string("name") ?? URL(fileURLWithPath: expanded).lastPathComponent
-        return (name, expanded, entry["allowEdits"] as? Bool ?? false)
+        return Link(name: name, path: expanded,
+                    allowEdits: entry["allowEdits"] as? Bool ?? false,
+                    role: entry.string("role") ?? "",
+                    useWhen: entry.string("useWhen") ?? "")
     }
 }
 
@@ -116,6 +129,44 @@ let runtimeProjectArgument: [String: Any] = [
                     + "it. Omit for this project."],
 ]
 
+/// What the session is told about the linked projects the moment this server connects.
+///
+/// The tools alone are not enough. A session can LIST a linked project's skills, but a
+/// skill's own description says when it fires inside its own project — not whether
+/// reaching across a link is the right move here. Nothing on disk answers that, so
+/// Claude Studio asks when the link is made and the answer is delivered here, in the
+/// server's instructions, which arrive without a tool call. A capability nobody knows
+/// the occasion for is a capability that never gets used, or gets used at the wrong
+/// moment; both are failures of the same missing sentence.
+///
+/// A link with nothing written about it falls back to the strict reading — by name
+/// only — because that is the safe half of the ambiguity.
+func briefing() -> String {
+    let all = links()
+    guard !all.isEmpty else {
+        return "No projects are linked to \(owner.name) yet. Link one in Claude Studio: "
+            + "MCP servers → + → Link a Claude project."
+    }
+    var lines = ["Projects linked to \(owner.name), and when to reach for them:"]
+    for link in all {
+        let reader = ProjectReader(path: link.path)
+        var line = "\n• \(link.name) — \(link.role.nilIfEmpty ?? "no description given")"
+        line += "\n  path: \(link.path)\(link.allowEdits ? " (you may edit its files)" : " (read-only)")"
+        line += "\n  use it: " + (link.useWhen.nilIfEmpty
+            ?? "only when the user asks for this project by name")
+        // Names, not descriptions: the occasion is the sentence above, and a dozen
+        // frontmatter blurbs here would bury it.
+        let skills = reader.skills().map(\.name)
+        if !skills.isEmpty {
+            let shown = skills.prefix(12).joined(separator: ", ")
+            line += "\n  skills: \(shown)"
+                + (skills.count > 12 ? " (+\(skills.count - 12) more)" : "")
+        }
+        lines.append(line)
+    }
+    return lines.joined(separator: "\n")
+}
+
 let server = MCPServer(
     name: "claude-studio-bridge",
     version: "1.0",
@@ -123,6 +174,8 @@ let server = MCPServer(
     Claude Studio links this project to other local Claude projects. Use \
     `linked_projects` to see them and `project_capabilities` to learn which skills, \
     commands, scripts and services a linked project has.
+
+    \(briefing())
 
     `project_runtime` and `read_output` answer for THIS project as well as the linked \
     ones, and they are the only way to see any of it: services, terminals and sessions \
@@ -167,6 +220,11 @@ let server = MCPServer(
                     "path": link.path,
                     "allow_edits": link.allowEdits,
                     "exists": reader.exists,
+                    // Answered by the user when the link was made — the occasion for
+                    // reaching across it, which no file in either project records.
+                    "role": link.role,
+                    "use_when": link.useWhen.nilIfEmpty
+                        ?? "only when the user asks for this project by name",
                 ]
                 if let claude = reader.claudeMarkdown { out["claude_md"] = claude }
                 return out

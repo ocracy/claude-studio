@@ -151,10 +151,17 @@ struct LinkEditor: View {
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
 
+    /// Set when an existing link is being edited rather than a new one made. The
+    /// project cannot change then — that would be a different link.
+    var editing: ProjectLink?
+
     @StateObject private var recents = Recents.shared
     @State private var chosen: Project?
     @State private var allowEdits = false
+    @State private var role = ""
+    @State private var useWhen = ""
     @State private var failure: String?
+    @State private var loaded = false
 
     private var candidates: [Project] {
         recents.projects.filter { candidate in
@@ -164,17 +171,27 @@ struct LinkEditor: View {
     }
 
     var body: some View {
-        SheetShell(title: "Link a Claude project",
-                   confirm: ("Link", link),
+        SheetShell(title: editing == nil ? "Link a Claude project" : "Edit link",
+                   confirm: (editing == nil ? "Link" : "Save", link),
                    onDismiss: onDismiss) {
-            Text("A link lets this project's sessions see the other project: its skills and "
-                 + "commands, its services and their output, and its files.")
+            Text("A link lets this project's sessions see the other project: its "
+                 + "capabilities, its services and their output, and its files.")
                 .font(Theme.ui(11.5))
                 .foregroundStyle(theme.text2)
                 .fixedSize(horizontal: false, vertical: true)
 
             Field(label: "project") {
-                if let chosen {
+                if let chosen, editing != nil {
+                    HStack(spacing: 8) {
+                        Text(chosen.name).font(Theme.ui(12.5)).foregroundStyle(theme.text)
+                        Text(chosen.displayPath)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(theme.text3)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                        Spacer()
+                    }
+                } else if let chosen {
                     HStack(spacing: 8) {
                         Text(chosen.name).font(Theme.ui(12.5)).foregroundStyle(theme.text)
                         Text(chosen.displayPath)
@@ -239,12 +256,46 @@ struct LinkEditor: View {
                 .foregroundStyle(theme.text3)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // A session can list a linked project's skills, but not know when reaching
+            // for one is right — a skill's description answers "when does this fire in
+            // its own project", which is a different question. Nothing on disk answers
+            // it, so it is asked here, once, and carried to every session afterwards.
+            Field(label: "what is it") {
+                TextField("the Laravel API behind banagore.com", text: $role)
+                    .textFieldStyle(.plain)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(theme.text)
+            }
+            Field(label: "when should its skills be used from here") {
+                TextField("when a change here needs the backend deployed too",
+                          text: $useWhen)
+                    .textFieldStyle(.plain)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(theme.text)
+            }
+            Text(useWhen.trimmingCharacters(in: .whitespaces).isEmpty
+                 ? "Both are optional. Left empty, sessions are told to reach for this "
+                   + "project only when you ask for it by name."
+                 : "Sessions are told this when they start, so they know when to reach "
+                   + "for it — and they still ask you before anything runs.")
+                .font(Theme.ui(11))
+                .foregroundStyle(theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+
             if let failure {
                 Text(failure)
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .onAppear {
+            guard !loaded, let editing else { return }
+            loaded = true
+            chosen = Project(path: editing.path, name: editing.name)
+            allowEdits = editing.allowEdits
+            role = editing.role
+            useWhen = editing.useWhen
         }
     }
 
@@ -253,7 +304,18 @@ struct LinkEditor: View {
             failure = "Pick a project first."
             return
         }
-        model.link(project: chosen, allowEdits: allowEdits) { ok, output in
+        let role = self.role.trimmingCharacters(in: .whitespacesAndNewlines)
+        let useWhen = self.useWhen.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if var existing = editing {
+            existing.allowEdits = allowEdits
+            existing.role = role
+            existing.useWhen = useWhen
+            model.store.updateLink(existing)
+            onDismiss()
+            return
+        }
+        model.link(project: chosen, allowEdits: allowEdits, role: role, useWhen: useWhen) { ok, output in
             if ok { onDismiss() } else { failure = output.nilIfEmpty ?? "Could not register the bridge." }
         }
     }

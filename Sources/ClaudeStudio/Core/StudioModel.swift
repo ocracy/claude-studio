@@ -534,12 +534,14 @@ final class StudioModel: ObservableObject {
 
     /// Links a project and makes sure the bridge is registered with Claude.
     func link(project other: Project, allowEdits: Bool,
+              role: String = "", useWhen: String = "",
               completion: ((Bool, String) -> Void)? = nil) {
         guard other.path != project.path else {
             completion?(false, "A project cannot be linked to itself.")
             return
         }
-        store.addLink(ProjectLink(project: other, allowEdits: allowEdits))
+        store.addLink(ProjectLink(project: other, allowEdits: allowEdits,
+                                  role: role, useWhen: useWhen))
         ProjectBridge.register(project: project, mcp: mcp) { ok, output in
             self.mcp.scan()
             completion?(ok, output)

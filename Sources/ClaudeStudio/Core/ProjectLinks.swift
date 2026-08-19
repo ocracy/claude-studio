@@ -16,6 +16,19 @@ struct ProjectLink: Identifiable, Hashable, Codable {
     /// skills.
     var allowEdits: Bool = false
 
+    /// What the other project IS, in one line — "the Laravel API behind banagore.com".
+    ///
+    /// A session can list a linked project's skills, but a skill's own description says
+    /// when it fires INSIDE its project, which is not the same question as when it
+    /// should be reached across a link. Nothing on disk answers that, so it is asked
+    /// once, when the link is made, and carried to every session afterwards.
+    var role: String = ""
+
+    /// When this project's skills should be reached from the linking project.
+    /// Empty means "only when the user asks for it by name", which is what the bridge
+    /// tells the session in the absence of anything better.
+    var useWhen: String = ""
+
     var url: URL { URL(fileURLWithPath: path) }
 
     var displayPath: String {
@@ -29,10 +42,30 @@ struct ProjectLink: Identifiable, Hashable, Codable {
             && isDirectory.boolValue
     }
 
-    init(project: Project, allowEdits: Bool = false) {
+    init(project: Project, allowEdits: Bool = false, role: String = "", useWhen: String = "") {
         self.name = project.name
         self.path = project.path
         self.allowEdits = allowEdits
+        self.role = role
+        self.useWhen = useWhen
+    }
+
+    /// Decoded by hand, for the reason every record in this app is: Swift's synthesized
+    /// decoder ignores property defaults and THROWS on a missing key. Every
+    /// `links.json` written before `role` and `useWhen` existed lacks both, and a throw
+    /// here does not lose a field — it fails the whole array and silently unlinks every
+    /// project the user had.
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? box.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        id         = value(.id, UUID())
+        path       = value(.path, "")
+        name       = value(.name, URL(fileURLWithPath: path).lastPathComponent)
+        allowEdits = value(.allowEdits, false)
+        role       = value(.role, "")
+        useWhen    = value(.useWhen, "")
     }
 }
 

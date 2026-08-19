@@ -119,6 +119,17 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   skill that asks a question can be answered; `wait_for_skill_run` returns "still
   running" on timeout rather than blocking. Two processes share the queue file, so both
   sides re-read immediately before writing — the `sessions.json` discipline.
+- **When to reach across a link**: `ProjectLink.role` and `.useWhen`, asked in the link
+  sheet and delivered in the bridge's MCP `instructions` — which arrive on connect,
+  with no tool call. The tools alone were never enough: a session can LIST a linked
+  project's skills, but a skill's own description says when it fires inside its own
+  project, not whether crossing a link is right here, and nothing on disk answers that.
+  A capability nobody knows the occasion for is never used, or used at the wrong
+  moment. Empty `useWhen` falls back to "only when the user asks for this project by
+  name" — the safe half of the ambiguity. `ProjectLink` decodes BY HAND for the usual
+  reason, and here it is load-bearing: the synthesized decoder ignores property
+  defaults and throws on a missing key, so shipping these two fields without it would
+  have failed the whole array and silently unlinked every project on upgrade.
 - **Reading what is running**: `project_runtime` and `read_output` answer for THIS
   project as well as the linked ones — deliberately asymmetric with `read_file`, which
   stays link-only because a session already has Read and Grep over its own tree. It has
