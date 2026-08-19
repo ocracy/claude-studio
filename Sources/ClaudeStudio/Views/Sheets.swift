@@ -230,7 +230,9 @@ struct LinkEditor: View {
                 .toggleStyle(.switch).tint(theme.accent).font(Theme.ui(12.5))
             Text(allowEdits
                  ? "The project joins your working directories, so your own Read and Edit tools "
-                   + "work there. Sessions pick this up when they start — reopen an open session."
+                   + "work there. Its skills stay out of the session on purpose — run those from "
+                   + "Claude Studio instead. Sessions pick this up when they start — reopen an "
+                   + "open session."
                  : "Read-only: sessions can list its capabilities, read its files and watch its "
                    + "services, but not change anything.")
                 .font(Theme.ui(11))

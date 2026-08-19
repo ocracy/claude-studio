@@ -329,6 +329,14 @@ final class StudioModel: ObservableObject {
         }
     }
 
+    /// The settings layer that grants a session file access to the writable links,
+    /// and the paths it covers (kept for `sessionGrants`, which the UI reads to show
+    /// what an open session was started with).
+    private func linkAccess() -> (dirs: [String], settings: String?) {
+        let links = store.writableLinks
+        return (links.map(\.path), LinkAccess.settingsFile(project: project, links: links))
+    }
+
     @discardableResult
     func newSession(name: String? = nil, prompt: String? = nil, autoRun: Bool = false,
                     extraEnv: [String: String] = [:]) -> SessionRecord {
@@ -336,11 +344,11 @@ final class StudioModel: ObservableObject {
         let record = SessionRecord.make(projectShortID: project.shortID, name: title)
         store.addSession(record)
         open(StudioTab(kind: .session, ref: record.tmux, title: title))
-        let grants = store.writableLinkPaths
+        let (grants, linkSettings) = linkAccess()
         sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
                             title: title, initialPrompt: prompt, autoRun: autoRun,
-                            extraEnv: extraEnv, addDirs: grants)
+                            extraEnv: extraEnv, linkSettings: linkSettings)
         liveSessions.insert(record.tmux)
         syncSessionContext()
         return record
@@ -370,10 +378,11 @@ final class StudioModel: ObservableObject {
             if ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid) { resume = sid }
         }
 
-        let grants = store.writableLinkPaths
+        let (grants, linkSettings) = linkAccess()
         sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
-                            title: record.name, resumeSID: resume, addDirs: grants)
+                            title: record.name, resumeSID: resume,
+                            linkSettings: linkSettings)
         store.touchSession(tmux: record.tmux)
         liveSessions.insert(record.tmux)
         syncSessionContext()
@@ -405,10 +414,11 @@ final class StudioModel: ObservableObject {
         store.addSession(record)
         open(StudioTab(kind: .session, ref: record.tmux, title: record.name))
 
-        let grants = store.writableLinkPaths
+        let (grants, linkSettings) = linkAccess()
         sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
-                            title: record.name, resumeSID: transcript.id, addDirs: grants)
+                            title: record.name, resumeSID: transcript.id,
+                            linkSettings: linkSettings)
         liveSessions.insert(record.tmux)
         syncSessionContext()
     }

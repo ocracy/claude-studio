@@ -11,8 +11,9 @@ struct ProjectLink: Identifiable, Hashable, Codable {
     var name: String
     var path: String
     /// Off by default: a link starts read-only, and granting write access is a
-    /// deliberate act. See `TerminalEngine.startSession`, which turns this into
-    /// `--add-dir`.
+    /// deliberate act. See `LinkAccess`, which turns this into
+    /// `permissions.additionalDirectories` — files only, never the other project's
+    /// skills.
     var allowEdits: Bool = false
 
     var url: URL { URL(fileURLWithPath: path) }

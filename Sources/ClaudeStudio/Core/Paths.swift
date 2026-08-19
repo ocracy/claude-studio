@@ -113,6 +113,15 @@ enum Paths {
         csDir(project).appendingPathComponent("settings.json")
     }
 
+    /// Generated settings layer handed to `claude --settings` (see `LinkAccess`).
+    /// It lives in Application Support, not in `.cs`: it is derived from the links
+    /// on every session start and belongs in the project's repository no more than
+    /// a tmux socket does.
+    static func linkAccess(_ project: Project) -> URL {
+        ensure(appSupport.appendingPathComponent("link-access", isDirectory: true))
+            .appendingPathComponent("\(project.shortID).json")
+    }
+
     /// Legacy single-file format; read once on open and split.
     static func legacyConfig(_ project: Project) -> URL {
         csDir(project).appendingPathComponent("config.json")

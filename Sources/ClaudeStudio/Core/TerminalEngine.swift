@@ -223,7 +223,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                       title: String, resumeSID: String? = nil,
                       initialPrompt: String? = nil, autoRun: Bool = false,
                       extraEnv: [String: String] = [:],
-                      addDirs: [String] = []) {
+                      linkSettings: String? = nil) {
         guard !starting.contains(key) else { return }
         let v = view(for: key)
         if v.process?.running == true { return }
@@ -244,17 +244,20 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         for (k, value) in hookEnv { env.append("\(k)=\(value)") }
 
         let trimmed = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Writable links become `--add-dir`, which is how Claude's own tools reach
-        // another project. It is read at startup only, so a link added later needs the
-        // session reopened — the UI says so rather than restarting behind your back.
-        let dirs = addDirs.map { " --add-dir \(Shell.quoted($0))" }.joined()
+        // Writable links reach Claude as `permissions.additionalDirectories` in a
+        // generated settings layer — NOT as `--add-dir`, which would drag the linked
+        // project's skills into this session's skill list (see `LinkAccess`). It is
+        // read at startup only, so a link added later needs the session reopened —
+        // the UI says so rather than restarting behind your back.
+        var flags = ""
+        if let file = linkSettings { flags += " --settings \(Shell.quoted(file))" }
         let claudeCommand: String
         if let sid = resumeSID {
-            claudeCommand = "claude\(dirs) --resume \(Shell.quoted(sid))"
+            claudeCommand = "claude\(flags) --resume \(Shell.quoted(sid))"
         } else if let prompt = trimmed, !prompt.isEmpty, autoRun {
-            claudeCommand = "claude\(dirs) \(Shell.quoted(prompt))"
+            claudeCommand = "claude\(flags) \(Shell.quoted(prompt))"
         } else {
-            claudeCommand = "claude\(dirs)"
+            claudeCommand = "claude\(flags)"
         }
         let inner = "cd \(Shell.quoted(project.path)) && exec \(claudeCommand)"
 

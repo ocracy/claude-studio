@@ -189,10 +189,13 @@ final class ProjectStore: ObservableObject {
     func script(_ id: UUID) -> ProjectScript? { config.scripts.first { $0.id == id } }
     func link(path: String) -> ProjectLink? { config.links.first { $0.path == path } }
 
-    /// Paths a session should be given file access to.
-    var writableLinkPaths: [String] {
-        config.links.filter { $0.allowEdits && $0.exists }.map(\.path)
+    /// Links a session should be given file access to (see `LinkAccess`).
+    var writableLinks: [ProjectLink] {
+        config.links.filter { $0.allowEdits && $0.exists }
     }
+
+    /// Paths a session should be given file access to.
+    var writableLinkPaths: [String] { writableLinks.map(\.path) }
     func terminal(_ id: UUID) -> TerminalTab? { config.terminals.first { $0.id == id } }
     func schedule(for skill: String) -> Schedule? { config.schedules.first { $0.skill == skill } }
 

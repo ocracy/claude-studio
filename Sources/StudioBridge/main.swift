@@ -6,7 +6,7 @@ import Foundation
 //
 // It never starts a second Claude and never spends tokens: everything it answers is
 // read from disk or from the app's tmux server. Code changes are made by the calling
-// session itself, through the file access a writable link grants (`--add-dir`).
+// session itself, through the file access a writable link grants (see `LinkAccess`).
 //
 // Usage: claude-studio-bridge --project /path/to/the/calling/project
 
@@ -90,12 +90,18 @@ let server = MCPServer(
     commands, scripts and services a linked project has, and `project_runtime` plus \
     `read_output` to see what its services and terminals are doing right now.
 
-    A linked project's skills and commands are plain markdown files: read the file at \
-    the `file` path the capabilities tool reports and follow it yourself. Do not expect \
-    `/command` to resolve — those belong to that project's own sessions.
-
     Links marked `allow_edits` are already in your working directories, so edit their \
     files with your normal tools. For read-only links use `read_file` and `search_files`.
+
+    A linked project's skills and commands are deliberately NOT in your skill list — \
+    they belong to that project, and a skill picked by name alone cannot be told apart \
+    from this project's own. `project_capabilities` reports them as markdown files \
+    instead. You may read one at its `file` path to answer a question about it, but do \
+    not carry out a linked project's deploy, release or migration by following its \
+    steps here: that runs another project's operation in this project's session, with \
+    the wrong configuration and no record. Say the user should run it from Claude \
+    Studio, which starts it in the project that owns it. Do not expect `/command` to \
+    resolve either — those belong to that project's own sessions.
     """,
     tools: [
         // MARK: linked_projects

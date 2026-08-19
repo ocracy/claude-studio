@@ -90,10 +90,20 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   runs: setting it from outside a moment later is a race a fast-failing service wins,
   and its output dies with the session. Status comes from `#{pane_dead}` +
   `#{pane_dead_status}` in the 1.5 s poll, not from `processTerminated`.
-- **Project links**: `.cs/links.json`. Only cwd loads a project's `.claude/`
-  configuration, so `--add-dir` grants file access but NOT the other project's skills or
-  commands — the bridge reports their file paths instead and the calling session reads
-  them. `--add-dir` is read at session start, hence the reopen hint.
+- **Project links**: `.cs/links.json`. A writable link grants file access through
+  `permissions.additionalDirectories` in a generated `--settings` layer (`LinkAccess`),
+  read at session start only, hence the reopen hint. **Never `--add-dir`**: it grants
+  the same files but ALSO loads the linked project's skills into this session's skill
+  list, and a `Skill` tool call carries only a name (`{"skill":"deploy"}`), never a
+  path — so with two projects defining `deploy`, nothing downstream can tell which one
+  ran: not the permission dialog, not a hook, not the transcript. `permissions.deny`
+  does not help; a denied skill is still listed. `additionalDirectories` grants read
+  AND write and loads no skills, which makes the guarantee structural rather than a
+  rule the model has to follow. `--settings` is MERGED, so the project's own
+  `.claude/settings.json` survives. Running a linked project's skill on purpose is
+  Claude Studio's job, from its own interface, in the project that owns it — never by
+  putting it in front of the model. The bridge's `project_capabilities` was never the
+  leak and still reports file paths for read-only links.
 - **The bridge binary** is copied from the bundle to `Paths.binDir` and registered from
   THERE: the updater replaces the whole bundle and the user can move the app, while an
   MCP entry stores an absolute path. `MCPStore.add` quotes the command — our path
