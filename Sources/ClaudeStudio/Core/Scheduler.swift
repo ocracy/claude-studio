@@ -98,6 +98,15 @@ enum Scheduler {
         STAMP=$(date +%Y-%m-%d-%H%M)
         export CS_REPORT_FILE="$CS_RUN_DIR/$STAMP.md"
 
+        # The conversation id is CHOSEN here, not read back afterwards: `claude -p`
+        # reveals its session id only in `--output-format json`, and this stream has
+        # to stay the readable thing the tab shows. Fixed in advance, every report
+        # gets a `<stamp>.session` sidecar next to it — that is what makes "continue"
+        # able to reopen the very conversation that wrote the report.
+        SID=$(uuidgen | tr 'A-Z' 'a-z')
+        export CS_RUN_SESSION_ID="$SID"
+        print -r -- "$SID" > "$CS_RUN_DIR/$STAMP.session"
+
         # Previous run context — the newest report other than this one.
         LAST=$(ls -1t "$CS_RUN_DIR"/*.md 2>/dev/null | grep -v "^$CS_REPORT_FILE$" | head -1)
         export CS_LAST_REPORT="${LAST:-}"
@@ -110,7 +119,7 @@ enum Scheduler {
         fi
 
         STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"reportFile\\":\\"$CS_REPORT_FILE\\"}" > "$STATE"
+        print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"reportFile\\":\\"$CS_REPORT_FILE\\",\\"sessionId\\":\\"$SID\\"}" > "$STATE"
 
         cd "$CS_PROJECT_PATH" || exit 1
         # `tee`, not a plain redirect: a manual run watches this script in a tab, and
@@ -118,12 +127,12 @@ enum Scheduler {
         # `--verbose` is what makes the stream worth watching — without it print mode
         # says nothing until the very end. `$CODE` must come from `pipestatus`, since
         # `$?` after a pipe is tee's.
-        claude -p \(Shell.quoted(prompt)) --permission-mode acceptEdits --verbose 2>&1 \\
+        claude -p \(Shell.quoted(prompt)) --session-id "$SID" --permission-mode acceptEdits --verbose 2>&1 \\
           | tee -a "$CS_RUN_DIR/.run.log"
         CODE=${pipestatus[1]}
 
         FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"finishedAt\\":\\"$FINISHED\\",\\"exitCode\\":$CODE,\\"reportFile\\":\\"$CS_REPORT_FILE\\"}" > "$STATE"
+        print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"finishedAt\\":\\"$FINISHED\\",\\"exitCode\\":$CODE,\\"reportFile\\":\\"$CS_REPORT_FILE\\",\\"sessionId\\":\\"$SID\\"}" > "$STATE"
 
         # Keep the log from growing without bound.
         tail -n 500 "$CS_RUN_DIR/.run.log" > "$CS_RUN_DIR/.run.log.tmp" 2>/dev/null \\

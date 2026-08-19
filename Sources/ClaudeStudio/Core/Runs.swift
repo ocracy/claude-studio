@@ -46,11 +46,22 @@ enum Runs {
             run.durationSec = fields["duration_sec"].flatMap(Double.init)
             run.trigger = fields["trigger"]?.nilIfEmpty
         }
+        // The conversation that wrote the report, so it can be continued. The
+        // sidecar is the runner's, not the skill's: a report written by hand — or by
+        // a skill that chose its own file name — has none, and the UI says so rather
+        // than resuming the wrong conversation.
+        run.sessionID = sessionID(forReport: url)
         if run.startedAt == nil {
             run.startedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate
         }
         return run
+    }
+
+    /// `<stamp>.session` next to `<stamp>.md`.
+    static func sessionID(forReport url: URL) -> String? {
+        let sidecar = url.deletingPathExtension().appendingPathExtension("session")
+        return (try? String(contentsOf: sidecar, encoding: .utf8))?.nilIfEmpty
     }
 
     /// The tail of `.run.log` — what the runner is printing right now.

@@ -946,6 +946,64 @@ final class StudioModel: ObservableObject {
         }
     }
 
+    /// Is the conversation behind this report still resumable?
+    ///
+    /// The sidecar alone is not enough: a run that died before Claude wrote anything
+    /// leaves an id with no transcript, and `--resume` on that prints "No session
+    /// found" and exits — the dead terminal `openSession` guards against as well.
+    func canContinue(_ run: SkillRun) -> Bool {
+        guard let sid = run.sessionID else { return false }
+        return ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid)
+    }
+
+    /// Picks the report's own conversation back up in a session tab.
+    ///
+    /// A report says what was found; the answer to it — "now fix that" — belongs to
+    /// the conversation that found it, which still holds everything it read. So this
+    /// resumes that very `session_id` rather than starting a session that would have
+    /// to rediscover the problem from the report's summary.
+    ///
+    /// The follow-up is TYPED, not sent: a scheduled run is unattended by definition,
+    /// and the first thing its conversation does when it comes back should be the
+    /// user's decision, not a message that was already on its way.
+    func continueRun(skill: String, run: SkillRun, prompt: String) {
+        guard let sid = run.sessionID else { return }
+        let message = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // One conversation, one tmux session: continuing the same report twice
+        // returns to the tab it opened the first time.
+        let record: SessionRecord
+        if let existing = sessions.first(where: { $0.claudeSID == sid }) {
+            record = existing
+        } else {
+            var made = SessionRecord.make(
+                projectShortID: project.shortID,
+                name: "\(skill) · \(run.startedAt?.shortStamp ?? run.fileStem)")
+            made.claudeSID = sid
+            store.addSession(made)
+            record = made
+        }
+
+        open(StudioTab(kind: .session, ref: record.tmux, title: record.name))
+
+        // Already attached and running: `startSession` would bail out at its own
+        // guard and the message would be typed into nothing.
+        if engine.isLive(record.tabKey) {
+            if !message.isEmpty { engine.send(key: record.tabKey, text: message) }
+            return
+        }
+
+        let (grants, linkSettings) = linkAccess()
+        sessionGrants[record.tabKey] = Set(grants)
+        engine.startSession(key: record.tabKey, session: record.tmux, project: project,
+                            title: record.name, resumeSID: sid,
+                            initialPrompt: message.nilIfEmpty,
+                            linkSettings: linkSettings)
+        store.touchSession(tmux: record.tmux)
+        liveSessions.insert(record.tmux)
+        syncSessionContext()
+    }
+
     func openCron(_ schedule: Schedule) {
         open(StudioTab(kind: .cron, ref: schedule.skill, title: schedule.skill))
         runs.refresh(skill: schedule.skill)

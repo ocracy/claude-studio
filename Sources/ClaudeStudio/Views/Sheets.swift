@@ -706,6 +706,84 @@ struct LinkedRunConfirm: View {
     }
 }
 
+// MARK: - Continue a run's conversation
+
+/// Answers a report in the conversation that wrote it.
+///
+/// A scheduled run finishes with nobody watching, and its findings are read hours
+/// later — at which point the obvious next sentence is "fix the thing you found".
+/// That sentence only means something to the session that did the looking, so this
+/// resumes that one instead of opening a fresh session which would have to
+/// rediscover everything from a 90-character summary.
+///
+/// The message is typed into the box and left there unsent: the run was
+/// unattended, and what happens the moment it wakes up is worth one look first.
+struct ContinueRunSheet: View {
+    @Environment(\.studioTheme) private var theme
+    @ObservedObject var model: StudioModel
+    let skill: String
+    let run: SkillRun
+    let onDismiss: () -> Void
+
+    @State private var message = ""
+
+    var body: some View {
+        SheetShell(title: "Continue this run",
+                   confirm: ("Continue", go),
+                   onDismiss: onDismiss) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(skill)
+                    .font(Theme.ui(14, .semibold))
+                    .foregroundStyle(theme.text)
+                HStack(spacing: 6) {
+                    StatusDot(color: run.status.color)
+                    Text(run.startedAt?.shortStamp ?? run.fileStem)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(theme.text3)
+                    if let trigger = run.trigger {
+                        Text("· \(trigger)").font(Theme.ui(11)).foregroundStyle(theme.text3)
+                    }
+                }
+                if let summary = run.summary {
+                    Text(summary)
+                        .font(Theme.ui(11.5))
+                        .foregroundStyle(theme.text2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+            }
+
+            Field(label: "what next?") {
+                ZStack(alignment: .topLeading) {
+                    if message.isEmpty {
+                        Text("Optional. For example: fix the first problem in the report.")
+                            .font(Theme.ui(12))
+                            .foregroundStyle(theme.text3)
+                            .padding(.top, 2)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $message)
+                        .font(Theme.ui(12.5))
+                        .scrollContentBackground(.hidden)
+                        .frame(height: 76)
+                }
+            }
+
+            Text("Opens the run's own conversation in a session tab — it still remembers "
+                 + "everything it read. The message is typed into the box for you but not "
+                 + "sent; press Enter when it looks right.")
+                .font(Theme.ui(11))
+                .foregroundStyle(theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func go() {
+        model.continueRun(skill: skill, run: run, prompt: message)
+        onDismiss()
+    }
+}
+
 /// A labelled form field.
 // MARK: - Ask Claude for services or scripts
 

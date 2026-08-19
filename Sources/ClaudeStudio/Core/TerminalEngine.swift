@@ -293,9 +293,13 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         }
 
         // With auto-run off the prompt is typed into the box but not sent — the
-        // user reviews and submits it.
-        if resumeSID == nil, !autoRun, let prompt = trimmed, !prompt.isEmpty {
-            after(1.6) { [weak self] in self?.send(key: key, text: prompt) }
+        // user reviews and submits it. A resumed conversation gets the same
+        // treatment, only later: replaying a transcript takes longer than a cold
+        // start, and text typed before the box exists lands nowhere.
+        if !autoRun, let prompt = trimmed, !prompt.isEmpty {
+            after(resumeSID == nil ? 1.6 : 3.0) { [weak self] in
+                self?.send(key: key, text: prompt)
+            }
         }
     }
 

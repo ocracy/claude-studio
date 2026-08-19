@@ -347,6 +347,10 @@ struct SkillRun: Identifiable, Hashable {
     var durationSec: Double?
     var body: String = ""
     var trigger: String?
+    /// Claude's `session_id` for the conversation that produced this report, from
+    /// the `<stamp>.session` sidecar the runner writes. It is what "continue"
+    /// resumes — a report that predates the sidecar simply has none.
+    var sessionID: String?
 
     var id: String { url.path }
     var fileStem: String { url.deletingPathExtension().lastPathComponent }
@@ -389,6 +393,7 @@ struct RunState: Codable {
     var finishedAt: Date?
     var exitCode: Int?
     var reportFile: String?
+    var sessionId: String?
 
     var isRunning: Bool { startedAt != nil && finishedAt == nil }
 }

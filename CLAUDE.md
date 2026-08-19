@@ -130,6 +130,23 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   reason, and here it is load-bearing: the synthesized decoder ignores property
   defaults and throws on a missing key, so shipping these two fields without it would
   have failed the whole array and silently unlinked every project on upgrade.
+- **Continuing a run**: a report says what was found, and the next sentence is almost
+  always "now fix it" — which only means something to the conversation that did the
+  looking. So the runner **chooses** the conversation id instead of reading it back:
+  `claude -p` reveals its `session_id` only under `--output-format json`, and that
+  stream has to stay the readable thing the tab shows. `uuidgen` → `--session-id` →
+  a `<stamp>.session` sidecar beside `<stamp>.md`, which `Runs.parse` picks up and
+  `StudioModel.continueRun` resumes. The sidecar is the runner's, never the skill's:
+  a report written by hand has none and the button simply does not appear, rather
+  than resuming the wrong conversation. `ClaudeTranscripts.exists` is still checked —
+  a run that died before Claude wrote anything leaves an id with no transcript. The
+  follow-up is TYPED into the box and left unsent (`initialPrompt` now also applies
+  to a resume, at 3 s rather than 1.6 — replaying a transcript is slower than a cold
+  start): the run was unattended, so what it does on waking up is a decision worth
+  one look. An already-attached tab is fed the text directly — `startSession` bails
+  at its own "process is running" guard and the message would go nowhere. Runner
+  scripts are regenerated on project open (`ProjectConfig.refreshRunners`), or a
+  schedule set before this shipped would keep running the old script forever.
 - **Reading what is running**: `project_runtime` and `read_output` answer for THIS
   project as well as the linked ones — deliberately asymmetric with `read_file`, which
   stays link-only because a session already has Read and Grep over its own tree. It has

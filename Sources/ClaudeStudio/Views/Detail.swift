@@ -513,6 +513,8 @@ private struct RunList: View {
     @State private var watchingLive = false
     @State private var liveLog = ""
     @State private var liveTicker: Timer?
+    /// The report whose conversation is about to be picked up again.
+    @State private var continuing: SkillRun?
 
     private var isRunning: Bool { model.runs.isRunning(skill) }
     private var showsLive: Bool { watchingLive && isRunning }
@@ -559,6 +561,9 @@ private struct RunList: View {
             if isRunning { startTicking() }
         }
         .onDisappear { stopTicking() }
+        .sheet(item: $continuing) { run in
+            ContinueRunSheet(model: model, skill: skill, run: run) { continuing = nil }
+        }
     }
 
     private func startTicking() {
@@ -687,10 +692,17 @@ private struct RunList: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
+                        if model.canContinue(run) {
+                            Button("Continue this run…") { continuing = run }
+                        }
                         Button("Copy report") { copyReport(run) }
                         Button("Open file") { NSWorkspace.shared.open(run.url) }
                         Button("Delete") {
                             try? FileManager.default.removeItem(at: run.url)
+                            // The `.session` sidecar belongs to the report; leaving it
+                            // behind would keep pointing at a conversation nothing names.
+                            try? FileManager.default.removeItem(
+                                at: run.url.deletingPathExtension().appendingPathExtension("session"))
                             model.runs.refresh(skill: skill)
                         }
                     }
@@ -761,6 +773,13 @@ private struct RunList: View {
                         Text("· \(trigger)").font(Theme.ui(11)).foregroundStyle(theme.text3)
                     }
                     Spacer()
+                    // Reading a report and answering it are one motion — the answer
+                    // goes back to the conversation that wrote it, not to a new one.
+                    if model.canContinue(run) {
+                        SmallButton(title: "Continue", icon: "arrow.uturn.left") {
+                            continuing = run
+                        }
+                    }
                     // The report is rendered markdown, and a drag selects within one
                     // block only — copying the whole thing needs a button.
                     IconButton(icon: "doc.on.doc", help: "Copy the report") {

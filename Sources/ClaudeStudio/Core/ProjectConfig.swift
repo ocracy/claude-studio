@@ -148,6 +148,28 @@ final class ProjectStore: ObservableObject {
         self.project = project
         self.config = Self.load(project)
         watchSessions()
+        refreshRunners()
+    }
+
+    /// Rewrites the runner script of every enabled schedule when the project opens.
+    ///
+    /// The script is generated code, and launchd keeps running whatever version was
+    /// on disk when the schedule was last edited — a schedule set months ago would
+    /// otherwise never pick up an improvement to the runner (the conversation id it
+    /// now records is exactly such a case). The plist is untouched, so nothing is
+    /// unloaded and no run is missed.
+    private func refreshRunners() {
+        let snapshot = project
+        let schedules = config.schedules.filter(\.enabled)
+        guard !schedules.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for schedule in schedules {
+                Scheduler.writeRunnerScript(
+                    project: snapshot, skill: schedule.skill,
+                    prompt: Scheduler.promptFor(project: snapshot, skill: schedule.skill,
+                                                extra: schedule.prompt))
+            }
+        }
     }
 
     /// Sessions can be created from the phone through cs-bridge while the app is
