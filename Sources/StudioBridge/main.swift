@@ -69,6 +69,34 @@ func reader(for arguments: [String: Any]) throws -> (ProjectReader, Bool) {
         + all.map(\.name).joined(separator: ", "))
 }
 
+/// Resolves `project` for the tools that look at what is RUNNING, which — unlike the
+/// rest — accept THIS project as well as the linked ones.
+///
+/// The asymmetry is deliberate. For files, a session already has Read and Grep over
+/// its own project, so `read_file` pointing at itself would be a worse duplicate. For
+/// running processes it has nothing: a service or a `tail -f` lives in a tmux pane
+/// with no window onto it, and its own project's panes are exactly as invisible as a
+/// linked project's. So these two tools answer for both, and an omitted `project`
+/// means this one — "look at the frontend log" names no project because it does not
+/// need to.
+func runtimeReader(for arguments: [String: Any]) throws -> ProjectReader {
+    guard let wanted = arguments.string("project")?.nilIfEmpty else { return owner }
+    let expanded = (wanted as NSString).expandingTildeInPath
+    if wanted == owner.name || expanded == owner.path
+        || URL(fileURLWithPath: owner.path).lastPathComponent == wanted {
+        return owner
+    }
+    let all = links()
+    if let hit = all.first(where: { $0.name == wanted })
+        ?? all.first(where: { $0.path == expanded })
+        ?? all.first(where: { URL(fileURLWithPath: $0.path).lastPathComponent == wanted }) {
+        return ProjectReader(path: hit.path)
+    }
+    let known = ([owner.name] + all.map(\.name)).joined(separator: ", ")
+    throw MCPServer.ToolError("\(wanted) is neither this project nor linked to it. "
+        + "Available: \(known)")
+}
+
 extension String {
     var nilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
@@ -81,14 +109,27 @@ let projectArgument: [String: Any] = [
                 "description": "Name or path of a linked project. Optional when only one is linked."],
 ]
 
+/// For the runtime tools, where the default is THIS project rather than a link.
+let runtimeProjectArgument: [String: Any] = [
+    "project": ["type": "string",
+                "description": "Name or path of a project — this one or any linked to "
+                    + "it. Omit for this project."],
+]
+
 let server = MCPServer(
     name: "claude-studio-bridge",
     version: "1.0",
     instructions: """
     Claude Studio links this project to other local Claude projects. Use \
-    `linked_projects` to see them, `project_capabilities` to learn which skills, \
-    commands, scripts and services a linked project has, and `project_runtime` plus \
-    `read_output` to see what its services and terminals are doing right now.
+    `linked_projects` to see them and `project_capabilities` to learn which skills, \
+    commands, scripts and services a linked project has.
+
+    `project_runtime` and `read_output` answer for THIS project as well as the linked \
+    ones, and they are the only way to see any of it: services, terminals and sessions \
+    run in tmux panes that nothing else here can read — a dev server's log, a `tail -f` \
+    left open in a tab, a build that just failed. When something is broken, look at what \
+    is actually running before guessing from the source. `project_runtime` names the \
+    panes; `read_output` reads one. Omit `project` and you get this one.
 
     Links marked `allow_edits` are already in your working directories, so edit their \
     files with your normal tools. For read-only links use `read_file` and `search_files`.
@@ -161,14 +202,16 @@ let server = MCPServer(
         // MARK: project_runtime
         MCPServer.Tool(
             name: "project_runtime",
-            title: "What a linked project is running",
-            description: "Live state of a linked project inside Claude Studio: its Claude "
-                + "sessions, terminals and services, whether each is alive or has exited "
-                + "(with its exit code), the directory it runs in and any ports it listens on.",
-            inputSchema: ["type": "object", "properties": projectArgument,
+            title: "What a project is running",
+            description: "Live state inside Claude Studio of THIS project or one linked to "
+                + "it: its Claude sessions, terminals and services, whether each is alive "
+                + "or has exited (with its exit code), the directory it runs in and any "
+                + "ports it listens on. Use it to find the name of a service or terminal "
+                + "before reading its output. Omit `project` for this one.",
+            inputSchema: ["type": "object", "properties": runtimeProjectArgument,
                           "additionalProperties": false]
         ) { arguments in
-            let (reader, _) = try reader(for: arguments)
+            let reader = try runtimeReader(for: arguments)
             guard Tmux.path != nil else {
                 throw MCPServer.ToolError("tmux is not installed, so nothing is running "
                     + "under Claude Studio's control.")
@@ -199,11 +242,14 @@ let server = MCPServer(
         MCPServer.Tool(
             name: "read_output",
             title: "Read what a service or terminal printed",
-            description: "The recent output of one of a linked project's services, terminals or "
-                + "Claude sessions — including what an exited service printed before it died. "
-                + "Name it as `project_runtime` reports it.",
+            description: "The recent output of a service, terminal or Claude session — in "
+                + "THIS project or one linked to it — including what an exited service "
+                + "printed before it died. This is how you read a dev server's log, a "
+                + "`tail -f` someone left open, or a build that failed: they run in tmux "
+                + "panes you have no other way to see, your own project's included. Name "
+                + "the target as `project_runtime` reports it; omit `project` for this one.",
             inputSchema: ["type": "object",
-                          "properties": projectArgument.merging([
+                          "properties": runtimeProjectArgument.merging([
                               "name": ["type": "string",
                                        "description": "Service, terminal or session name."],
                               "lines": ["type": "integer",
@@ -212,7 +258,7 @@ let server = MCPServer(
                           "required": ["name"],
                           "additionalProperties": false]
         ) { arguments in
-            let (reader, _) = try reader(for: arguments)
+            let reader = try runtimeReader(for: arguments)
             guard let wanted = arguments.string("name")?.nilIfEmpty else {
                 throw MCPServer.ToolError("Which service or terminal? Give its name.")
             }

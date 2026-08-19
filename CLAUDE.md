@@ -119,6 +119,16 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   skill that asks a question can be answered; `wait_for_skill_run` returns "still
   running" on timeout rather than blocking. Two processes share the queue file, so both
   sides re-read immediately before writing — the `sessions.json` discipline.
+- **Reading what is running**: `project_runtime` and `read_output` answer for THIS
+  project as well as the linked ones — deliberately asymmetric with `read_file`, which
+  stays link-only because a session already has Read and Grep over its own tree. It has
+  nothing for processes: a service or a `tail -f` lives in a tmux pane, and its own
+  project's panes are exactly as invisible as a linked project's. Omitted `project`
+  means this one. Two `lsof` traps in `listeningPorts`: **`-a` is mandatory** — lsof
+  ORs its selection criteria, so `-p <pid> -iTCP -sTCP:LISTEN` without it reports every
+  listening socket on the machine and credits a `sleep` with thirty ports — and the
+  pane's pid is the SHELL, so the process tree has to be walked with `pgrep -P` to
+  reach the server the shell started.
 - **The bridge binary** is copied from the bundle to `Paths.binDir` and registered from
   THERE: the updater replaces the whole bundle and the user can move the app, while an
   MCP entry stores an absolute path. `MCPStore.add` quotes the command — our path

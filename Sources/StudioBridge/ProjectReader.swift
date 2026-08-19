@@ -202,10 +202,38 @@ struct ProjectReader {
         }
     }
 
+    /// Every descendant of a pid, itself included.
+    ///
+    /// tmux reports the pane's shell, but the thing listening on a port is what the
+    /// shell STARTED — `npm run dev`, `php artisan serve` — often a grandchild. Asking
+    /// only about the pane's own pid finds nothing.
+    private func processTree(from pid: Int) -> [Int] {
+        var found = [pid]
+        var frontier = [pid]
+        // Bounded: a runaway `pgrep` loop on a cycle would hang the tool call.
+        var depth = 0
+        while !frontier.isEmpty, depth < 8 {
+            let children = frontier.flatMap { parent -> [Int] in
+                Shell.capture("/usr/bin/pgrep", ["-P", "\(parent)"])
+                    .components(separatedBy: .newlines)
+                    .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            }
+            let fresh = children.filter { !found.contains($0) }
+            found += fresh
+            frontier = fresh
+            depth += 1
+        }
+        return found
+    }
+
     /// Ports a pane's process tree is listening on — tmux knows the pid, `lsof` the rest.
     func listeningPorts(pid: Int) -> [Int] {
+        // `-a` is NOT optional: lsof combines selection criteria with OR, so without it
+        // `-p <pid> -iTCP -sTCP:LISTEN` reports every listening socket on the machine
+        // and a `sleep` gets credited with thirty ports belonging to other processes.
+        let pids = processTree(from: pid).map(String.init).joined(separator: ",")
         let output = Shell.capture("/usr/sbin/lsof",
-                                   ["-nP", "-p", "\(pid)", "-iTCP", "-sTCP:LISTEN"])
+                                   ["-nP", "-a", "-p", pids, "-iTCP", "-sTCP:LISTEN"])
         var ports: Set<Int> = []
         for line in output.components(separatedBy: .newlines) {
             guard let range = line.range(of: ":", options: .backwards) else { continue }
