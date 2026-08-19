@@ -184,6 +184,18 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   from the one the page loaded with, a banner offers to update. Updating clears the Cache
   Storage and calls `registration.update()` — NEVER `unregister()`, which takes the push
   subscription with it and stops notifications silently.
+- **The phone's back gesture**: installed on the Home Screen there is no address bar
+  and no back button, so Android's edge swipe is the only "back" — and with a single
+  history entry the browser leaves the app, which mid-session reads as a crash. While
+  anything is open over the session list, `app.js` keeps ONE sentinel `pushState` entry
+  armed; `popstate` closes the topmost layer and re-arms if another is still open. The
+  state is read off the DOM every time and never counted: a depth counter drifts the
+  moment something closes itself (a sheet that submits, a tab killed from the actions
+  menu) and then silently swallows the gesture. Disarming is deferred to a microtask —
+  "close the menu, then open settings" runs both in one turn, and an immediate
+  `history.back()` would pop the entry the new layer just pushed. Set an iframe's `src`
+  BEFORE inserting it (`openSession` does): assigning it afterwards adds a history entry
+  and back would then step inside the terminal instead of leaving it.
 - **Phone terminal layout**: the key row goes ABOVE the terminal — the on-screen keyboard
   covers the bottom of the screen, so keys placed under it are unreachable exactly when
   they are needed. There is no message box either: the terminal already owns the keyboard,

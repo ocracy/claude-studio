@@ -11,6 +11,71 @@ let snapshot = { projects: [] }
 let current = null // { tmux, name, claudeSID, projectPath, projectName }
 let timer = null
 
+// ── the system back gesture ──────────────────────────────────────────────
+
+/**
+ * Installed on the Home Screen there is no address bar and no back button, so
+ * Android's edge swipe is the only "back" there is — and on Android it is muscle
+ * memory. With a single history entry the browser has nowhere to go and leaves
+ * the app instead, which mid-session reads as the app crashing.
+ *
+ * So while anything is open over the session list, one sentinel history entry is
+ * kept armed. A back gesture pops it, `handleBack` closes the topmost thing, and
+ * the sentinel is re-armed if something is still open. At the root — the list
+ * with nothing over it — nothing is armed and back leaves the app, which is what
+ * it should do there.
+ *
+ * Deliberately NO depth counter: the truth is read off the DOM every time. A
+ * counter drifts the moment something closes on its own — a sheet that submits,
+ * a tab killed from the actions menu — and a drifted counter swallows the
+ * gesture silently, which is worse than the bug it was meant to fix.
+ */
+let guardArmed = false
+
+const isOpen = (id) => !$(id).classList.contains("hidden")
+
+const anyLayerOpen = () =>
+  isOpen("menu") || isOpen("actions") || isOpen("sheet") ||
+  isOpen("session") || isOpen("settings")
+
+/** Closes the topmost open layer. Innermost first — overlays before views. */
+function handleBack() {
+  if (isOpen("menu")) return closeMenu()
+  if (isOpen("actions")) return closeActions()
+  if (isOpen("sheet")) return closeSheet()
+  if (isOpen("session")) return closeSessionView()
+  if (isOpen("settings")) return closeSettingsView()
+}
+
+/**
+ * Matches the sentinel to what is actually on screen. Called after everything
+ * that opens or closes a layer, so a programmatic close disarms itself instead
+ * of leaving an entry behind to eat the next swipe.
+ */
+function syncBackGuard() {
+  const open = anyLayerOpen()
+  if (open && !guardArmed) {
+    history.pushState({ guard: true }, "")
+    guardArmed = true
+  } else if (!open && guardArmed) {
+    // Something closed itself rather than being backed out of. Consume the
+    // sentinel — but on a microtask, and only if nothing has opened in the
+    // meantime: "close the menu, then open settings" runs both in one turn, and
+    // popping here would take the entry settings is about to rely on.
+    queueMicrotask(() => {
+      if (anyLayerOpen() || !guardArmed) return
+      guardArmed = false
+      history.back()
+    })
+  }
+}
+
+addEventListener("popstate", () => {
+  guardArmed = false // the sentinel we pushed is what was just popped
+  handleBack()
+  syncBackGuard()
+})
+
 // ── plumbing ─────────────────────────────────────────────────────────────
 
 async function api(path, options = {}) {
@@ -165,11 +230,12 @@ function openSession(session) {
 
   views.list.classList.add("hidden")
   views.session.classList.remove("hidden")
+  syncBackGuard()
   updateBadge()
   poll(4000)
 }
 
-function closeSession() {
+function closeSessionView() {
   // Remove the iframe rather than pointing it at about:blank.
   //
   // ttyd registers a beforeunload handler, and navigating the frame away counts
@@ -181,6 +247,7 @@ function closeSession() {
   current = null
   views.session.classList.add("hidden")
   views.list.classList.remove("hidden")
+  syncBackGuard()
   refresh()
   poll(3000)
 }
@@ -280,9 +347,13 @@ function noteBuild(buildId) {
 function openMenu() {
   $("menu-build").textContent = loadedBuild ? `Build ${loadedBuild}` : ""
   $("menu").classList.remove("hidden")
+  syncBackGuard()
 }
 
-const closeMenu = () => $("menu").classList.add("hidden")
+function closeMenu() {
+  $("menu").classList.add("hidden")
+  syncBackGuard()
+}
 
 /**
  * Load the interface the Mac is serving now.
@@ -317,11 +388,13 @@ function openActions(session) {
   actionTarget = session
   $("actions-title").textContent = session.name
   $("actions").classList.remove("hidden")
+  syncBackGuard()
 }
 
 function closeActions() {
   actionTarget = null
   $("actions").classList.add("hidden")
+  syncBackGuard()
 }
 
 // ── new session ──────────────────────────────────────────────────────────
@@ -339,6 +412,12 @@ function openSheet() {
   $("new-prompt").value = ""
   $("new-background").checked = false
   $("sheet").classList.remove("hidden")
+  syncBackGuard()
+}
+
+function closeSheet() {
+  $("sheet").classList.add("hidden")
+  syncBackGuard()
 }
 
 async function create() {
@@ -352,7 +431,7 @@ async function create() {
       method: "POST",
       body: JSON.stringify({ projectPath, name, prompt, background }),
     })
-    $("sheet").classList.add("hidden")
+    closeSheet()
     await refresh()
 
     const project = snapshot.projects.find((p) => p.path === projectPath)
@@ -380,7 +459,7 @@ async function killSession(session) {
     await api(`/api/sessions/${encodeURIComponent(session.tmux)}`, { method: "DELETE" })
     // If the tab being closed is the one on screen, step back to the list —
     // its terminal is about to have nothing behind it.
-    if (current?.tmux === session.tmux) closeSession()
+    if (current?.tmux === session.tmux) closeSessionView()
     else await refresh()
     toast("Tab closed")
   } catch (error) {
@@ -588,6 +667,7 @@ $("install").onclick = async () => {
 async function openSettings() {
   views.list.classList.add("hidden")
   views.settings.classList.remove("hidden")
+  syncBackGuard()
   renderInstall()
 
   const subscription = await currentSubscription().catch(() => null)
@@ -669,9 +749,9 @@ $("menu-update").onclick = updateApp
 $("menu-settings").onclick = () => { closeMenu(); openSettings() }
 $("update-banner").onclick = updateApp
 
-$("back").onclick = closeSession
+$("back").onclick = closeSessionView
 $("compose").onclick = openSheet
-$("new-cancel").onclick = () => $("sheet").classList.add("hidden")
+$("new-cancel").onclick = closeSheet
 $("new-create").onclick = create
 
 $("action-cancel").onclick = closeActions
@@ -699,10 +779,13 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh()
 })
 
-$("settings-back").onclick = () => {
+function closeSettingsView() {
   views.settings.classList.add("hidden")
   views.list.classList.remove("hidden")
+  syncBackGuard()
 }
+
+$("settings-back").onclick = closeSettingsView
 
 $("push-enabled").onchange = async (event) => {
   const wanted = event.target.checked
@@ -778,6 +861,7 @@ function openByName(tmuxName) {
     const session = project.sessions.find((s) => s.tmux === tmuxName)
     if (session) {
       views.settings.classList.add("hidden")
+      syncBackGuard()
       openSession({
         tmux: session.tmux,
         name: session.name,
