@@ -147,6 +147,37 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   at its own "process is running" guard and the message would go nowhere. Runner
   scripts are regenerated on project open (`ProjectConfig.refreshRunners`), or a
   schedule set before this shipped would keep running the old script forever.
+- **Connecting a project to the bridge**: the MCP pane opens with a **this project**
+  row that registers `claude-studio` for the project on its own. It used to arrive
+  only as a side effect of linking another project, which meant the one thing a
+  session cannot get anywhere else — a view of what its OWN project is running — was
+  reachable only by declaring an interest in someone else's. Linking still connects
+  it. The bridge is filtered OUT of the generic server list (`otherServers`) so it is
+  not offered twice, and "Remove" on the generic row cannot take the pane's own switch
+  away. `StudioModel` forwards `mcp.objectWillChange` for the same reason it forwards
+  `RunStore`'s: a view holding only the model would otherwise redraw whenever
+  something else happened to publish, and Connect is a click that must land at once.
+- **What a session may do to its own project**: `define_service` and `define_script`
+  write `.cs/services.json` / `.cs/scripts.json` straight from the bridge — the file
+  IS the interface, exactly as the "with Claude" button already treats it, and the
+  `.cs` watcher puts the result in the sidebar with nothing being told. `skill_runs`
+  reads the reports (they are the state, so a run from while the app was closed reads
+  back the same). `run_skill` naming THIS project is "run now": the request lands in
+  the same queue and `refreshSkillRequests` approves it WITHOUT the sheet — the
+  confirmation exists because a skill name cannot be told apart between two projects,
+  and there is no second project here; the session could invoke the same skill with
+  its own Skill tool. `project` stays REQUIRED in the schema, though: a required
+  argument with no default cannot bring the ambiguity back, an optional one could.
+- **Starting a service from a session**: `control_service` does NOT touch tmux. A
+  service's session belongs to the app — it dies with the window, and the engine polls
+  its status — so a second process starting the same session would produce a service
+  the sidebar calls stopped while it serves requests. The bridge appends to
+  `.cs/control.json` and the app acts on its 4 s poll (`Control`, mirroring
+  `LinkedRuns`), no confirmation: it is the session's own project, a service that
+  project already defines, and Bash could run the command anyway — what the detour
+  buys is the app's bookkeeping. No tab is opened, because stealing the active tab for
+  a restart nobody watched for is worse than the output being one `read_output` away.
+  With no window open the request simply stays `pending` and the tool says so.
 - **Reading what is running**: `project_runtime` and `read_output` answer for THIS
   project as well as the linked ones — deliberately asymmetric with `read_file`, which
   stays link-only because a session already has Read and Grep over its own tree. It has

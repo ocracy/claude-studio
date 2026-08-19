@@ -146,6 +146,13 @@ enum Paths {
         csDir(project).appendingPathComponent("skill-requests.json")
     }
 
+    /// Service start/stop asked for by a session through the bridge — the app is the
+    /// only process that may touch a service's tmux session, so it acts on these.
+    /// See `Control`.
+    static func controlRequests(_ project: Project) -> URL {
+        csDir(project).appendingPathComponent("control.json")
+    }
+
     static func runState(_ project: Project, skill: String) -> URL {
         runsDir(project, skill: skill).appendingPathComponent(".state.json")
     }

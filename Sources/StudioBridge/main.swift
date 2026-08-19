@@ -144,8 +144,11 @@ let runtimeProjectArgument: [String: Any] = [
 func briefing() -> String {
     let all = links()
     guard !all.isEmpty else {
-        return "No projects are linked to \(owner.name) yet. Link one in Claude Studio: "
-            + "MCP servers → + → Link a Claude project."
+        // Not a failure any more: the bridge is connected for this project's own sake
+        // as often as for a link's, and the tools above work with nothing linked.
+        return "No other project is linked to \(owner.name), so the linked-project tools "
+            + "have nothing to answer. Everything about this project still works. A link "
+            + "is made in Claude Studio: MCP servers → + → Link a Claude project."
     }
     var lines = ["Projects linked to \(owner.name), and when to reach for them:"]
     for link in all {
@@ -171,18 +174,28 @@ let server = MCPServer(
     name: "claude-studio-bridge",
     version: "1.0",
     instructions: """
-    Claude Studio links this project to other local Claude projects. Use \
-    `linked_projects` to see them and `project_capabilities` to learn which skills, \
-    commands, scripts and services a linked project has.
+    Claude Studio is the workspace this project is open in. This server is how you \
+    reach the parts of it a file read cannot answer — what is running, what has been \
+    run, and the projects this one is linked to.
+
+    THIS PROJECT. `project_runtime` and `read_output` are the only way to see any of \
+    it: services, terminals and sessions run in tmux panes that nothing else here can \
+    read — a dev server's log, a `tail -f` left open in a tab, a build that just \
+    failed. When something is broken, look at what is actually running before guessing \
+    from the source. `project_runtime` names the panes; `read_output` reads one. \
+    `control_service` starts, stops and restarts a service — through the app, which \
+    owns the tmux session, so the sidebar and the status keep telling the truth; do \
+    that rather than starting a dev server in Bash where nothing tracks it. \
+    `define_service` and `define_script` write `.cs/services.json` and \
+    `.cs/scripts.json`, which is how a project gains a "npm run dev" button or a \
+    "migrate" one. `skill_runs` reads what a scheduled skill reported — status, \
+    summary, the whole report — and `run_skill` naming THIS project is "run now". \
+    Omit `project` and every one of these means this one.
+
+    LINKED PROJECTS. `linked_projects` lists them; `project_capabilities` says what \
+    each can do.
 
     \(briefing())
-
-    `project_runtime` and `read_output` answer for THIS project as well as the linked \
-    ones, and they are the only way to see any of it: services, terminals and sessions \
-    run in tmux panes that nothing else here can read — a dev server's log, a `tail -f` \
-    left open in a tab, a build that just failed. When something is broken, look at what \
-    is actually running before guessing from the source. `project_runtime` names the \
-    panes; `read_output` reads one. Omit `project` and you get this one.
 
     Links marked `allow_edits` are already in your working directories, so edit their \
     files with your normal tools. For read-only links use `read_file` and `search_files`.
@@ -343,12 +356,14 @@ let server = MCPServer(
         // MARK: run_skill
         MCPServer.Tool(
             name: "run_skill",
-            title: "Ask to run a linked project's skill",
-            description: "Requests that one of a linked project's skills be run — in "
-                + "that project, not in this one. Claude Studio asks the user to confirm; "
-                + "nothing runs until they do. Returns a request id: pass it to "
-                + "`wait_for_skill_run` to wait for the result. Name the project "
-                + "explicitly; there is no default and no nearest match.",
+            title: "Run a skill through Claude Studio",
+            description: "Runs a skill the way a scheduled run does — headless, in the "
+                + "project that owns it, writing a report you can read back. Name THIS "
+                + "project to run one of its own skills (that is \"run now\", and it starts "
+                + "immediately); name a LINKED project and Claude Studio asks the user to "
+                + "confirm first, with nothing running until they do. Returns a request id: "
+                + "pass it to `wait_for_skill_run`. The project is required either way — "
+                + "there is no default and no nearest match.",
             inputSchema: ["type": "object",
                           "properties": projectArgument.merging([
                               "skill": ["type": "string",
@@ -359,7 +374,12 @@ let server = MCPServer(
                           "required": ["project", "skill"],
                           "additionalProperties": false]
         ) { arguments in
-            let (target, _) = try reader(for: arguments)
+            // Resolved against this project as well as the links — but `project` stays
+            // REQUIRED in the schema. What made a shared skill list dangerous was a
+            // skill name that could belong to either project; a required argument with
+            // no default cannot reintroduce it, while an optional one would.
+            let target = try runtimeReader(for: arguments)
+            let isOwn = target.path == owner.path
             guard target.exists else {
                 throw MCPServer.ToolError("\(target.path) no longer exists on disk.")
             }
@@ -392,9 +412,13 @@ let server = MCPServer(
                 "status": "pending",
                 "project": target.name,
                 "skill": match.name,
-                "next": "Claude Studio is asking \(owner.name)'s window to confirm this "
-                    + "run. Call wait_for_skill_run with this request_id to wait for the "
-                    + "result. Nothing has run yet.",
+                "next": isOwn
+                    ? "Claude Studio starts this on its next poll — a few seconds — in a tab "
+                      + "of this project's window, and it needs that window to be open. Call "
+                      + "wait_for_skill_run with this request_id for the report."
+                    : "Claude Studio is asking \(owner.name)'s window to confirm this "
+                      + "run. Call wait_for_skill_run with this request_id to wait for the "
+                      + "result. Nothing has run yet.",
             ])
         },
 
@@ -467,6 +491,254 @@ let server = MCPServer(
                     + "asking a question it is waiting for the user there. Call again to "
                     + "keep waiting."
             }
+            return jsonText(out)
+        },
+
+        // MARK: skill_runs
+        MCPServer.Tool(
+            name: "skill_runs",
+            title: "Read what a scheduled skill reported",
+            description: "The reports a skill's runs have written — scheduled or manual — "
+                + "newest first: when each ran, the status and summary it recorded, and the "
+                + "report file. Give `run` to read one in full (a stamp as this tool lists "
+                + "them, or \"latest\"). Omit `skill` to see which skills have runs at all. "
+                + "Works for THIS project and for linked ones; omit `project` for this one.",
+            inputSchema: ["type": "object",
+                          "properties": runtimeProjectArgument.merging([
+                              "skill": ["type": "string",
+                                        "description": "Skill name. Omit to list the skills that have runs."],
+                              "run": ["type": "string",
+                                      "description": "A run stamp, or \"latest\", to read that report in full."],
+                              "limit": ["type": "integer",
+                                        "description": "How many runs to list (default 10)."],
+                          ]) { a, _ in a },
+                          "additionalProperties": false]
+        ) { arguments in
+            let reader = try runtimeReader(for: arguments)
+            guard let skill = arguments.string("skill")?.nilIfEmpty else {
+                let all = reader.skillsWithRuns()
+                return all.isEmpty
+                    ? "No skill of \(reader.name) has produced a run report yet."
+                    : jsonText(["project": reader.name, "skills_with_runs": all])
+            }
+            let all = reader.runs(skill: skill)
+            guard !all.isEmpty else {
+                return "\(skill) has no run reports in \(reader.name)."
+            }
+
+            if let wanted = arguments.string("run")?.nilIfEmpty {
+                let hit = wanted.lowercased() == "latest"
+                    ? all.first
+                    : all.first { $0.stamp == wanted }
+                        ?? all.first { $0.stamp.hasPrefix(wanted) }
+                guard let hit else {
+                    throw MCPServer.ToolError("\(skill) has no run \"\(wanted)\". "
+                        + "It has: \(all.prefix(10).map(\.stamp).joined(separator: ", "))")
+                }
+                let text = (try? String(contentsOf: hit.file, encoding: .utf8)) ?? ""
+                return "\(reader.name) · \(skill) · \(hit.stamp)\n\n\(text)"
+            }
+
+            let limit = min(max(arguments.int("limit") ?? 10, 1), 100)
+            return jsonText(["project": reader.name, "skill": skill,
+                             "runs": all.prefix(limit).map(\.json)])
+        },
+
+        // MARK: define_service
+        MCPServer.Tool(
+            name: "define_service",
+            title: "Add, change or remove a service",
+            description: "Writes this project's `.cs/services.json` — the long-running "
+                + "processes Claude Studio starts and watches (a dev server, a queue worker). "
+                + "Defining one does not start it; use `control_service` for that. Only this "
+                + "project, never a linked one.",
+            inputSchema: ["type": "object",
+                          "properties": [
+                              "name": ["type": "string",
+                                       "description": "Service name. Identifies it for every other tool."],
+                              "action": ["type": "string", "enum": ["add", "update", "remove"],
+                                         "description": "Default \"add\", which updates one that already exists."],
+                              "command": ["type": "string",
+                                          "description": "Shell command to run, e.g. `npm run dev`."],
+                              "cwd": ["type": "string",
+                                      "description": "Where it runs. Relative to the project root, or absolute. Default: the root."],
+                              "port": ["type": "integer",
+                                       "description": "The port it listens on, if any — shown in the sidebar and used for its status."],
+                              "auto_start": ["type": "boolean",
+                                             "description": "Start it when the project window opens."],
+                          ] as [String: Any],
+                          "required": ["name"],
+                          "additionalProperties": false]
+        ) { arguments in
+            guard let name = arguments.string("name")?.nilIfEmpty else {
+                throw MCPServer.ToolError("Which service? Give its name.")
+            }
+            let action = arguments.string("action")?.lowercased() ?? "add"
+            var all = owner.rawCS("services.json")
+            let index = all.firstIndex { $0.string("name") == name }
+
+            if action == "remove" {
+                guard let index else {
+                    throw MCPServer.ToolError("\(owner.name) has no service \"\(name)\".")
+                }
+                all.remove(at: index)
+                try owner.writeCS("services.json", all)
+                return "Removed the service \(name) from \(owner.name). If it was running, "
+                    + "it is still running — nothing was stopped."
+            }
+            if action == "update", index == nil {
+                throw MCPServer.ToolError("\(owner.name) has no service \"\(name)\" to update.")
+            }
+
+            var entry = index.map { all[$0] } ?? ["id": UUID().uuidString, "name": name]
+            if let command = arguments.string("command") { entry["command"] = command }
+            if let cwd = arguments.string("cwd") { entry["cwd"] = cwd }
+            if let port = arguments.int("port") { entry["port"] = port }
+            if let auto = arguments["auto_start"] as? Bool { entry["autoStart"] = auto }
+            guard (entry.string("command")?.nilIfEmpty) != nil else {
+                throw MCPServer.ToolError("A service needs a command to run.")
+            }
+            if let index { all[index] = entry } else { all.append(entry) }
+            try owner.writeCS("services.json", all)
+            return "\(index == nil ? "Added" : "Updated") the service \(name) in \(owner.name): "
+                + "`\(entry.string("command") ?? "")`. It appears in the sidebar at once; "
+                + "start it with control_service."
+        },
+
+        // MARK: define_script
+        MCPServer.Tool(
+            name: "define_script",
+            title: "Add, change or remove a script",
+            description: "Writes this project's `.cs/scripts.json` — the one-shot commands "
+                + "the sidebar keeps a button for (build, test, migrate). A script is not a "
+                + "service: it runs once in its own tab and shows its exit code. Only this "
+                + "project, never a linked one.",
+            inputSchema: ["type": "object",
+                          "properties": [
+                              "name": ["type": "string", "description": "Script name."],
+                              "action": ["type": "string", "enum": ["add", "update", "remove"],
+                                         "description": "Default \"add\", which updates one that already exists."],
+                              "command": ["type": "string", "description": "Shell command to run."],
+                              "cwd": ["type": "string",
+                                      "description": "Where it runs. Relative to the project root, or absolute. Default: the root."],
+                          ] as [String: Any],
+                          "required": ["name"],
+                          "additionalProperties": false]
+        ) { arguments in
+            guard let name = arguments.string("name")?.nilIfEmpty else {
+                throw MCPServer.ToolError("Which script? Give its name.")
+            }
+            let action = arguments.string("action")?.lowercased() ?? "add"
+            var all = owner.rawCS("scripts.json")
+            let index = all.firstIndex { $0.string("name") == name }
+
+            if action == "remove" {
+                guard let index else {
+                    throw MCPServer.ToolError("\(owner.name) has no script \"\(name)\".")
+                }
+                all.remove(at: index)
+                try owner.writeCS("scripts.json", all)
+                return "Removed the script \(name) from \(owner.name)."
+            }
+            if action == "update", index == nil {
+                throw MCPServer.ToolError("\(owner.name) has no script \"\(name)\" to update.")
+            }
+
+            var entry = index.map { all[$0] } ?? ["id": UUID().uuidString, "name": name]
+            if let command = arguments.string("command") { entry["command"] = command }
+            if let cwd = arguments.string("cwd") { entry["cwd"] = cwd }
+            guard (entry.string("command")?.nilIfEmpty) != nil else {
+                throw MCPServer.ToolError("A script needs a command to run.")
+            }
+            if let index { all[index] = entry } else { all.append(entry) }
+            try owner.writeCS("scripts.json", all)
+            return "\(index == nil ? "Added" : "Updated") the script \(name) in \(owner.name): "
+                + "`\(entry.string("command") ?? "")`."
+        },
+
+        // MARK: control_service
+        MCPServer.Tool(
+            name: "control_service",
+            title: "Start, stop or restart a service",
+            description: "Starts, stops or restarts one of THIS project's services. Claude "
+                + "Studio does it, not this tool: a service is a tmux session the app owns "
+                + "and watches, and starting one behind its back would leave the app calling "
+                + "it stopped while it serves requests. Needs the project's window to be "
+                + "open. Read what it then printed with `read_output`.",
+            inputSchema: ["type": "object",
+                          "properties": [
+                              "name": ["type": "string",
+                                       "description": "Service name, as `project_capabilities` or `project_runtime` reports it."],
+                              "action": ["type": "string", "enum": ["start", "stop", "restart"],
+                                         "description": "Default \"start\"."],
+                              "timeout_sec": ["type": "integer",
+                                              "description": "How long to wait for Claude Studio to act (default 20, max 120)."],
+                          ] as [String: Any],
+                          "required": ["name"],
+                          "additionalProperties": false]
+        ) { arguments in
+            guard let name = arguments.string("name")?.nilIfEmpty else {
+                throw MCPServer.ToolError("Which service? Give its name.")
+            }
+            let action = arguments.string("action")?.lowercased() ?? "start"
+            guard ["start", "stop", "restart"].contains(action) else {
+                throw MCPServer.ToolError("action must be start, stop or restart.")
+            }
+            let defined = owner.services().compactMap { $0.string("name") }
+            guard defined.contains(where: { $0 == name }) else {
+                throw MCPServer.ToolError(defined.isEmpty
+                    ? "\(owner.name) defines no services. Add one with define_service."
+                    : "\(owner.name) has no service \"\(name)\". It has: "
+                      + defined.joined(separator: ", "))
+            }
+
+            let id = UUID().uuidString
+            try owner.appendControl([
+                "id": id,
+                "action": action,
+                "target": name,
+                "requestedAt": ISO8601DateFormatter().string(from: Date()),
+                "status": "pending",
+            ])
+
+            // The app consumes the queue on its four-second poll, so this waits rather
+            // than reporting a request nobody has read yet.
+            let limit = min(max(arguments.int("timeout_sec") ?? 20, 5), 120)
+            let deadline = Date().addingTimeInterval(TimeInterval(limit))
+            var settled: [String: Any]?
+            while Date() < deadline {
+                Thread.sleep(forTimeInterval: 1.5)
+                guard let current = owner.controlRequest(id: id) else { break }
+                if current.string("status") != "pending" { settled = current; break }
+            }
+
+            guard let settled else {
+                return "Asked Claude Studio to \(action) \(name), but nothing has picked the "
+                    + "request up. That means no window is open for \(owner.name) — the app "
+                    + "acts on these, and it is not running this project. The request stays "
+                    + "queued and will run when the project is opened."
+            }
+            if settled.string("status") == "failed" {
+                throw MCPServer.ToolError(settled.string("note") ?? "Claude Studio refused it.")
+            }
+
+            // "Done" means the app acted: a stop is Ctrl-C first and a kill three
+            // seconds later, so the pane is what says whether it is really gone.
+            Thread.sleep(forTimeInterval: action == "start" ? 1.5 : 3.5)
+            let pane = owner.panes().first { $0.kind == "service" && $0.title == name }
+            var out: [String: Any] = ["service": name, "action": action,
+                                      "project": owner.name]
+            if let pane {
+                out["state"] = pane.dead ? "exited" : "running"
+                if let code = pane.exitCode { out["exit_code"] = code }
+                if !pane.dead, let pid = pane.pid {
+                    let ports = owner.listeningPorts(pid: pid)
+                    if !ports.isEmpty { out["listening_ports"] = ports }
+                }
+            } else {
+                out["state"] = action == "stop" ? "stopped" : "no pane yet"
+            }
+            out["next"] = "Read what it printed with read_output(name: \"\(name)\")."
             return jsonText(out)
         },
 

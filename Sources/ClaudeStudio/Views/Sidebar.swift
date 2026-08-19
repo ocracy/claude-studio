@@ -128,6 +128,13 @@ struct Sidebar: View {
                 }
                 .popover(isPresented: $mcpAddMenu, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 1) {
+                        if !model.bridgeConnected {
+                            addMenuItem("Connect this project", icon: "bolt.horizontal",
+                                        detail: "let Claude read its services and runs") {
+                                mcpAddMenu = false
+                                model.connectBridge()
+                            }
+                        }
                         addMenuItem("Link a Claude project", icon: "link",
                                     detail: "share its skills, services and files") {
                             mcpAddMenu = false
@@ -183,7 +190,8 @@ struct Sidebar: View {
         case .skills:    return "\(model.skills.skills.count) skills · .claude/skills"
         case .mcp:       return model.mcp.checkingHealth
                                 ? "checking connections…"
-                                : "\(model.links.count) links · \(model.mcp.servers.count) servers"
+                                : (model.bridgeConnected ? "connected · " : "not connected · ")
+                                    + "\(model.links.count) links · \(otherServers.count) servers"
         case .cron:      return "\(model.store.activeSchedules.count) active schedules"
         case .services:  return "\(model.runningServiceCount)/\(model.store.config.services.count) running"
         case .commands:  return "\(model.claudeCommands.commands.count) commands · .claude/commands"
@@ -498,7 +506,20 @@ struct Sidebar: View {
 
     // MARK: - MCP servers
 
+    /// Everything except our own bridge, which has a row of its own at the top —
+    /// listed twice it would read as two connections, and "Remove" on the generic
+    /// row would take the pane's own switch away from under it.
+    private var otherServers: [MCPServer] {
+        model.mcp.servers.filter { $0.name != ProjectBridge.serverName }
+    }
+
     @ViewBuilder private var mcpList: some View {
+        SectionLabel(text: "this project")
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+        bridgeRow
+
         if !model.links.isEmpty {
             SectionLabel(text: "linked projects")
                 .padding(.horizontal, 8)
@@ -554,20 +575,24 @@ struct Sidebar: View {
                 }
             }
 
-            if !model.mcp.servers.isEmpty {
-                SectionLabel(text: "mcp servers")
-                    .padding(.horizontal, 8)
-                    .padding(.top, 14)
-                    .padding(.bottom, 4)
-            }
         }
 
-        if model.mcp.servers.isEmpty && model.links.isEmpty {
-            emptyHint("Nothing connected yet.", action: "Link a Claude project") {
+        if model.links.isEmpty {
+            emptyHint(model.bridgeConnected
+                        ? "No other project is linked."
+                        : "Link another project to reach its skills and files.",
+                      action: "Link a Claude project") {
                 linkSheet = true
             }
         }
-        ForEach(model.mcp.servers) { server in
+
+        if !otherServers.isEmpty {
+            SectionLabel(text: "mcp servers")
+                .padding(.horizontal, 8)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+        }
+        ForEach(otherServers) { server in
             row(selected: false,
                 dot: server.health.color,
                 title: server.name,
@@ -712,6 +737,51 @@ struct Sidebar: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    /// The switch for Claude Studio's own MCP server.
+    ///
+    /// It sits at the top of the pane, before the links, because what it gives a
+    /// session first is a view of THIS project — the services, terminals and skill
+    /// runs it is sitting in. Reaching another project is the second thing it does,
+    /// and used to be the only way to get the first.
+    @ViewBuilder private var bridgeRow: some View {
+        let connected = model.bridgeConnected
+        row(selected: false,
+            dot: connected ? (model.bridgeServer?.health.color ?? Theme.running) : Theme.idle,
+            title: model.project.name,
+            meta: model.bridgeConnecting
+                ? "connecting…"
+                : (connected
+                    ? "services, terminals and skill runs are readable"
+                    : "let Claude see what this project is running"),
+            trailing: {
+                if connected {
+                    Text("connected")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(theme.text3)
+                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                        .background(Capsule().strokeBorder(theme.separator))
+                } else if !model.bridgeConnecting {
+                    SmallButton(title: "Connect") { model.connectBridge() }
+                }
+            },
+            action: { if !connected { model.connectBridge() } })
+            .help(connected
+                  ? "Claude Studio's MCP server is registered for \(model.project.name). "
+                    + "A session started before this needs reopening to see it."
+                  : "Registers Claude Studio's MCP server for this project, so a session "
+                    + "can read its services, terminals and skill runs — and reach any "
+                    + "project you link.")
+            .contextMenu {
+                if connected {
+                    Button("Check connections") { model.mcp.checkHealth() }
+                    Divider()
+                    Button("Disconnect") { model.disconnectBridge() }
+                } else {
+                    Button("Connect this project") { model.connectBridge() }
+                }
+            }
     }
 
     private func emptyHint(_ text: String, action: String,

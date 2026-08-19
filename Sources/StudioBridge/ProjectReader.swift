@@ -159,6 +159,65 @@ struct ProjectReader {
         }
     }
 
+    // MARK: - Writing `.cs` definitions
+
+    /// Replaces one of the `.cs` lists on disk.
+    ///
+    /// Writing the file IS the interface — the same one the "with Claude" button uses,
+    /// where Claude edits `services.json` itself and the app never parses an answer
+    /// back. The app watches the `.cs` DIRECTORY (an atomic write replaces the inode,
+    /// so a file watch would go deaf), so a list written here appears in the sidebar
+    /// without anything being told. The read happens immediately before the write for
+    /// the reason `sessions.json` needs it: two processes share this file.
+    func writeCS(_ file: String, _ array: [[String: Any]]) throws {
+        let dir = url.appendingPathComponent(".cs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let target = dir.appendingPathComponent(file)
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: array, options: [.prettyPrinted, .sortedKeys]) else {
+            throw MCPServer.ToolError("Could not encode \(file).")
+        }
+        let temp = target.appendingPathExtension("tmp")
+        try? data.write(to: temp)
+        _ = try? FileManager.default.replaceItemAt(target, withItemAt: temp)
+    }
+
+    /// The raw entries of a `.cs` list — what `writeCS` expects back, unlike
+    /// `services()`, which reshapes them for a tool's answer.
+    func rawCS(_ file: String) -> [[String: Any]] { csArray(file) }
+
+    // MARK: - Asking the app to act
+
+    /// `.cs/control.json` — start/stop requests for this project's services. The app
+    /// owns a service's tmux session, so it is the only process allowed to touch one;
+    /// see `Control` on the app side.
+    var controlFile: URL { url.appendingPathComponent(".cs/control.json") }
+
+    func controlRequests() -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: controlFile),
+              let array = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
+        else { return [] }
+        return array
+    }
+
+    func appendControl(_ request: [String: Any]) throws {
+        var all = controlRequests()
+        all.append(request)
+        let dir = url.appendingPathComponent(".cs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: all, options: [.prettyPrinted, .sortedKeys]) else {
+            throw MCPServer.ToolError("Could not encode the request.")
+        }
+        let temp = controlFile.appendingPathExtension("tmp")
+        try? data.write(to: temp)
+        _ = try? FileManager.default.replaceItemAt(controlFile, withItemAt: temp)
+    }
+
+    func controlRequest(id: String) -> [String: Any]? {
+        controlRequests().first { $0.string("id") == id }
+    }
+
     // MARK: - Runtime (tmux)
 
     struct Pane {
@@ -275,6 +334,64 @@ struct ProjectReader {
 
     func request(id: String) -> [String: Any]? {
         requests().first { $0.string("id") == id }
+    }
+
+    /// One run of a skill: what the report's frontmatter says about it.
+    struct Run {
+        let stamp: String
+        let file: URL
+        let status: String
+        let summary: String
+        let trigger: String
+        let runAt: String
+        let durationSec: String
+
+        var json: [String: Any] {
+            var out: [String: Any] = ["run": stamp, "file": file.path]
+            if !status.isEmpty   { out["status"] = status }
+            if !summary.isEmpty  { out["summary"] = summary }
+            if !trigger.isEmpty  { out["trigger"] = trigger }
+            if !runAt.isEmpty    { out["run_at"] = runAt }
+            if !durationSec.isEmpty { out["duration_sec"] = durationSec }
+            return out
+        }
+    }
+
+    /// A skill's reports, newest first. The reports ARE the state — there is no
+    /// database to consult, which is why a run that happened while the app was closed
+    /// reads back exactly like one that did not.
+    func runs(skill: String) -> [Run] {
+        let dir = url.appendingPathComponent(".cs/runs/\(skill)", isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        else { return [] }
+        return entries
+            .filter { $0.pathExtension.lowercased() == "md" }
+            .map { file -> Run in
+                let head = (try? String(contentsOf: file, encoding: .utf8))?.prefix(4 * 1024) ?? ""
+                let (fields, _) = Frontmatter.split(String(head))
+                return Run(stamp: file.deletingPathExtension().lastPathComponent,
+                           file: file,
+                           status: fields?["status"] ?? "",
+                           summary: fields?["summary"] ?? "",
+                           trigger: fields?["trigger"] ?? "",
+                           runAt: fields?["run_at"] ?? "",
+                           durationSec: fields?["duration_sec"] ?? "")
+            }
+            // The stamp is `yyyy-MM-dd-HHmm`, so sorting the names sorts the runs.
+            .sorted { $0.stamp > $1.stamp }
+    }
+
+    /// Every skill that has ever produced a report here.
+    func skillsWithRuns() -> [String] {
+        let root = url.appendingPathComponent(".cs/runs", isDirectory: true)
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles])) ?? []
+        return entries
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false }
+            .map(\.lastPathComponent)
+            .sorted()
     }
 
     /// Reports of a skill in THIS project, newest first — how a finished run is read

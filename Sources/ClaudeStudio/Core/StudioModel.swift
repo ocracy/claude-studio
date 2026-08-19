@@ -138,10 +138,15 @@ final class StudioModel: ObservableObject {
 
     private var refreshTimer: Timer?
     private var autoAttachPending = true
+    /// `claude mcp add` runs in a login shell; the row says so meanwhile.
+    @Published private(set) var bridgeConnecting = false
     /// `RunStore` is an object of its own, so a view holding only the model would not
     /// redraw when a run starts or ends — the running marker appeared late, whenever
     /// something else happened to publish.
     private var runsObserver: AnyCancellable?
+    /// Same reason as `runsObserver`: connecting the bridge is one click, and the row
+    /// it changes lives in a view that holds only the model.
+    private var mcpObserver: AnyCancellable?
 
     init(project: Project) {
         self.project = project
@@ -155,6 +160,9 @@ final class StudioModel: ObservableObject {
         engine.projectName = project.name
         engine.theme = theme
         runsObserver = runs.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        mcpObserver = mcp.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
     }
@@ -198,6 +206,11 @@ final class StudioModel: ObservableObject {
         runs.startPolling { [weak self] in self?.skills.skills.map(\.name) ?? [] }
         mcp.start(project: project)
         claudeCommands.start(project: project)
+        // The registered path points at the copy in Application Support, and an update
+        // replaces the whole bundle — so the copy is refreshed on every open, whether
+        // this project is connected for its own sake or for a link's. It is a version
+        // stamp comparison when there is nothing to do.
+        ProjectBridge.install()
         // Links may arrive from version control or another machine; make sure the
         // bridge Claude needs to read them is installed and registered.
         if !store.config.links.isEmpty {
@@ -215,6 +228,8 @@ final class StudioModel: ObservableObject {
                 // A session asks to run a linked skill by writing into `.cs`; this is
                 // where the app notices and puts the question on screen.
                 self.refreshSkillRequests()
+                // …and asks for a service to be started or stopped the same way.
+                self.refreshControlRequests()
             }
         }
         engine.refreshExternalStatuses(store.config.services)
@@ -532,6 +547,47 @@ final class StudioModel: ObservableObject {
 
     var links: [ProjectLink] { store.config.links }
 
+    // MARK: - The bridge to this project
+
+    /// Is Claude Studio's own MCP server registered for this project?
+    var bridgeConnected: Bool {
+        mcp.servers.contains { $0.name == ProjectBridge.serverName }
+    }
+
+    /// The bridge's own entry, so the pane can show its health like any other server.
+    var bridgeServer: MCPServer? {
+        mcp.servers.first { $0.name == ProjectBridge.serverName }
+    }
+
+    /// Connects this project to the bridge — with nothing linked, and nothing to link.
+    ///
+    /// The bridge used to arrive only as a side effect of linking another project,
+    /// which made `project_runtime` and `read_output` — the only way a session can see
+    /// what its OWN project is running — reachable exclusively by declaring an
+    /// interest in someone else's. So it is a thing that can be switched on for its
+    /// own sake, and linking still turns it on for you.
+    func connectBridge(completion: ((Bool, String) -> Void)? = nil) {
+        guard !bridgeConnected, !bridgeConnecting else { return }
+        bridgeConnecting = true
+        ProjectBridge.register(project: project, mcp: mcp) { ok, output in
+            Task { @MainActor in
+                self.bridgeConnecting = false
+                self.mcp.scan()
+                if !ok, let detail = output.nilIfEmpty {
+                    NSLog("[ProjectBridge] registration failed: %@", detail)
+                }
+                completion?(ok, output)
+            }
+        }
+    }
+
+    /// Removes the registration. The links stay in `.cs/links.json` — they are this
+    /// project's own record, and reconnecting brings them back exactly as they were.
+    func disconnectBridge() {
+        guard let server = bridgeServer else { return }
+        mcp.remove(server)
+    }
+
     /// Links a project and makes sure the bridge is registered with Claude.
     func link(project other: Project, allowEdits: Bool,
               role: String = "", useWhen: String = "",
@@ -581,6 +637,15 @@ final class StudioModel: ObservableObject {
             .filter { $0.status == .pending }
             .sorted { $0.requestedAt < $1.requestedAt }
         guard let next = pending.first else { return }
+        // This project's own skill needs no confirmation. The gate exists because a
+        // skill picked by name cannot be told apart from another project's — here
+        // there is no other project, and the session could invoke the very same skill
+        // with its own Skill tool. What it gains by asking is the runner: a report, a
+        // `.state.json` and a tab, instead of a skill run that leaves no record.
+        if next.projectPath == project.path {
+            approve(next)
+            return
+        }
         // A request naming a project we are no longer linked to is refused here rather
         // than shown: the link is the authorization, and it can be revoked.
         guard links.contains(where: { $0.path == next.projectPath }) else {
@@ -591,6 +656,52 @@ final class StudioModel: ObservableObject {
             return
         }
         pendingRequest = next
+    }
+
+    /// Carries out the service start/stop a session asked for through the bridge.
+    ///
+    /// No confirmation, unlike a linked run: this acts on the session's OWN project,
+    /// on a service that project already defines, and the same session could start
+    /// the command in Bash anyway. Going through the app is what keeps the sidebar,
+    /// the status poll and the output tab telling the truth about it.
+    func refreshControlRequests() {
+        let pending = Control.read(project)
+            .filter { $0.status == .pending }
+            .sorted { $0.requestedAt < $1.requestedAt }
+        guard !pending.isEmpty else { return }
+
+        for request in pending {
+            guard let service = store.config.services.first(where: { $0.name == request.target })
+                ?? store.config.services.first(where: {
+                    $0.name.localizedCaseInsensitiveCompare(request.target) == .orderedSame })
+            else {
+                let known = store.config.services.map(\.name).joined(separator: ", ")
+                Control.settle(request.id, in: project, status: .failed,
+                               note: known.isEmpty
+                                   ? "\(project.name) defines no services."
+                                   : "\(project.name) has no service \"\(request.target)\". "
+                                     + "It has: \(known)")
+                continue
+            }
+
+            switch request.action {
+            case .start:
+                engine.startService(service, project: project)
+            case .stop:
+                engine.stopService(service)
+            case .restart:
+                engine.restartService(service, project: project)
+            }
+            // No tab is opened: this happens while someone is working in the window,
+            // and stealing the active tab for a restart nobody watched for is worse
+            // than the output being one `read_output` away.
+            //
+            // A stop is Ctrl-C first and a kill three seconds later, so "done" means
+            // the app acted, not that the port is free yet — the bridge checks the
+            // running state itself before it answers.
+            Control.settle(request.id, in: project, status: .done,
+                           note: "\(request.action.rawValue) \(service.name) in \(project.name).")
+        }
     }
 
     func decline(_ request: SkillRequest) {
