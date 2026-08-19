@@ -213,6 +213,18 @@ struct CommandPalette: View {
 
         for link in model.links {
             out.append(PaleteLinkItem(link: link, model: model).item)
+            // Searchable as "wishbio deploy": the project is part of the title rather
+            // than only the subtitle, because a bare `deploy` here would be the very
+            // ambiguity the skill list was cleared of.
+            for skill in model.skills(of: link) {
+                out.append(PaletteItem(id: "ls-\(link.id)-\(skill.name)", icon: "play.circle",
+                                       group: "Linked skill",
+                                       title: "\(link.name) · \(skill.name)",
+                                       subtitle: skill.description
+                                           ?? "Run in \(link.name), after you confirm") {
+                    model.askToRun(skill: skill.name, of: link)
+                })
+            }
         }
 
         for server in model.mcp.servers {

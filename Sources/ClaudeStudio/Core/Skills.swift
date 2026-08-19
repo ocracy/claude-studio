@@ -47,7 +47,9 @@ final class SkillStore: ObservableObject {
 
     // MARK: - Discovery
 
-    private nonisolated static func discover(in root: URL, scope: Skill.Scope) -> [Skill] {
+    /// Not private: `LinkedRuns` scans a linked project's skills with the same
+    /// rules, and a second copy of the layout is a second place for it to drift.
+    nonisolated static func discover(in root: URL, scope: Skill.Scope) -> [Skill] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
             at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])

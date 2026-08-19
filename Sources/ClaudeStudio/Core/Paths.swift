@@ -139,6 +139,13 @@ enum Paths {
         runsDir(project, skill: skill).appendingPathComponent("usage.jsonl")
     }
 
+    /// Requests from a session to run a LINKED project's skill. Written by the
+    /// bridge, decided by the app — see `LinkedRuns`. It lives in the project that
+    /// asked, not in the one that owns the skill.
+    static func skillRequests(_ project: Project) -> URL {
+        csDir(project).appendingPathComponent("skill-requests.json")
+    }
+
     static func runState(_ project: Project, skill: String) -> URL {
         runsDir(project, skill: skill).appendingPathComponent(".state.json")
     }

@@ -39,6 +39,10 @@ struct StudioView: View {
         .sheet(isPresented: $model.themeSheetOpen) {
             ThemeEditor(model: model, onDismiss: { model.themeSheetOpen = false })
         }
+        // Nothing a linked project's skill does starts without passing through here.
+        .sheet(item: $model.pendingRequest) { request in
+            LinkedRunConfirm(model: model, request: request)
+        }
         // Everything below reads the project's accent from here; nothing consults a
         // global, because a second window is showing a different project.
         .environment(\.studioTheme, model.theme)

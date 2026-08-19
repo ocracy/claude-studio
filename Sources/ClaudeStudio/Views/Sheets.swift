@@ -587,6 +587,63 @@ struct SheetShell<Content: View>: View {
     }
 }
 
+// MARK: - Confirm running a linked project's skill
+
+/// The gate in front of every linked-project run.
+///
+/// The whole reason a linked project's skills stay out of the session's skill list is
+/// that a skill picked by name cannot be told apart from this project's own. So the
+/// one place a linked skill CAN be started says, in plain words, which project it
+/// will act on — that is the sentence worth reading before a deploy, and it is why
+/// the project name is the loudest thing on the sheet.
+struct LinkedRunConfirm: View {
+    @Environment(\.studioTheme) private var theme
+    @ObservedObject var model: StudioModel
+    let request: SkillRequest
+
+    var body: some View {
+        SheetShell(title: "Run a linked project's skill",
+                   confirm: ("Run in \(request.projectName)", { model.approve(request) }),
+                   onDismiss: { model.decline(request) }) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(request.skill)
+                    .font(Theme.ui(14, .semibold))
+                    .foregroundStyle(theme.text)
+                Text("runs in \(request.projectName)")
+                    .font(Theme.ui(12))
+                    .foregroundStyle(theme.accent)
+                Text(request.projectPath)
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(theme.text3)
+                    .textSelection(.enabled)
+            }
+
+            if let asker = request.requestedBy.nilIfEmpty {
+                Text("Asked for by the session “\(asker)” in \(model.project.name).")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(theme.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let extra = request.prompt.nilIfEmpty {
+                Field(label: "Extra instructions") {
+                    Text(extra)
+                        .font(Theme.ui(11.5))
+                        .foregroundStyle(theme.text2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Text("It runs in \(request.projectName)'s own directory, under that project's "
+                 + "CLAUDE.md and settings — not this one's. The tab opens here so you can "
+                 + "watch it and answer it if it asks something.")
+                .font(Theme.ui(11))
+                .foregroundStyle(theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 /// A labelled form field.
 // MARK: - Ask Claude for services or scripts
 

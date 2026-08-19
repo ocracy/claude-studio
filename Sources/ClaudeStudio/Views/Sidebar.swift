@@ -524,6 +524,29 @@ struct Sidebar: View {
                         Divider()
                         Button("Unlink") { model.unlink(link) }
                     }
+
+                // A linked project's skills are kept out of the session's skill list
+                // on purpose, so this is where they can be reached at all. Indented
+                // under their project, because which project a deploy acts on is the
+                // only thing about it worth knowing at a glance.
+                ForEach(model.skills(of: link), id: \.name) { skill in
+                    Button { model.askToRun(skill: skill.name, of: link) } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "play.circle")
+                                .font(.system(size: 10))
+                                .foregroundStyle(theme.text3)
+                            Text(skill.name)
+                                .font(Theme.ui(11.5))
+                                .foregroundStyle(theme.text2)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.leading, 26).padding(.trailing, 8).padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(skill.description ?? "Run \(skill.name) in \(link.name)")
+                }
             }
 
             if !model.mcp.servers.isEmpty {

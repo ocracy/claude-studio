@@ -44,6 +44,8 @@ Sources/ClaudeStudio/
 │   ├── MCP.swift              # MCP servers: reads Claude's config, mutates via claude mcp
 │   ├── ClaudeCommands.swift   # .claude/commands scanner (slash commands)
 │   ├── ProjectLinks.swift     # links to other projects + bridge install/registration
+│   ├── LinkAccess.swift       # writable links → permissions.additionalDirectories
+│   ├── LinkedRuns.swift       # the queue + confirmation behind running a linked skill
 │   ├── Usage.swift            # hook event spool → usage records + live state
 │   ├── Runs.swift             # run reports (the reports are the state)
 │   ├── Scheduler.swift        # runner script + launchd plist
@@ -101,9 +103,22 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   AND write and loads no skills, which makes the guarantee structural rather than a
   rule the model has to follow. `--settings` is MERGED, so the project's own
   `.claude/settings.json` survives. Running a linked project's skill on purpose is
-  Claude Studio's job, from its own interface, in the project that owns it — never by
-  putting it in front of the model. The bridge's `project_capabilities` was never the
-  leak and still reports file paths for read-only links.
+  Claude Studio's job — see the next rule. The bridge's `project_capabilities` was
+  never the leak and still reports file paths for read-only links.
+- **Running a linked project's skill**: `run_skill` + `wait_for_skill_run` on the
+  bridge, `LinkedRuns` in the app. The project is a REQUIRED argument — there is no
+  default and no nearest match, so the ambiguity that made the skill list dangerous
+  cannot come back through the tool. A request lands in the CALLING project's
+  `.cs/skill-requests.json` as `pending` and **nothing runs until the user presses a
+  button**; the sheet names the project, not just the skill. On approval the skill runs
+  in the project that OWNS it, through the very runner `Scheduler` writes for a
+  scheduled run — same script, same report, same `.state.json`, which is exactly what
+  makes completion detectable. The state file is DELETED before launching: the runner
+  writes it at start and rewrites it at exit, so a leftover `finishedAt` from the last
+  run would otherwise read as instant success. The tab opens in the calling window so a
+  skill that asks a question can be answered; `wait_for_skill_run` returns "still
+  running" on timeout rather than blocking. Two processes share the queue file, so both
+  sides re-read immediately before writing — the `sessions.json` discipline.
 - **The bridge binary** is copied from the bundle to `Paths.binDir` and registered from
   THERE: the updater replaces the whole bundle and the user can move the app, while an
   MCP entry stores an absolute path. `MCPStore.add` quotes the command — our path

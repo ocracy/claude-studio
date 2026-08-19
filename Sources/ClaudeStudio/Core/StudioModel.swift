@@ -212,6 +212,9 @@ final class StudioModel: ObservableObject {
             Task { @MainActor in
                 self.refreshSessions()
                 self.engine.refreshExternalStatuses(self.store.config.services)
+                // A session asks to run a linked skill by writing into `.cs`; this is
+                // where the app notices and puts the question on screen.
+                self.refreshSkillRequests()
             }
         }
         engine.refreshExternalStatuses(store.config.services)
@@ -550,6 +553,113 @@ final class StudioModel: ObservableObject {
     }
 
     func unlink(_ link: ProjectLink) { store.removeLink(link.id) }
+
+    // MARK: - Running a linked project's skill
+
+    /// The request the confirmation sheet is showing. Nothing runs while this is set
+    /// and unanswered — that is the whole point of the queue.
+    @Published var pendingRequest: SkillRequest?
+
+    /// The skills of a linked project, for the sidebar and the palette.
+    func skills(of link: ProjectLink) -> [Skill] { LinkedRuns.skills(of: link) }
+
+    /// Asks to run a linked project's skill. Started by a person — the sidebar or the
+    /// palette — so it goes straight to the confirmation without touching the queue
+    /// file; the button press and the answer are the same gesture.
+    func askToRun(skill: String, of link: ProjectLink) {
+        pendingRequest = SkillRequest(project: link.asProject, skill: skill)
+    }
+
+    /// Picks up a request a session made through the bridge. Only the oldest pending
+    /// one is shown: two confirmations at once is a dialog fighting a dialog, and the
+    /// rest keep their place in the queue.
+    func refreshSkillRequests() {
+        guard pendingRequest == nil else { return }
+        let pending = LinkedRuns.read(project)
+            .filter { $0.status == .pending }
+            .sorted { $0.requestedAt < $1.requestedAt }
+        guard let next = pending.first else { return }
+        // A request naming a project we are no longer linked to is refused here rather
+        // than shown: the link is the authorization, and it can be revoked.
+        guard links.contains(where: { $0.path == next.projectPath }) else {
+            LinkedRuns.update(next.id, in: project) {
+                $0.status = .failed
+                $0.note = "\(next.projectName) is not linked to \(self.project.name)."
+            }
+            return
+        }
+        pendingRequest = next
+    }
+
+    func decline(_ request: SkillRequest) {
+        LinkedRuns.update(request.id, in: project) {
+            $0.status = .declined
+            $0.note = "Declined in Claude Studio."
+        }
+        pendingRequest = nil
+    }
+
+    /// Approves a request and runs the skill IN THE PROJECT THAT OWNS IT: the runner
+    /// is written for that project and the tab is `cd`'d into its directory, so the
+    /// skill sees its own `CLAUDE.md`, its own settings and its own sibling skills.
+    /// The tab lives in this window, so it can be watched — and answered, if the
+    /// skill asks something — without leaving what you were doing.
+    func approve(_ request: SkillRequest) {
+        pendingRequest = nil
+        let owner = request.project
+        guard owner.exists else {
+            LinkedRuns.update(request.id, in: project) {
+                $0.status = .failed
+                $0.note = "\(owner.path) no longer exists on disk."
+            }
+            return
+        }
+
+        Paths.ensure(Paths.runsDir(owner, skill: request.skill))
+        // The runner writes `.state.json` when it starts and rewrites it when it ends.
+        // Clearing it first is what lets the bridge tell THIS run's completion from
+        // the last one's — otherwise a stale `finishedAt` reads as instant success.
+        try? FileManager.default.removeItem(at: Paths.runState(owner, skill: request.skill))
+
+        let script = Scheduler.writeRunnerScript(
+            project: owner, skill: request.skill,
+            prompt: Scheduler.promptFor(project: owner, skill: request.skill,
+                                        extra: request.prompt))
+
+        LinkedRuns.update(request.id, in: project) { $0.status = .running }
+
+        let title = "\(owner.name): \(request.skill)"
+        let tab = StudioTab(kind: .script, ref: "linked-\(request.id)", title: title)
+        open(tab)
+        engine.runCommandTab(key: tab.terminalKey, name: title,
+                             command: "CS_RUN_MODE=linked /bin/zsh \(Shell.quoted(script.path))",
+                             cwd: owner.path)
+        watchFinish(of: request, owner: owner)
+    }
+
+    /// Polls the runner's own state file until it reports an exit code, then settles
+    /// the request. The state file is the runner's, not ours — a scheduled run and a
+    /// linked one finish through exactly the same signal.
+    private func watchFinish(of request: SkillRequest, owner: Project) {
+        let stateURL = Paths.runState(owner, skill: request.skill)
+        Task { @MainActor in
+            // Long enough for a deploy, and it stops either way: the record is left
+            // `running` and the bridge reports the tab is still open.
+            for _ in 0..<720 {
+                try? await Task.sleep(for: .seconds(5))
+                guard let data = try? Data(contentsOf: stateURL),
+                      let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let code = json["exitCode"] as? Int
+                else { continue }
+                LinkedRuns.update(request.id, in: self.project) {
+                    $0.status = .finished
+                    $0.exitCode = code
+                    $0.reportFile = json["reportFile"] as? String
+                }
+                return
+            }
+        }
+    }
 
     /// Sessions that were started before the current set of writable links, and so
     /// cannot see them yet.

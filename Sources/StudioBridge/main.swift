@@ -93,15 +93,16 @@ let server = MCPServer(
     Links marked `allow_edits` are already in your working directories, so edit their \
     files with your normal tools. For read-only links use `read_file` and `search_files`.
 
-    A linked project's skills and commands are deliberately NOT in your skill list — \
-    they belong to that project, and a skill picked by name alone cannot be told apart \
-    from this project's own. `project_capabilities` reports them as markdown files \
-    instead. You may read one at its `file` path to answer a question about it, but do \
-    not carry out a linked project's deploy, release or migration by following its \
-    steps here: that runs another project's operation in this project's session, with \
-    the wrong configuration and no record. Say the user should run it from Claude \
-    Studio, which starts it in the project that owns it. Do not expect `/command` to \
-    resolve either — those belong to that project's own sessions.
+    A linked project's skills are deliberately NOT in your skill list — they belong to \
+    that project, and a skill picked by name alone cannot be told apart from this \
+    project's own. To run one, use `run_skill` with the project named explicitly, then \
+    `wait_for_skill_run` for the result: it runs in the project that owns it, under \
+    that project's own configuration, after the user confirms. Never carry out a linked \
+    project's deploy, release or migration by reading its SKILL.md and following the \
+    steps here — that runs another project's operation in this project's session, with \
+    the wrong configuration and no record. Reading one to ANSWER a question about it is \
+    fine. Do not expect `/command` to resolve either — those belong to that project's \
+    own sessions.
     """,
     tools: [
         // MARK: linked_projects
@@ -233,6 +234,136 @@ let server = MCPServer(
                 + (pane.dead ? "exited\(pane.exitCode.map { " (\($0))" } ?? "")" : "running")
             return text.nilIfEmpty.map { "\(header)\n\n\($0)" }
                 ?? "\(header)\n\n(no output captured)"
+        },
+
+        // MARK: run_skill
+        MCPServer.Tool(
+            name: "run_skill",
+            title: "Ask to run a linked project's skill",
+            description: "Requests that one of a linked project's skills be run — in "
+                + "that project, not in this one. Claude Studio asks the user to confirm; "
+                + "nothing runs until they do. Returns a request id: pass it to "
+                + "`wait_for_skill_run` to wait for the result. Name the project "
+                + "explicitly; there is no default and no nearest match.",
+            inputSchema: ["type": "object",
+                          "properties": projectArgument.merging([
+                              "skill": ["type": "string",
+                                        "description": "Skill name, as `project_capabilities` reports it."],
+                              "prompt": ["type": "string",
+                                         "description": "Optional extra instructions for the run."],
+                          ]) { a, _ in a },
+                          "required": ["project", "skill"],
+                          "additionalProperties": false]
+        ) { arguments in
+            let (target, _) = try reader(for: arguments)
+            guard target.exists else {
+                throw MCPServer.ToolError("\(target.path) no longer exists on disk.")
+            }
+            guard let skill = arguments.string("skill")?.nilIfEmpty else {
+                throw MCPServer.ToolError("Which skill? Give its name.")
+            }
+            // Checked here so a typo is a clear error now, rather than a confirmation
+            // the user approves for a skill that turns out not to exist.
+            guard let match = target.skills().first(where: { $0.name == skill }) else {
+                let known = target.skills().map(\.name).joined(separator: ", ")
+                throw MCPServer.ToolError(known.isEmpty
+                    ? "\(target.name) defines no skills."
+                    : "\(target.name) has no skill \"\(skill)\". It has: \(known)")
+            }
+
+            let id = UUID().uuidString
+            let stamp = ISO8601DateFormatter().string(from: Date())
+            try owner.appendRequest([
+                "id": id,
+                "projectPath": target.path,
+                "projectName": target.name,
+                "skill": match.name,
+                "prompt": arguments.string("prompt") ?? "",
+                "requestedAt": stamp,
+                "status": "pending",
+                "requestedBy": ProcessInfo.processInfo.environment["CS_TAB_NAME"] ?? "",
+            ])
+            return jsonText([
+                "request_id": id,
+                "status": "pending",
+                "project": target.name,
+                "skill": match.name,
+                "next": "Claude Studio is asking \(owner.name)'s window to confirm this "
+                    + "run. Call wait_for_skill_run with this request_id to wait for the "
+                    + "result. Nothing has run yet.",
+            ])
+        },
+
+        // MARK: wait_for_skill_run
+        MCPServer.Tool(
+            name: "wait_for_skill_run",
+            title: "Wait for a linked skill run to finish",
+            description: "Waits for a run started by `run_skill` and returns its outcome: "
+                + "the exit code and the report the skill wrote. Returns early — without "
+                + "failing — if the user has not confirmed yet or the run is still going, "
+                + "so a long deploy is polled rather than blocked on.",
+            inputSchema: ["type": "object",
+                          "properties": [
+                              "request_id": ["type": "string",
+                                             "description": "The id `run_skill` returned."],
+                              "timeout_sec": ["type": "integer",
+                                              "description": "How long to wait (default 120, max 600)."],
+                          ] as [String: Any],
+                          "required": ["request_id"],
+                          "additionalProperties": false]
+        ) { arguments in
+            guard let id = arguments.string("request_id")?.nilIfEmpty else {
+                throw MCPServer.ToolError("Which request? Give the id run_skill returned.")
+            }
+            let limit = min(max(arguments.int("timeout_sec") ?? 120, 5), 600)
+            let deadline = Date().addingTimeInterval(TimeInterval(limit))
+
+            var current: [String: Any]?
+            repeat {
+                guard let found = owner.request(id: id) else {
+                    throw MCPServer.ToolError("No request \(id) in \(owner.name).")
+                }
+                current = found
+                let status = found.string("status") ?? "pending"
+                if status != "pending", status != "running" { break }
+                if Date() >= deadline { break }
+                // Polling, not a watcher: this process is a short-lived stdio server
+                // and the app writes the answer through an atomic replace anyway.
+                Thread.sleep(forTimeInterval: 2)
+            } while true
+
+            guard let request = current else {
+                throw MCPServer.ToolError("No request \(id) in \(owner.name).")
+            }
+            let status = request.string("status") ?? "pending"
+            let target = ProjectReader(path: request.string("projectPath") ?? "")
+            let skill = request.string("skill") ?? ""
+
+            var out: [String: Any] = ["request_id": id, "status": status,
+                                      "project": target.name, "skill": skill]
+            if let note = request.string("note") { out["note"] = note }
+
+            switch status {
+            case "finished":
+                let code = request.int("exitCode") ?? 0
+                out["exit_code"] = code
+                out["result"] = code == 0 ? "success" : "failed"
+                if let report = target.latestReport(skill: skill) { out["report"] = report }
+            case "declined":
+                out["result"] = "The user declined this run. Do not ask again unless they "
+                    + "bring it up; nothing was run."
+            case "failed":
+                out["result"] = "The run could not be started."
+            case "pending":
+                out["result"] = "Still waiting for the user to confirm in Claude Studio. "
+                    + "Nothing has run. Call again to keep waiting, or tell them it is "
+                    + "waiting for them."
+            default:
+                out["result"] = "Still running in a tab in \(owner.name)'s window. If it is "
+                    + "asking a question it is waiting for the user there. Call again to "
+                    + "keep waiting."
+            }
+            return jsonText(out)
         },
 
         // MARK: read_file

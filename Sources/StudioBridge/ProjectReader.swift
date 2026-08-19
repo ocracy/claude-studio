@@ -215,6 +215,60 @@ struct ProjectReader {
         return ports.sorted()
     }
 
+    // MARK: - Requests to run a linked project's skill
+
+    /// `.cs/skill-requests.json` in the project that ASKED. The app decides them; the
+    /// bridge only appends and reads back. Both sides re-read immediately before
+    /// writing — two processes share this file, exactly as they share `sessions.json`.
+    var requestsFile: URL { url.appendingPathComponent(".cs/skill-requests.json") }
+
+    func requests() -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: requestsFile),
+              let array = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]]
+        else { return [] }
+        return array
+    }
+
+    func appendRequest(_ request: [String: Any]) throws {
+        var all = requests()
+        all.append(request)
+        let dir = url.appendingPathComponent(".cs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: all, options: [.prettyPrinted, .sortedKeys]) else {
+            throw MCPServer.ToolError("Could not encode the request.")
+        }
+        // Atomic, like every write in this project: a half-written queue read by the
+        // app is a request that silently disappears.
+        let temp = requestsFile.appendingPathExtension("tmp")
+        try? data.write(to: temp)
+        _ = try? FileManager.default.replaceItemAt(requestsFile, withItemAt: temp)
+    }
+
+    func request(id: String) -> [String: Any]? {
+        requests().first { $0.string("id") == id }
+    }
+
+    /// Reports of a skill in THIS project, newest first — how a finished run is read
+    /// back after the runner has written it.
+    func latestReport(skill: String) -> String? {
+        let dir = url.appendingPathComponent(".cs/runs/\(skill)", isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]) else { return nil }
+        let newest = entries
+            .filter { $0.pathExtension.lowercased() == "md" }
+            .max { a, b in
+                let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                return da < db
+            }
+        guard let newest else { return nil }
+        return try? String(contentsOf: newest, encoding: .utf8)
+    }
+
     // MARK: - Files
 
     /// Reads a file inside the project. The path is resolved and checked so a link can
