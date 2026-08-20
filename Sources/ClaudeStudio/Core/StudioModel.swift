@@ -1023,8 +1023,18 @@ final class StudioModel: ObservableObject {
     func runSkillVisible(_ skill: Skill) {
         Paths.ensure(Paths.runsDir(project, skill: skill.name))
         let env = Runs.environment(project: project, skill: skill.name, mode: "manual")
+        // A visible run knows its report path up front, so the prompt carries the
+        // resolved path and the previous report's text — the same thing the runner
+        // script substitutes for a scheduled run.
+        let previous = Runs.latest(project: project, skill: skill.name)
+        let context = Scheduler.RunContext(
+            reportFile: env["CS_REPORT_FILE"] ?? "",
+            runMode: "manual",
+            lastRunAt: env["CS_LAST_RUN_AT"] ?? "",
+            lastReport: previous.map { String($0.body.suffix(8000)) } ?? "")
         newSession(name: "skill: \(skill.name)",
-                   prompt: Scheduler.promptFor(project: project, skill: skill.name),
+                   prompt: Scheduler.promptFor(project: project, skill: skill.name,
+                                               context: context),
                    autoRun: true, extraEnv: env)
     }
 

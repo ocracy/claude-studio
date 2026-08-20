@@ -326,6 +326,21 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   own report; only the "Run failed (exit N)" notification comes from the exit code.
   `RunStore` is a separate `ObservableObject`, so `StudioModel` forwards its
   `objectWillChange` — without that a view holding only the model redraws late.
+- **The run prompt is assembled in the runner, not in Swift**: the report path
+  carries a stamp only zsh produces, so the prompt used to hand Claude the literal
+  string `$CS_REPORT_FILE` and rely on it reading the variable back. It cannot: in
+  print mode a Bash call can never be approved, so the model guesses a path — which
+  is exactly how a run ends with an answer on screen and NOTHING in the run list, on
+  one machine but not another. The template now carries `@@REPORT_FILE@@` /
+  `@@LAST_RUN_AT@@` / `@@LAST_REPORT@@` / `@@RUN_MODE@@` and the script substitutes
+  them, inlining the previous report's TEXT (a path costs a Read the run may skip).
+  The heredoc is QUOTED — a `$` or a backtick in the user's own extra instructions
+  must reach Claude, not the shell — and `@@LAST_REPORT@@` is substituted LAST, or an
+  old report containing a placeholder would rewrite itself. `Scheduler.RunContext`
+  does the same substitution in Swift for a visible run, which knows its path up
+  front. **The runner also writes the report itself when the skill did not**
+  (`status: warning`, body = the tail of `.last-output.txt`): the reports are the
+  state, so a missing file is indistinguishable from a job that never fired.
 - **Project themes**: a project's palette (`ThemePreset` + a custom accent) lives in
   `.cs/settings.json` and reaches the interface through the `\.studioTheme`
   environment value — NEVER a mutable `Theme.accent`, because one process shows

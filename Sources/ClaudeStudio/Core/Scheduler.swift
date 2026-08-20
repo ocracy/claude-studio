@@ -37,31 +37,72 @@ enum Scheduler {
 
     // MARK: - The instruction handed to the skill
 
+    /// What the prompt's placeholders resolve to for one particular run.
+    ///
+    /// A visible run knows all of it up front; the runner script does not — the
+    /// report's file name carries a stamp only zsh produces — so there the
+    /// substitution happens in the script instead (see `writeRunnerScript`).
+    struct RunContext {
+        var reportFile: String
+        var runMode: String
+        var lastRunAt: String
+        var lastReport: String
+    }
+
     /// The prompt handed to Claude. It invokes the skill by name and states
     /// where and in what shape the report must be written, so the output becomes
     /// a readable table in the app.
-    static func promptFor(project: Project, skill: String, extra: String = "") -> String {
+    ///
+    /// The report path is INLINED, never left as `$CS_REPORT_FILE`: in print mode
+    /// (`claude -p`) a Bash call cannot be approved, so the one way to read that
+    /// variable back is closed and the model is left guessing a path — which is
+    /// exactly how a run ends with an answer on screen and nothing in the run list.
+    /// The previous report is inlined for the same reason: a path costs a Read the
+    /// run may skip, the text costs nothing.
+    ///
+    /// With no `context` the placeholders (`@@REPORT_FILE@@` …) survive verbatim,
+    /// which is what the runner script substitutes at run time.
+    static func promptFor(project: Project, skill: String, extra: String = "",
+                          context: RunContext? = nil) -> String {
         var prompt = """
-        Run the \(skill) skill.
+        /\(skill) bu skilli çalıştır. Skill sonucunu markdown formatında bir rapor \
+        gibi ver.
 
-        When you are done, write the report to `$CS_REPORT_FILE`. Start the file
-        with this frontmatter:
+        Bu skilli en son çalıştırma zamanı: @@LAST_RUN_AT@@
 
-        ---
-        run_at: <ISO 8601 timestamp>
-        status: ok | warning | failed
-        summary: <one line, 90 characters max>
-        duration_sec: <number>
-        trigger: $CS_RUN_MODE
-        ---
-
-        Then write your findings as short markdown. The previous report is at
-        `$CS_LAST_REPORT`; call out anything that changed meaningfully.
+        Son skillin raporu:
+        @@LAST_REPORT@@
         """
         if let e = extra.nilIfEmpty {
-            prompt += "\n\nAdditional instructions:\n\(e)"
+            prompt += "\n\nEk talimatlar:\n\(e)"
         }
+        prompt += """
+
+
+        Raporu şu dosyaya yaz — bu mutlak yolu aynen kullan, başka bir yere yazma:
+        @@REPORT_FILE@@
+
+        Dosya şu frontmatter ile başlasın (alan adları aynen İngilizce kalsın):
+
+        ---
+        run_at: <ISO 8601 zaman damgası>
+        status: ok | warning | failed
+        summary: <tek satır, en fazla 90 karakter>
+        duration_sec: <sayı>
+        trigger: @@RUN_MODE@@
+        ---
+
+        Ardından bulguları kısa markdown olarak yaz; önceki rapora göre anlamlı bir
+        değişiklik varsa açıkça belirt. Rapor dosyasını yazmadan işi bitirme.
+        """
+        guard let c = context else { return prompt }
         return prompt
+            .replacingOccurrences(of: "@@RUN_MODE@@", with: c.runMode)
+            .replacingOccurrences(of: "@@REPORT_FILE@@", with: c.reportFile)
+            .replacingOccurrences(of: "@@LAST_RUN_AT@@",
+                                  with: c.lastRunAt.nilIfEmpty ?? "daha önce çalıştırılmadı")
+            .replacingOccurrences(of: "@@LAST_REPORT@@",
+                                  with: c.lastReport.nilIfEmpty ?? "(önceki rapor yok)")
     }
 
     // MARK: - Runner script
@@ -73,6 +114,10 @@ enum Scheduler {
         let url = scriptURL(project: project, skill: skill)
         let runDir = Paths.runsDir(project, skill: skill).path
         let stateFile = Paths.runState(project, skill: skill).path
+
+        // The heredoc must not end early on a line the prompt itself contains.
+        var delim = "CS_PROMPT_EOF"
+        while prompt.contains(delim) { delim += "X" }
 
         let script = """
         #!/bin/zsh
@@ -118,7 +163,32 @@ enum Scheduler {
           export CS_LAST_RUN_AT=""; export CS_LAST_STATUS=""; export CS_LAST_SUMMARY=""
         fi
 
+        # The previous report's TEXT, not only its path: a path costs a Read the run
+        # may skip, the text costs nothing. Capped, or a long report crowds out the
+        # instructions that follow it.
+        LAST_BODY=""
+        if [[ -n "$LAST" ]]; then
+          LAST_BODY=$(tail -c 8000 "$LAST")
+        fi
+
+        # The prompt is assembled HERE rather than baked in by Swift: the report path
+        # carries a stamp only this script knows. A QUOTED heredoc keeps the template
+        # inert — a `$` or a backtick in the user's own instructions must reach Claude,
+        # not the shell — and the placeholders are substituted afterwards. The previous
+        # report goes in LAST, so its own text is never scanned for placeholders.
+        PROMPT=$(cat <<'\(delim)'
+        \(prompt)
+        \(delim)
+        )
+        LAST_AT_TEXT="${CS_LAST_RUN_AT:-daha önce çalıştırılmadı}"
+        LAST_BODY_TEXT="${LAST_BODY:-(önceki rapor yok)}"
+        PROMPT="${PROMPT//@@RUN_MODE@@/$CS_RUN_MODE}"
+        PROMPT="${PROMPT//@@REPORT_FILE@@/$CS_REPORT_FILE}"
+        PROMPT="${PROMPT//@@LAST_RUN_AT@@/$LAST_AT_TEXT}"
+        PROMPT="${PROMPT//@@LAST_REPORT@@/$LAST_BODY_TEXT}"
+
         STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        SECONDS=0
         print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"reportFile\\":\\"$CS_REPORT_FILE\\",\\"sessionId\\":\\"$SID\\"}" > "$STATE"
 
         cd "$CS_PROJECT_PATH" || exit 1
@@ -127,9 +197,45 @@ enum Scheduler {
         # `--verbose` is what makes the stream worth watching — without it print mode
         # says nothing until the very end. `$CODE` must come from `pipestatus`, since
         # `$?` after a pipe is tee's.
-        claude -p \(Shell.quoted(prompt)) --session-id "$SID" --permission-mode acceptEdits --verbose 2>&1 \\
-          | tee -a "$CS_RUN_DIR/.run.log"
+        # `.last-output.txt` is truncated first and then written by the same `tee`:
+        # it is what the fallback report below is made of, and appending would make
+        # every run inherit the last one's text.
+        : > "$CS_RUN_DIR/.last-output.txt"
+        claude -p "$PROMPT" --session-id "$SID" --permission-mode acceptEdits --verbose 2>&1 \\
+          | tee -a "$CS_RUN_DIR/.run.log" "$CS_RUN_DIR/.last-output.txt"
         CODE=${pipestatus[1]}
+        ELAPSED=$SECONDS
+
+        # A run that answered on screen but wrote no report used to vanish: the reports
+        # ARE the state, so no file meant no row in the run list and no way to tell a
+        # skipped write from a job that never fired. Write one instead — `warning`,
+        # because the run happened and only the report is missing.
+        if [[ ! -f "$CS_REPORT_FILE" ]]; then
+          if [[ $CODE -eq 0 ]]; then
+            FB_STATUS="warning"
+            FB_SUMMARY="Skill çalıştı ama rapor dosyası yazılmadı — çıktı aşağıda"
+          else
+            FB_STATUS="failed"
+            FB_SUMMARY="Çalışma başarısız (çıkış $CODE)"
+          fi
+          {
+            print -r -- "---"
+            print -r -- "run_at: $STARTED"
+            print -r -- "status: $FB_STATUS"
+            print -r -- "summary: $FB_SUMMARY"
+            print -r -- "duration_sec: $ELAPSED"
+            print -r -- "trigger: $CS_RUN_MODE"
+            print -r -- "---"
+            print -r -- ""
+            print -r -- "# $CS_SKILL_NAME"
+            print -r -- ""
+            print -r -- "Rapor dosyası yazılmadı; aşağıdaki metin çalışmanın çıktısıdır."
+            print -r -- ""
+            print -r -- '```'
+            tail -n 200 "$CS_RUN_DIR/.last-output.txt" 2>/dev/null
+            print -r -- '```'
+          } > "$CS_REPORT_FILE"
+        fi
 
         FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         print -r -- "{\\"startedAt\\":\\"$STARTED\\",\\"finishedAt\\":\\"$FINISHED\\",\\"exitCode\\":$CODE,\\"reportFile\\":\\"$CS_REPORT_FILE\\",\\"sessionId\\":\\"$SID\\"}" > "$STATE"
