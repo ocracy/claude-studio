@@ -154,6 +154,16 @@ struct Sidebar: View {
                 // it reads the project and fills the file in. Its own button, next
                 // to "+", because it is a different act — not a variant of adding
                 // one by hand, and it works on the whole list at once.
+                // The plural of the play button on each row, and it lives with them
+                // rather than in the window header, where it was on screen in every
+                // pane — including the ones that have nothing to do with services.
+                if model.pane == .services, !model.store.config.services.isEmpty {
+                    let anyRunning = model.runningServiceCount > 0
+                    IconButton(icon: anyRunning ? "stop.circle" : "play.circle",
+                               help: anyRunning ? "Stop all services" : "Start all services") {
+                        anyRunning ? model.stopAllServices() : model.startAllServices()
+                    }
+                }
                 if model.pane == .services || model.pane == .scripts {
                     IconButton(icon: "sparkles",
                                help: model.pane == .services

@@ -131,14 +131,9 @@ private struct TopBar: View {
                 .foregroundStyle(theme.text2)
             }
 
-            if !model.store.config.services.isEmpty {
-                SmallButton(title: model.runningServiceCount > 0 ? "Stop all" : "Start services",
-                            icon: model.runningServiceCount > 0 ? "stop.fill" : "play.fill") {
-                    model.runningServiceCount > 0 ? model.stopAllServices() : model.startAllServices()
-                }
-                .headerControl()
-            }
-
+            // "Start services" used to sit here, on every screen. It belongs where
+            // the services are: the header of that pane, next to the per-service
+            // buttons it is the plural of.
             if let version = updater.availableVersion {
                 SmallButton(title: "Update · \(version)", icon: "arrow.down.circle") {
                     SettingsWindow.show()
