@@ -268,10 +268,27 @@ final class StudioModel: ObservableObject {
     }
 
     /// The ones alive in tmux (listed in the sidebar).
-    var openSessions: [SessionRecord] { sessions.filter { liveSessions.contains($0.tmux) } }
+    var openSessions: [SessionRecord] { sessions.filter { isOpen($0) } }
+
+    /// Is this session one of the open ones?
+    ///
+    /// The tmux poll alone answers wrong in both directions, and both were visible:
+    /// a session started a moment ago is NOT in tmux yet — the terminal spawns only
+    /// once its container has settled on a size — and `Tmux.sessions` returns an
+    /// empty list for any failure at all, which dropped every open session into
+    /// "previous sessions" until the next tick. A tab in this window showing the
+    /// session is proof enough on its own; it is the thing the user is looking at.
+    func isOpen(_ record: SessionRecord) -> Bool {
+        liveSessions.contains(record.tmux) || tabs.contains { $0.id == record.tabKey }
+    }
+
+    /// The record behind a session tab, if the tab is one.
+    func sessionRecord(forTab id: String) -> SessionRecord? {
+        sessions.first { $0.tabKey == id }
+    }
 
     /// Closed sessions that can be reopened.
-    var pastSessions: [SessionRecord] { sessions.filter { !liveSessions.contains($0.tmux) } }
+    var pastSessions: [SessionRecord] { sessions.filter { !isOpen($0) } }
 
     func attention(of record: SessionRecord) -> Attention {
         engine.attention[record.tabKey] ?? .idle
@@ -387,7 +404,10 @@ final class StudioModel: ObservableObject {
         // A live session is simply attached. A dead one is resumed only if the
         // transcript is actually on disk; otherwise Claude prints "No session
         // found", exits instantly and leaves a dead terminal behind.
-        let alive = liveSessions.contains(record.tmux)
+        // Asked of tmux directly, not of the poll: reattaching or resuming is the one
+        // decision that must not ride on a set that can be up to a tick stale, and
+        // `has-session` is a single cheap call.
+        let alive = liveSessions.contains(record.tmux) || Tmux.exists(record.tmux)
         var resume: String?
         if !alive, let sid = record.claudeSID {
             // The id is kept even when there is no transcript yet: clearing it would

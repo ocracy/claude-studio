@@ -304,6 +304,10 @@ private struct ActivityRail: View {
 private struct TabBar: View {
     @ObservedObject var model: StudioModel
     @Environment(\.studioTheme) private var theme
+    /// The tab whose title is being edited, by tab id.
+    @State private var renaming: String?
+    @State private var renameText = ""
+    @FocusState private var renameFocused: Bool
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -322,10 +326,23 @@ private struct TabBar: View {
         let selected = model.activeTabID == tab.id
         return HStack(spacing: 7) {
             StatusDot(color: dotColor(tab), size: 5)
-            Text(tab.title)
-                .font(Theme.ui(12))
-                .foregroundStyle(selected ? theme.text : theme.text2)
-                .lineLimit(1)
+            if renaming == tab.id {
+                // Focused as it appears, or the keystrokes go to the terminal below.
+                TextField("session name", text: $renameText)
+                    .textFieldStyle(.plain)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(theme.text)
+                    .focused($renameFocused)
+                    .frame(width: 130)
+                    .onAppear { renameFocused = true }
+                    .onSubmit { commitRename(tab) }
+                    .onExitCommand { renaming = nil }
+            } else {
+                Text(tab.title)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(selected ? theme.text : theme.text2)
+                    .lineLimit(1)
+            }
             Button { model.closeTab(id: tab.id) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .semibold))
@@ -344,7 +361,33 @@ private struct TabBar: View {
         }
         .overlay(alignment: .trailing) { Rectangle().fill(theme.separator).frame(width: 1) }
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { beginRename(tab) }
         .onTapGesture { model.activeTabID = tab.id }
+        .contextMenu {
+            if model.sessionRecord(forTab: tab.id) != nil {
+                Button("Rename") { beginRename(tab) }
+                Divider()
+            }
+            Button("Close tab") { model.closeTab(id: tab.id) }
+        }
+    }
+
+    /// Only a session carries a name of its own — every other tab is titled after
+    /// the thing it shows (a skill, a service, a script), and renaming the tab
+    /// would rename nothing.
+    private func beginRename(_ tab: StudioTab) {
+        guard let record = model.sessionRecord(forTab: tab.id) else { return }
+        model.activeTabID = tab.id
+        renameText = record.name
+        renaming = tab.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { renameFocused = true }
+    }
+
+    private func commitRename(_ tab: StudioTab) {
+        if let record = model.sessionRecord(forTab: tab.id) {
+            model.renameSession(record, to: renameText)
+        }
+        renaming = nil
     }
 
     private func dotColor(_ tab: StudioTab) -> Color {

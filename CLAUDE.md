@@ -294,6 +294,15 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   `claude mcp list` connects to every server, so it runs only on demand. Health lines
   are matched against known server names — a plugin server is `plugin:a:b` and urls
   contain colons, so splitting on punctuation gets the name wrong.
+- **Open vs previous**: `StudioModel.isOpen` is `liveSessions ∪ the tabs this window
+  shows`, never the tmux poll alone — that poll answers wrong in BOTH directions and
+  both were visible. A session opened a second ago is not in tmux yet (the terminal
+  spawns only once its container settles on a size), and `Tmux.sessions` returns an
+  empty list for ANY failure, so a single bad tick dropped every open session,
+  including the one being typed into, under "previous sessions". A tab showing the
+  session is proof enough on its own. `openSession` still asks tmux directly
+  (`Tmux.exists`) before deciding to attach or `--resume`: that one decision must not
+  ride on a set that can be a tick stale.
 - **Sessions**: `SessionRecord` lives in `.cs/sessions.json` and outlives tmux.
   Claude's `session_id` is captured from the hook, and reopening only passes
   `--resume` when `ClaudeTranscripts.exists` confirms the transcript — otherwise

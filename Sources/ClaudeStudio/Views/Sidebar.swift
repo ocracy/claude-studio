@@ -966,7 +966,7 @@ private struct TranscriptOpener: View {
 
     private func row(_ transcript: ClaudeTranscripts.Transcript) -> some View {
         let live = model.sessions.first { $0.claudeSID == transcript.id }
-            .map { model.liveSessions.contains($0.tmux) } ?? false
+            .map { model.isOpen($0) } ?? false
         return HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
             HStack(spacing: 8) {
                 Image(systemName: live ? "bubble.left.fill" : "arrow.uturn.backward")

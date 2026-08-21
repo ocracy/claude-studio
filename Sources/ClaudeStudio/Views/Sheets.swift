@@ -68,7 +68,7 @@ struct SessionManager: View {
     }
 
     private func row(_ record: SessionRecord) -> some View {
-        let live = model.liveSessions.contains(record.tmux)
+        let live = model.isOpen(record)
         return HStack(spacing: 10) {
             StatusDot(color: live ? Theme.running : theme.idle)
             VStack(alignment: .leading, spacing: 2) {
