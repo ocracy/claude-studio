@@ -453,7 +453,11 @@ final class StudioModel: ObservableObject {
         if let index = tabs.firstIndex(where: { $0.id == record.tabKey }) {
             tabs[index].title = clean
         }
-        Tmux.setOption(record.tmux, "@cs_title", clean)
+        // A closed session can be renamed too, and its tmux session no longer exists —
+        // `set-option` on it only prints an error nobody reads.
+        if liveSessions.contains(record.tmux) {
+            Tmux.setOption(record.tmux, "@cs_title", clean)
+        }
         syncSessionContext()
     }
 

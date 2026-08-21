@@ -323,16 +323,42 @@ struct Sidebar: View {
                 .padding(.top, 14)
                 .padding(.bottom, 4)
             ForEach(model.pastSessions.prefix(8)) { record in
-                row(selected: false,
-                    dot: theme.idle,
-                    title: record.name,
-                    meta: model.canResume(record) ? "resumes conversation · \(record.lastUsed.relative)"
-                                                  : "starts fresh · \(record.lastUsed.relative)",
-                    action: { model.openSession(record) })
+                if renaming == record.tmux {
+                    renameField(record)
+                } else {
+                    // Built by hand rather than through `row`, for the same reason an
+                    // open session is: `row` is a Button, and a Button takes the first
+                    // click of a double click as one more press — the session would
+                    // reopen instead of the field appearing. A name matters MORE here
+                    // than above: this list is what is left of a conversation once its
+                    // tab is gone, and "claude" three times over says nothing.
+                    HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 6)) {
+                        HStack(spacing: 8) {
+                            StatusDot(color: theme.idle)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(record.name)
+                                    .font(Theme.ui(12.5))
+                                    .foregroundStyle(theme.text)
+                                    .lineLimit(1)
+                                Text(model.canResume(record)
+                                     ? "resumes conversation · \(record.lastUsed.relative)"
+                                     : "starts fresh · \(record.lastUsed.relative)")
+                                    .font(Theme.ui(10.5))
+                                    .foregroundStyle(theme.text3)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                        }
+                    }
+                    .onTapGesture(count: 2) { beginRename(record) }
+                    .onTapGesture { model.openSession(record) }
                     .contextMenu {
                         Button("Reopen") { model.openSession(record) }
+                        Button("Rename") { beginRename(record) }
+                        Divider()
                         Button("Delete record") { model.deleteSession(record) }
                     }
+                }
             }
         }
     }
