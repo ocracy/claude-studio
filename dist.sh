@@ -8,6 +8,11 @@ VERSION="$(cat VERSION)"
 APP="Claude Studio.app"
 ZIP="ClaudeStudio.zip"
 
+# The phone's JavaScript is never compiled by anything else, and on a phone a
+# syntax error is an empty screen with no explanation attached.
+echo "→ checking the bridge's JavaScript…"
+./scripts/check-bridge-js.sh
+
 echo "→ generating icon…"
 swift scripts/make-icon.swift >/dev/null
 iconutil -c icns AppIcon.iconset -o AppIcon.icns

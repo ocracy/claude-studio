@@ -4,6 +4,37 @@
 // into the tmux session where Claude is already running on the Mac — the same
 // thing the keyboard does when you sit in front of it.
 
+// ── the only console this page has ───────────────────────────────────────
+//
+// FIRST, before anything else runs. A phone has no inspectable console, and a
+// script that dies halfway leaves a page that loads its stylesheet, paints an
+// empty shell and then does nothing — indistinguishable from a network problem,
+// a certificate problem or a stale cache. Every one of those has a different
+// fix, and guessing between them is how an evening disappears.
+//
+// Registered at the top so it catches errors thrown while this very module is
+// still evaluating; anything later would be a handler that arrives after the
+// failure it was meant to report.
+function tell(message) {
+  try {
+    fetch("/api/log", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message }),
+    }).catch(() => {})
+  } catch {}
+}
+
+addEventListener("error", (event) => {
+  tell(`js error: ${event.message} @ ${event.filename}:${event.lineno}:${event.colno}`)
+})
+addEventListener("unhandledrejection", (event) => {
+  tell(`js rejection: ${event.reason?.message ?? String(event.reason)}`)
+})
+tell(`app booting ${location.protocol}//${location.host}${location.pathname}`
+   + ` secure=${window.isSecureContext}`
+   + ` standalone=${matchMedia("(display-mode: standalone)").matches}`)
+
 const $ = (id) => document.getElementById(id)
 
 const views = { list: $("list"), session: $("session"), settings: $("settings") }
@@ -844,14 +875,13 @@ $("push-test").onclick = async () => {
   }
 }
 
-// Where this actually loaded, said once, out loud.
+// Anything the page pulled in over plain http.
 //
-// A phone has no console anyone can read, and the two states that matter here
-// are indistinguishable by eye: a page served over https with no address bar
-// (an installed app — correct) looks exactly like a page served over http (a
-// dead end where nothing can be installed and no notification is ever
-// delivered). The Mac's bridge log is where that question gets answered.
-function reportEnvironment() {
+// The name matters: `reportEnvironment` already exists above, and declaring it
+// twice in a module is a SyntaxError that stops the whole file from executing —
+// which is not a broken function but a phone showing an empty shell, with no
+// clue on it as to why.
+function reportInsecureResources() {
   // Anything the page pulled in over plain http. ONE such resource is enough for
   // Chrome to call the whole page insecure — which silently withdraws installing
   // it as an app and every notification with it, while the padlock is the only
@@ -869,18 +899,14 @@ function reportEnvironment() {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      message: `app loaded ${location.protocol}//${location.host}`
-        + ` secureContext=${window.isSecureContext}`
-        + ` standalone=${matchMedia("(display-mode: standalone)").matches}`
-        + ` sw=${"serviceWorker" in navigator}`
-        + ` insecure=[${insecure.join(" ")}]`,
+      message: `app loaded, insecure resources=[${insecure.join(" ")}]`,
     }),
   }).catch(() => {})
 }
 
 // After load, so the resource list is not empty when it is read.
-if (document.readyState === "complete") setTimeout(reportEnvironment, 1500)
-else addEventListener("load", () => setTimeout(reportEnvironment, 1500))
+if (document.readyState === "complete") setTimeout(reportInsecureResources, 1500)
+else addEventListener("load", () => setTimeout(reportInsecureResources, 1500))
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js")

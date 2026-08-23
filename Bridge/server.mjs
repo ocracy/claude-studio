@@ -420,6 +420,18 @@ async function handle(req, res) {
     res.setHeader("content-security-policy", "upgrade-insecure-requests")
   }
 
+  // Every request except the terminal's own chatter.
+  //
+  // Without it there is no way to tell three situations apart that look
+  // identical from the phone — a stale copy served by its own service worker, a
+  // request that never left the device, and one that arrived and was refused —
+  // and they need opposite fixes. The terminal is excluded because ttyd polls,
+  // and a log nobody can read through is the same as no log.
+  if (!url.pathname.startsWith("/term")) {
+    console.log(`cs-bridge: ${req.socket.encrypted ? "https" : "http "} `
+      + `${req.method} ${url.pathname} ← ${req.socket.remoteAddress}`)
+  }
+
   const asset = url.pathname.slice(1)
   if (asset === "manifest.json") return serveManifest(res)
   if (PUBLIC.has(asset)) return serveStatic(res, asset)
