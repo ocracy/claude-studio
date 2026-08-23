@@ -246,6 +246,17 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   viewer — and `make-icons.mjs` tints the icon by a hash of that name. The cert's SAN
   carries `DNS:<fqdn>` beside the IPs; the name must be in the SAN, the common name is
   ignored. Moving from an IP origin to a name origin means re-adding the app once.
+- **Revoking a phone**: `PushDevices` + the devices card in Settings → Phone. A push
+  subscription outlives the app that made it — deleting the web app from a Home Screen
+  tells the Mac nothing, the browser keeps the service worker, and notifications keep
+  arriving from something the user believes they removed. Installing from two origins
+  (the address and the mesh name) is TWO subscriptions and two of every notification.
+  Neither is fixable from the phone, so the list lives on the machine that does the
+  sending. `/api/push/subscribe` records `host` and `user-agent` at subscribe time for
+  exactly this: without the origin, two entries are indistinguishable 200-character
+  URLs. Revoking is a write to `push-subscriptions.json`; `notify` re-reads it per
+  message, so the next notification is already not sent. Delivery still prunes on
+  404/410 by itself — that is the browser's side of the same fact.
 - **Answering from the notification**: a session that hands the turn back is often
   waiting on a numbered choice, and on a phone that is one decision buried behind an app
   launch, a terminal attach and a keyboard. `Bridge/lib/choices.mjs` reads the options off

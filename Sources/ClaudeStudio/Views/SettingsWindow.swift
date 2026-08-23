@@ -39,6 +39,7 @@ struct SettingsView: View {
     @State private var showToken = false
     @State private var copied = false
     @State private var installSheet = false
+    @State private var devices: [PushDevice] = []
 
     private enum Section: String, CaseIterable, Identifiable {
         case notifications, terminal, sessions, phone, about
@@ -205,9 +206,11 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             meshCard
             bridgeCard
+            devicesCard
             guideCard
         }
         .onAppear {
+            devices = PushDevices.read()
             bridge.refresh()
             // Look properly, not just at the files: the mesh is the thing that is
             // usually wrong, and its state is not visible anywhere else in the app.
@@ -411,6 +414,63 @@ struct SettingsView: View {
             }
         }
         .background(card)
+    }
+
+    // MARK: Devices that receive notifications
+
+    /// Who is getting the pushes — and the button that stops one.
+    ///
+    /// A subscription outlives the app that made it: deleting the web app from a
+    /// Home Screen tells this Mac nothing, so the notifications carry on arriving
+    /// from something the user believes they removed. Installing the app twice —
+    /// once from the address, once from the mesh name — means two subscriptions and
+    /// two of every notification. Neither is fixable from the phone. It is fixable
+    /// here, which is why the list is here.
+    private var devicesCard: some View {
+        VStack(spacing: 0) {
+            row("Devices receiving notifications",
+                note: devices.isEmpty
+                    ? "None yet. A phone appears here after it turns notifications on."
+                    : "Each entry is one installed app on one device. Revoking stops the "
+                    + "notifications immediately — the phone can subscribe again by "
+                    + "reopening the app.",
+                last: devices.isEmpty) {
+                HStack(spacing: 8) {
+                    if devices.count > 1 {
+                        SmallButton(title: "Revoke all") {
+                            PushDevices.revokeAll()
+                            devices = PushDevices.read()
+                        }
+                    }
+                    SmallButton(title: "Refresh") { devices = PushDevices.read() }
+                }
+            }
+
+            ForEach(Array(devices.enumerated()), id: \.element.id) { index, device in
+                row(device.service + (device.browser.map { " · \($0)" } ?? ""),
+                    note: deviceNote(device),
+                    last: index == devices.count - 1) {
+                    SmallButton(title: "Revoke") {
+                        PushDevices.revoke(device)
+                        devices = PushDevices.read()
+                    }
+                }
+            }
+        }
+        .background(card)
+    }
+
+    private func deviceNote(_ device: PushDevice) -> String {
+        var parts: [String] = []
+        // The origin is what tells two installs of the same phone apart — an old
+        // one on the address and a new one on the name.
+        parts.append(device.host.map { "from \($0)" } ?? "origin unknown (subscribed before this was recorded)")
+        if let added = device.addedAt { parts.append("added \(added.relative)") }
+        if !device.enabled { parts.append("muted on the device") }
+        if device.silent { parts.append("silent") }
+        if !device.projects.isEmpty { parts.append("\(device.projects.count) project(s) only") }
+        parts.append("#\(device.shortID)")
+        return parts.joined(separator: " · ")
     }
 
     // MARK: How to set it up

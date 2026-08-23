@@ -134,11 +134,25 @@ function writeSubscriptions(list) {
   writeAtomically(subscriptionsFile, JSON.stringify(list, null, 2))
 }
 
-/** Register a device, or update the preferences of one already known. */
-export function saveSubscription(subscription, preferences = {}) {
-  const list = readSubscriptions().filter((s) => s.endpoint !== subscription.endpoint)
-  list.push({ ...subscription, preferences, addedAt: Date.now() })
-  writeSubscriptions(list)
+/**
+ * Register a device, or update the preferences of one already known.
+ *
+ * `device` is what the Mac's list shows: the origin it subscribed from and the
+ * browser that did it. Kept from the previous record when a re-subscribe does not
+ * carry it, so an entry never loses the only thing that identifies it.
+ */
+export function saveSubscription(subscription, preferences = {}, device = {}) {
+  const list = readSubscriptions()
+  const previous = list.find((s) => s.endpoint === subscription.endpoint)
+  const kept = list.filter((s) => s.endpoint !== subscription.endpoint)
+  kept.push({
+    ...subscription,
+    preferences,
+    device: { ...previous?.device, ...device },
+    addedAt: previous?.addedAt ?? Date.now(),
+    seenAt: Date.now(),
+  })
+  writeSubscriptions(kept)
 }
 
 export function removeSubscription(endpoint) {

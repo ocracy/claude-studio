@@ -330,7 +330,16 @@ async function handleAPI(req, res, url) {
     if (!body.subscription?.endpoint || !body.subscription?.keys?.p256dh) {
       return json(res, 400, { error: "invalid subscription" })
     }
-    push.saveSubscription(body.subscription, body.preferences ?? { enabled: true })
+    // Who and from where, so the Mac can show a list worth acting on. A phone
+    // that installed the app twice — once from the address, once from the name —
+    // registers TWICE and gets every notification twice; without the origin
+    // recorded here, the two entries are indistinguishable 200-character URLs
+    // and there is no way to tell which one to revoke.
+    push.saveSubscription(body.subscription, body.preferences ?? { enabled: true }, {
+      host: String(req.headers.host ?? ""),
+      userAgent: String(req.headers["user-agent"] ?? "").slice(0, 200),
+      secure: Boolean(req.socket.encrypted),
+    })
     return json(res, 200, { ok: true })
   }
 
