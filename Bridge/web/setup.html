@@ -283,33 +283,35 @@
     const out = document.getElementById("diagnosis")
     out.textContent = "Testing…"
 
-    // Two probes, because they fail differently and the difference IS the
-    // answer: `no-cors` survives a certificate the browser distrusts only if
-    // the handshake itself succeeded, while a plain request additionally has to
-    // get a readable response back.
-    let opaque = null
-    let readable = null
+    // ONE probe, deliberately. This page is http and the target is https, so a
+    // normal fetch is cross-origin and the browser blocks reading the answer no
+    // matter how healthy the server is — "Failed to fetch" there means CORS, not
+    // a broken certificate, and reporting it sent the last diagnosis chasing the
+    // wrong thing. `no-cors` cannot read the answer either, but it does not need
+    // to: an untrusted certificate or an unreachable port makes it REJECT, and
+    // that is the entire question.
+    let reachable = null
     try {
       await fetch(`${secureOrigin}/api/push/key${query}`, { mode: "no-cors", cache: "no-store" })
-      opaque = "ok"
+      reachable = "ok"
     } catch (error) {
-      opaque = String(error?.message ?? error)
-    }
-    try {
-      const response = await fetch(`${secureOrigin}/api/push/key${query}`, { cache: "no-store" })
-      readable = `HTTP ${response.status}`
-    } catch (error) {
-      readable = String(error?.message ?? error)
+      reachable = String(error?.message ?? error)
     }
 
-    const verdict = opaque === "ok"
-      ? (readable.startsWith("HTTP")
-          ? `The secure side answers (${readable}). Tap "Open Claude Studio" above — and if that lands on the plain version, the app already on your Home Screen is opening instead: remove it and install again from the secure page.`
-          : `The connection works but the answer was blocked: ${readable}.`)
-      : `The phone cannot reach ${secureOrigin} — ${opaque}. Either the certificate is not trusted on THIS browser, or nothing is listening on port 7443. Typing the address by hand only works with the port: ${location.hostname}:7443`
+    const verdict = reachable === "ok"
+      ? "The secure side is reachable and its certificate is trusted — the setup is "
+        + "sound. If \"Open Claude Studio\" seems to open the plain version, look for "
+        + "an address bar: an installed app opens WITHOUT one, which is what it is "
+        + "supposed to do. If Chrome offers no Install entry, this address is already "
+        + "installed — remove that icon from the Home Screen and install again."
+      : `The phone cannot reach ${secureOrigin} — ${reachable}. Either the certificate `
+        + `is not trusted in THIS browser, or nothing is listening on port 7443. `
+        + `Typing the address by hand only works with the port: ${location.hostname}:7443`
     out.textContent = verdict
-    report(`probe opaque=${opaque} readable=${readable} origin=${secureOrigin} `
-         + `from=${location.href.replace(/k=[^&]+/, "k=…")} ua=${navigator.userAgent}`)
+    report(`probe=${reachable} origin=${secureOrigin} `
+         + `from=${location.protocol}//${location.host} `
+         + `standalone=${matchMedia("(display-mode: standalone)").matches} `
+         + `ua=${navigator.userAgent}`)
   })
 </script>
 

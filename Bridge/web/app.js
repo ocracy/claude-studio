@@ -844,6 +844,24 @@ $("push-test").onclick = async () => {
   }
 }
 
+// Where this actually loaded, said once, out loud.
+//
+// A phone has no console anyone can read, and the two states that matter here
+// are indistinguishable by eye: a page served over https with no address bar
+// (an installed app — correct) looks exactly like a page served over http (a
+// dead end where nothing can be installed and no notification is ever
+// delivered). The Mac's bridge log is where that question gets answered.
+fetch("/api/log", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    message: `app loaded ${location.protocol}//${location.host}`
+      + ` secureContext=${window.isSecureContext}`
+      + ` standalone=${matchMedia("(display-mode: standalone)").matches}`
+      + ` sw=${"serviceWorker" in navigator}`,
+  }),
+}).catch(() => {})
+
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js")
     .then((reg) => { registration = reg })
