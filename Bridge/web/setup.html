@@ -130,6 +130,13 @@
       <b>General → About → Certificate Trust Settings</b> and switch it on.
     </p>
     <p>
+      <b>It must go in as a CA certificate.</b> Android also offers to install
+      certificates for <i>Wi-Fi</i>, and one put there is invisible to Chrome — the
+      browser keeps saying <b>Not secure</b> and nothing explains why. To check
+      afterwards: <b>Settings → Security → Encryption &amp; credentials → Trusted
+      credentials → User</b>. “Claude Studio Bridge” has to be in that list.
+    </p>
+    <p>
       The warning about monitoring is about certificates in general. This one was
       generated on your own Mac and has never left it.
     </p>
@@ -142,6 +149,16 @@
     <p>Open the secure version and you are finished here.</p>
     <a id="open-secure" class="button primary" href="#">Open Claude Studio</a>
     <span id="open-target" class="target"></span>
+    <!-- Never hidden, even here. This page cannot tell a trusted certificate
+         apart from one you waved through with "Proceed anyway" — both let the
+         connection through — and that difference is the whole ballgame: a page
+         Chrome considers insecure installs nothing and notifies never. -->
+    <p style="margin-top:16px">
+      If Chrome still says <b>Not secure</b> there, the certificate is not really
+      trusted — you got through the warning by tapping <i>Proceed anyway</i>.
+      Install it properly and the warning goes away for good:
+    </p>
+    <a class="button" href="/ca.crt" download>Install the certificate again</a>
   </div>
 
   <!-- When the secure side will not open, this is the only place the reason can
@@ -173,10 +190,17 @@
         Chrome on iOS cannot install an app.
       </p>
       <p>
-        <b>No Install entry, or the link opens something without an address bar?</b>
-        Then this address is already installed — Android hands the link to the app on
-        your Home Screen, which looks exactly like "it opened the plain version".
-        Remove that icon from the Home Screen and install again from here.
+        <b>Only getting a Chrome shortcut instead of an app?</b> Then Chrome does not
+        consider that page secure — check the address bar: if it says <b>Not secure</b>,
+        the certificate above is not really installed, and no amount of tapping will
+        turn the shortcut into an app. Fix the certificate first; installing works by
+        itself afterwards.
+      </p>
+      <p>
+        <b>No Install entry at all, on a page with a padlock?</b> Then this address is
+        already installed — Android hands the link to the app on your Home Screen,
+        which looks exactly like "it opened the plain version". Remove that icon and
+        install again from here.
       </p>
     </div>
   </div>

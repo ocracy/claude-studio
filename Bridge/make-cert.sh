@@ -73,6 +73,13 @@ fi
 # certificates the browser has already seen.
 current_ip=""
 current_dns=""
+# A leaf that is about to expire is reissued even when nothing else changed. It
+# lives 397 days (see below), so without this the phone would one day meet an
+# expired certificate and every symptom of a broken setup at once.
+if [[ -s "$dir/server.crt" ]] && ! "$openssl_bin" x509 -in "$dir/server.crt" -noout \
+     -checkend 2592000 >/dev/null 2>&1; then
+  force="--force"
+fi
 if [[ -s "$dir/server.crt" ]]; then
   san="$("$openssl_bin" x509 -in "$dir/server.crt" -noout -text 2>/dev/null |
          grep -A1 'Subject Alternative Name' | tail -1)"
@@ -94,21 +101,30 @@ print "→ issuing a server certificate for ${fqdn:-$ip}…"
 names="IP:$ip, IP:127.0.0.1, DNS:localhost"
 [[ -n "$fqdn" ]] && names="DNS:$fqdn, $names"
 
+# `keyUsage` is spelled out rather than left off: it is what an RSA server
+# certificate is required to carry, and a leaf without it is the kind of detail a
+# strict validator rejects while every command-line tool accepts it happily.
 cat > "$dir/san.cnf" <<CNF
 subjectAltName = $names
 extendedKeyUsage = serverAuth
+keyUsage = critical, digitalSignature, keyEncipherment
 basicConstraints = CA:FALSE
+subjectKeyIdentifier = hash
 CNF
 
 "$openssl_bin" req -newkey rsa:2048 -nodes \
   -keyout "$dir/server.key" -out "$dir/server.csr" \
   -subj "/CN=Claude Studio Bridge" >/dev/null 2>&1
 
-# 800 days: comfortably under the 825-day ceiling browsers enforce on leaf
-# certificates, including ones chaining to a user-installed root.
+# 397 days, not the 800 this used to issue. The 398-day ceiling is written for
+# publicly trusted certificates and a locally trusted root is supposed to be
+# exempt — but "supposed to be" is not something to bet a phone on when the
+# failure mode is a silent "not secure" that also disables installing the app and
+# every notification with it. It costs nothing: the leaf is reissued whenever the
+# address or the name changes, and now also when it is within a month of expiry.
 "$openssl_bin" x509 -req -in "$dir/server.csr" \
   -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
-  -out "$dir/server.crt" -days 800 -sha256 \
+  -out "$dir/server.crt" -days 397 -sha256 \
   -extfile "$dir/san.cnf" >/dev/null 2>&1
 
 chmod 600 "$dir/server.key"
