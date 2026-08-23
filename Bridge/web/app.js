@@ -851,16 +851,36 @@ $("push-test").onclick = async () => {
 // (an installed app — correct) looks exactly like a page served over http (a
 // dead end where nothing can be installed and no notification is ever
 // delivered). The Mac's bridge log is where that question gets answered.
-fetch("/api/log", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    message: `app loaded ${location.protocol}//${location.host}`
-      + ` secureContext=${window.isSecureContext}`
-      + ` standalone=${matchMedia("(display-mode: standalone)").matches}`
-      + ` sw=${"serviceWorker" in navigator}`,
-  }),
-}).catch(() => {})
+function reportEnvironment() {
+  // Anything the page pulled in over plain http. ONE such resource is enough for
+  // Chrome to call the whole page insecure — which silently withdraws installing
+  // it as an app and every notification with it, while the padlock is the only
+  // visible symptom. The browser knows exactly which resource it was; nothing
+  // else here does, and a phone has no console to ask it from.
+  let insecure = []
+  try {
+    insecure = performance.getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .filter((name) => name.startsWith("http://") || name.startsWith("ws://"))
+      .slice(0, 5)
+  } catch {}
+
+  fetch("/api/log", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      message: `app loaded ${location.protocol}//${location.host}`
+        + ` secureContext=${window.isSecureContext}`
+        + ` standalone=${matchMedia("(display-mode: standalone)").matches}`
+        + ` sw=${"serviceWorker" in navigator}`
+        + ` insecure=[${insecure.join(" ")}]`,
+    }),
+  }).catch(() => {})
+}
+
+// After load, so the resource list is not empty when it is read.
+if (document.readyState === "complete") setTimeout(reportEnvironment, 1500)
+else addEventListener("load", () => setTimeout(reportEnvironment, 1500))
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js")

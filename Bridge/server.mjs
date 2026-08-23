@@ -409,6 +409,17 @@ async function handle(req, res) {
     return res.end(tls.ca)
   }
 
+  // One subresource fetched over plain http is enough for Chrome to call the
+  // whole page insecure — and an insecure page installs no app and receives no
+  // notification, with a missing padlock as the only visible symptom. This tells
+  // the browser to fetch everything over https regardless of how a URL was
+  // written, which turns a class of silent, hard-to-locate breakage into nothing
+  // at all. Only on the secure listener: on the http one it would upgrade
+  // requests to a port that answers differently.
+  if (req.socket.encrypted) {
+    res.setHeader("content-security-policy", "upgrade-insecure-requests")
+  }
+
   const asset = url.pathname.slice(1)
   if (asset === "manifest.json") return serveManifest(res)
   if (PUBLIC.has(asset)) return serveStatic(res, asset)
