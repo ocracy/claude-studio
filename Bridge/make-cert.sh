@@ -73,6 +73,19 @@ fi
 # certificates the browser has already seen.
 current_ip=""
 current_dns=""
+
+# How this script issues leaves. Bump it whenever the SHAPE of the certificate
+# changes — key usage, lifetime, the name in the subject.
+#
+# Without it a fix to the certificate reaches nobody: the reissue test only ever
+# asked whether the ADDRESS changed, so an improved script would sit on disk
+# beside an unchanged certificate and every symptom would survive the update
+# that was supposed to end it.
+policy=2
+if [[ "$(cat "$dir/.issue-policy" 2>/dev/null)" != "$policy" ]]; then
+  force="--force"
+fi
+
 # A leaf that is about to expire is reissued even when nothing else changed. It
 # lives 397 days (see below), so without this the phone would one day meet an
 # expired certificate and every symptom of a broken setup at once.
@@ -112,9 +125,14 @@ basicConstraints = CA:FALSE
 subjectKeyIdentifier = hash
 CNF
 
+# The subject names the SERVER, the way every real certificate does. It used to
+# repeat the root's own name, which is the one thing a leaf should never do: a
+# certificate whose subject looks like its issuer's is what a path builder treats
+# as self-signed, and the chain it then fails to build is reported as nothing more
+# specific than "not trusted".
 "$openssl_bin" req -newkey rsa:2048 -nodes \
   -keyout "$dir/server.key" -out "$dir/server.csr" \
-  -subj "/CN=Claude Studio Bridge" >/dev/null 2>&1
+  -subj "/CN=${fqdn:-$ip}" >/dev/null 2>&1
 
 # 397 days, not the 800 this used to issue. The 398-day ceiling is written for
 # publicly trusted certificates and a locally trusted root is supposed to be
@@ -129,3 +147,4 @@ CNF
 
 chmod 600 "$dir/server.key"
 rm -f "$dir/server.csr" "$dir/san.cnf"
+print -r -- "$policy" > "$dir/.issue-policy"
