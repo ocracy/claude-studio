@@ -257,6 +257,25 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   URLs. Revoking is a write to `push-subscriptions.json`; `notify` re-reads it per
   message, so the next notification is already not sent. Delivery still prunes on
   404/410 by itself — that is the browser's side of the same fact.
+- **A phone that stays "not secure"**: two traps, both of which look like a broken
+  certificate and neither of which is one. First, Chrome REMEMBERS a "Proceed anyway"
+  per origin: once the interstitial has been waved through, the page keeps its degraded
+  state after the certificate is fixed — no padlock, no service worker, no install, and
+  "Add to Home screen" can only produce a shortcut. An Incognito tab has none of that
+  memory, so it is the test that separates a real problem from a remembered one; the fix
+  is Site settings → Clear & reset, after which the QR link is needed again (the reset
+  takes the token cookie with it). Second, mixed content: ONE http subresource degrades
+  the whole page the same way, so the secure listener sends `upgrade-insecure-requests`
+  and the app reports any http resource it loaded to the bridge log.
+- **The phone's JavaScript has no compiler**: `scripts/check-bridge-js.sh` runs from
+  build.sh and dist.sh, and it checks each file IN THE MODE IT IS LOADED — `app.js` and
+  the `.mjs` files as ES modules, `sw.js` as a classic script. `node --check` parses
+  everything as a classic script, where a duplicate top-level `function` declaration is
+  legal; in a module it is a SyntaxError that stops the entire file. That is how v1.18.6
+  shipped a phone app that loaded its stylesheet, painted an empty shell and did nothing
+  else — indistinguishable from a network, certificate or cache problem, and the reason
+  `app.js` now installs `window.onerror` and `unhandledrejection` reporters as its very
+  first statements.
 - **Answering from the notification**: a session that hands the turn back is often
   waiting on a numbered choice, and on a phone that is one decision buried behind an app
   launch, a terminal attach and a keyboard. `Bridge/lib/choices.mjs` reads the options off
