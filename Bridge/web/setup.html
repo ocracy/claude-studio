@@ -144,6 +144,17 @@
     <span id="open-target" class="target"></span>
   </div>
 
+  <!-- When the secure side will not open, this is the only place the reason can
+       come from: the phone has no console anyone can read, and "it does not
+       work" is not a diagnosis. The answer is also sent to the Mac's bridge log
+       (POST /api/log), which is where it can actually be looked at. -->
+  <div class="now" id="now-diagnose">
+    <h2>The secure version will not open?</h2>
+    <p id="diagnosis">Tap to test the connection and see exactly what happens.</p>
+    <a class="button" id="test-secure" href="#">Test the secure connection</a>
+    <span class="target">The address needs the port: <b id="port-note"></b></span>
+  </div>
+
   <div class="step" id="step-install">
     <span class="n">2</span>
     <div class="body">
@@ -160,6 +171,12 @@
       <p>
         On iPhone this works only in <b>Safari</b>: <b>Share</b> → <b>Add to Home Screen</b>.
         Chrome on iOS cannot install an app.
+      </p>
+      <p>
+        <b>No Install entry, or the link opens something without an address bar?</b>
+        Then this address is already installed — Android hands the link to the app on
+        your Home Screen, which looks exactly like "it opened the plain version".
+        Remove that icon from the Home Screen and install again from here.
       </p>
     </div>
   </div>
@@ -247,6 +264,53 @@
     // Coming back from the Settings app does not reload the page.
     document.addEventListener("visibilitychange", () => { if (!document.hidden) check() })
   }
+
+  // ── diagnosis ──────────────────────────────────────────────────────────
+
+  document.getElementById("port-note").textContent = `${location.hostname}:7443`
+
+  /** Report to the Mac's bridge log; the phone has no console to read. */
+  function report(message) {
+    fetch("/api/log", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: `setup: ${message}` }),
+    }).catch(() => {})
+  }
+
+  document.getElementById("test-secure").addEventListener("click", async (event) => {
+    event.preventDefault()
+    const out = document.getElementById("diagnosis")
+    out.textContent = "Testing…"
+
+    // Two probes, because they fail differently and the difference IS the
+    // answer: `no-cors` survives a certificate the browser distrusts only if
+    // the handshake itself succeeded, while a plain request additionally has to
+    // get a readable response back.
+    let opaque = null
+    let readable = null
+    try {
+      await fetch(`${secureOrigin}/api/push/key${query}`, { mode: "no-cors", cache: "no-store" })
+      opaque = "ok"
+    } catch (error) {
+      opaque = String(error?.message ?? error)
+    }
+    try {
+      const response = await fetch(`${secureOrigin}/api/push/key${query}`, { cache: "no-store" })
+      readable = `HTTP ${response.status}`
+    } catch (error) {
+      readable = String(error?.message ?? error)
+    }
+
+    const verdict = opaque === "ok"
+      ? (readable.startsWith("HTTP")
+          ? `The secure side answers (${readable}). Tap "Open Claude Studio" above — and if that lands on the plain version, the app already on your Home Screen is opening instead: remove it and install again from the secure page.`
+          : `The connection works but the answer was blocked: ${readable}.`)
+      : `The phone cannot reach ${secureOrigin} — ${opaque}. Either the certificate is not trusted on THIS browser, or nothing is listening on port 7443. Typing the address by hand only works with the port: ${location.hostname}:7443`
+    out.textContent = verdict
+    report(`probe opaque=${opaque} readable=${readable} origin=${secureOrigin} `
+         + `from=${location.href.replace(/k=[^&]+/, "k=…")} ua=${navigator.userAgent}`)
+  })
 </script>
 
 </body>
