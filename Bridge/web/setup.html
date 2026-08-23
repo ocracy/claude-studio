@@ -7,9 +7,64 @@
   <link rel="stylesheet" href="/style.css">
   <title>Set up Claude Studio</title>
   <style>
-    .setup { padding: calc(var(--safe-top) + 24px) 20px calc(var(--safe-bottom) + 32px); }
+    /* The shared sheet locks the page down for the app shell — fixed views that
+       scroll their own panes. This page is a document: without undoing that, the
+       bottom of it is simply unreachable on a phone. */
+    html, body {
+      height: auto;
+      min-height: 100%;
+      overflow: visible;
+      overflow-y: auto;
+      overscroll-behavior: auto;
+    }
+
+    .setup { padding: calc(var(--safe-top) + 24px) 20px calc(var(--safe-bottom) + 40px); }
     .setup h1 { font-size: 22px; margin: 0 0 6px; }
-    .lede { color: var(--label-2); font-size: 14px; margin: 0 0 24px; }
+    .machine { color: var(--accent); font-weight: 600; }
+    .lede { color: var(--label-2); font-size: 14px; margin: 0 0 22px; line-height: 1.5; }
+
+    /* The one thing to do next, whatever that currently is. */
+    .now {
+      padding: 18px 16px;
+      border-radius: var(--radius);
+      background: var(--bg-raised);
+      border: 1px solid var(--separator);
+      margin-bottom: 22px;
+    }
+    .now.ready { border-color: rgba(48, 209, 88, .5); background: rgba(48, 209, 88, .10); }
+    .now h2 { font-size: 16px; margin: 0 0 6px; }
+    .now p { font-size: 13px; color: var(--label-2); margin: 0 0 14px; line-height: 1.5; }
+    .now p:last-child { margin-bottom: 0; }
+
+    /* Spelled out here rather than leaning on the shared sheet: this is the one
+       page a phone sees before anything else works, so it should not depend on a
+       stylesheet revision arriving first. */
+    .setup .button {
+      display: block;
+      width: 100%;
+      padding: 13px;
+      text-align: center;
+      text-decoration: none;
+      font: inherit;
+      font-weight: 600;
+      border-radius: 10px;
+      border: 1px solid var(--separator);
+      background: var(--bg);
+      color: var(--label);
+    }
+    .setup .button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .setup .button:active { opacity: .6; }
+    /* Where the button actually goes. The whole point of this page is moving from
+       http to https, and a link you cannot read is a link you have to trust. */
+    .target {
+      display: block;
+      margin-top: 8px;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      color: var(--label-3, var(--label-2));
+      word-break: break-all;
+    }
 
     .step {
       display: flex;
@@ -27,6 +82,7 @@
       font-size: 14px; font-weight: 600;
       display: grid; place-items: center;
     }
+    .step.done .n { background: #30d158; }
     .step h2 { font-size: 15px; margin: 2px 0 6px; }
     .step p { font-size: 13px; color: var(--label-2); margin: 0 0 10px; line-height: 1.5; }
     .step p:last-child { margin-bottom: 0; }
@@ -39,86 +95,71 @@
     }
     .step .body { flex: 1; min-width: 0; }
 
-    /* Spelled out here rather than leaning on the shared sheet: this is the one
-       page a phone sees before anything else works, so it should not depend on
-       a stylesheet revision arriving first. */
-    .setup .button {
+    .hidden { display: none; }
+
+    .skip {
       display: block;
-      width: 100%;
-      padding: 12px;
       text-align: center;
-      text-decoration: none;
-      font: inherit;
-      border-radius: 9px;
-      border: 1px solid var(--separator);
-      background: var(--bg);
-      color: var(--label);
+      margin-top: 24px;
+      font-size: 12px;
+      color: var(--label-2);
+      opacity: .75;
     }
-    .setup .button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-      font-weight: 600;
-    }
-    .setup .button:active { opacity: .6; }
-
-    .ready {
-      display: none;
-      padding: 16px;
-      border-radius: var(--radius);
-      background: rgba(48, 209, 88, .12);
-      border: 1px solid rgba(48, 209, 88, .4);
-      margin-bottom: 18px;
-    }
-    .ready.show { display: block; }
-    .ready h2 { margin: 0 0 4px; font-size: 15px; }
-    .ready p { margin: 0 0 12px; font-size: 13px; color: var(--label-2); }
-
-    .skip { display: block; text-align: center; margin-top: 22px; font-size: 13px; color: var(--label-2); }
   </style>
 </head>
 <body>
 
 <div class="setup">
   <h1>Set up notifications</h1>
-  <!-- Named the moment the manifest arrives. Setting a second Mac up while the
-       first is already on the Home Screen, this line is the only thing that says
-       which one you are looking at. -->
-  <p class="lede" id="lede">
-    <span id="machine"></span>
-    This Mac serves this page over your private network. To let the phone
-    install it as an app and receive notifications, it first has to trust the
-    certificate your Mac created — a one-time step.
+  <p class="lede">
+    <span id="machine" class="machine"></span>
+    This Mac serves the page over your private network. For notifications and for
+    installing it as a real app, the phone has to trust the certificate this Mac
+    created — once, and then never again.
   </p>
 
-  <div id="ready" class="ready">
+  <!-- What to do now. Exactly one of the two, decided by whether the secure side
+       can be reached — so the page never shows a finished step as a thing to do. -->
+  <div id="now-trust" class="now">
+    <h2>1 · Trust the certificate</h2>
+    <p>
+      Download it, then open <b>Settings</b> on the phone and search for
+      <code>certificate</code>. On Android: <b>Install a certificate</b> →
+      <b>CA certificate</b> → <b>Install anyway</b>, and pick the downloaded file.
+      On iPhone: <b>Profile Downloaded</b> → <b>Install</b>, then
+      <b>General → About → Certificate Trust Settings</b> and switch it on.
+    </p>
+    <p>
+      The warning about monitoring is about certificates in general. This one was
+      generated on your own Mac and has never left it.
+    </p>
+    <a class="button primary" href="/ca.crt" download>Download the certificate</a>
+    <p style="margin-top:14px">This page notices by itself when it is done.</p>
+  </div>
+
+  <div id="now-open" class="now ready hidden">
     <h2>Certificate is trusted</h2>
-    <p>Everything is in place. Open the secure version and you are done.</p>
-    <a id="ready-link" class="button primary" href="#">Open Claude Studio</a>
+    <p>Open the secure version and you are finished here.</p>
+    <a id="open-secure" class="button primary" href="#">Open Claude Studio</a>
+    <span id="open-target" class="target"></span>
   </div>
 
-  <div class="step">
-    <span class="n">1</span>
-    <div class="body">
-      <h2>Download the certificate</h2>
-      <p>It lands in your Downloads folder as <code>claude-studio.crt</code>.</p>
-      <a class="button primary" href="/ca.crt" download>Download certificate</a>
-    </div>
-  </div>
-
-  <div class="step">
+  <div class="step" id="step-install">
     <span class="n">2</span>
     <div class="body">
-      <h2>Install it on Android</h2>
+      <h2>Install it as an app</h2>
       <p>
-        Open <b>Settings</b> and search for <code>certificate</code>. Choose
-        <b>Install a certificate</b> → <b>CA certificate</b> → <b>Install anyway</b>,
-        then pick the file you just downloaded.
+        In the <b>secure</b> version — the one the button above opens — use Chrome's
+        <b>⋮</b> menu → <b>Install app</b>, or <b>⚙ Settings</b> → <b>Install as an app</b>.
       </p>
       <p>
-        Android will warn that someone could monitor your network. That warning is
-        about certificates in general; this one was generated on your own Mac and
-        never left your machine.
+        It has to say <b>Install</b>. <b>Add to Home screen</b> as a <i>shortcut</i> only
+        leaves a bookmark that reopens inside Chrome, address bar and all — and
+        notifications never work from a browser tab.
+      </p>
+      <p>
+        On iPhone this works only in <b>Safari</b>: <b>Share</b> → <b>Add to Home Screen</b>.
+        Chrome on iOS cannot install an app.
       </p>
     </div>
   </div>
@@ -126,33 +167,16 @@
   <div class="step">
     <span class="n">3</span>
     <div class="body">
-      <h2>Come back and open the secure version</h2>
-      <p>This page notices by itself once the certificate is trusted.</p>
-      <a id="secure-link" class="button" href="#">Open the secure version</a>
-    </div>
-  </div>
-
-  <div class="step">
-    <span class="n">4</span>
-    <div class="body">
-      <h2>Install it as an app</h2>
+      <h2>Turn notifications on</h2>
       <p>
-        Open the secure version, then <b>⚙ Settings</b> → <b>Install as an app</b>.
-        Chrome's <b>⋮</b> menu offers the same thing as <b>Install app</b>.
-      </p>
-      <p>
-        The entry has to say <b>Install</b>. <b>Add to Home screen</b> as a
-        <i>shortcut</i> only drops a bookmark that reopens inside Chrome, address
-        bar and all — and notifications do not work from a browser tab.
-      </p>
-      <p>
-        On an iPhone this only works in <b>Safari</b>: <b>Share</b> →
-        <b>Add to Home Screen</b>. Chrome on iOS cannot install an app.
+        Open the installed app → its menu → <b>Notifications &amp; settings</b>, enable
+        them and send the test notification. After that the phone buzzes the moment a
+        session hands the turn back to you.
       </p>
     </div>
   </div>
 
-  <a class="skip" id="skip" href="#">Skip — just open the terminal (no notifications)</a>
+  <a class="skip" id="skip" href="#">Just open the terminal instead (no notifications, no app)</a>
 </div>
 
 <script>
@@ -161,9 +185,32 @@
   const secureOrigin = `https://${location.hostname}:7443`
   const secure = `${secureOrigin}/${query}`
 
-  document.getElementById("secure-link").href = secure
-  document.getElementById("ready-link").href = secure
+  document.getElementById("open-secure").href = secure
+  // Shown, not just linked: this page exists to move the phone from http to
+  // https, and "it opened the wrong thing" is unanswerable without the address.
+  document.getElementById("open-target").textContent = secureOrigin
+  // The terminal-only escape hatch stays on whatever scheme this page is on —
+  // which is the point of it — so it is spelled out rather than left to look
+  // like a second way of doing the same thing.
   document.getElementById("skip").href = `/index.html${query}`
+
+  /**
+   * The certificate is in: show the one button and REMOVE the escape hatch.
+   *
+   * That link is relative, so it opens the terminal on whatever scheme this page
+   * is on — plain http. It exists for a phone that cannot trust the certificate
+   * at all. Left visible next to a working secure link it is a trap: it sits at
+   * the bottom of the page, it looks like a second way to do the same thing, and
+   * taking it lands on a page that can never install or notify.
+   */
+  function ready() {
+    document.getElementById("now-trust").classList.add("hidden")
+    document.getElementById("now-open").classList.remove("hidden")
+    document.getElementById("skip").classList.add("hidden")
+  }
+
+  // Already on the secure side: there is nothing to trust and nothing to open.
+  if (location.protocol === "https:") ready()
 
   // The manifest is served without the token (Chrome fetches it outside the
   // page's credential context), so it is readable here before anything else is.
@@ -173,7 +220,6 @@
       const name = String(manifest.name || "").replace(/^Claude Studio\s*—\s*/, "")
       if (!name || name === "Claude Studio") return
       document.getElementById("machine").textContent = `${name}. `
-      document.getElementById("machine").style.fontWeight = "600"
     })
     .catch(() => {})
 
@@ -182,22 +228,25 @@
    *
    * A `no-cors` request cannot read the response, but that is not what is being
    * asked: an untrusted certificate makes the request fail outright, while a
-   * trusted one resolves. Polling means the page flips to "ready" on its own
-   * when the user returns from Settings.
+   * trusted one resolves. Polling means the page flips by itself when the user
+   * comes back from Settings.
    */
   async function check() {
     try {
       await fetch(`${secureOrigin}/api/push/key${query}`, { mode: "no-cors", cache: "no-store" })
-      document.getElementById("ready").classList.add("show")
+      ready()
       return true
     } catch {
       return false
     }
   }
 
-  check()
-  setInterval(check, 4000)
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) check() })
+  if (location.protocol !== "https:") {
+    check()
+    setInterval(check, 3000)
+    // Coming back from the Settings app does not reload the page.
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) check() })
+  }
 </script>
 
 </body>
