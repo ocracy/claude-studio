@@ -55,10 +55,17 @@ enum Paths {
     static let launchAgentsDir = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
 
-    /// Shared secret for phone access. Created by `Bridge/install.sh`; the app
+    /// Shared secret for phone access. Created by `PhoneBridge.ensureToken`; the app
     /// reads it to build the QR code and rewrites it only when the user asks
     /// for a new one.
     static let bridgeToken = appSupport.appendingPathComponent("bridge-token")
+
+    /// The phone bridge itself — `server.mjs`, its `lib/`, the web app and the two
+    /// scripts — copied out of the app bundle and RUN FROM HERE. It used to run from
+    /// wherever the repository happened to be checked out, which made a git clone a
+    /// runtime dependency of an installed app and killed the agent silently when the
+    /// folder moved. See `PhoneInstaller`.
+    static let phoneBridgeDir = appSupport.appendingPathComponent("bridge", isDirectory: true)
 
     static let hookScript = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/hooks/claude-studio-hook.sh")

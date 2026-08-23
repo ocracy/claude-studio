@@ -23,7 +23,37 @@ import { fileURLToPath } from "node:url"
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "web")
 
 const BG = [0x1c, 0x1c, 0x1e]
-const FG = [0xd9, 0x77, 0x57]
+
+/**
+ * The mark's colour: Claude orange, or a hue derived from this Mac's name.
+ *
+ * One phone can hold two of these apps, and two identical icons on a Home Screen
+ * is a choice made by reading labels. The name alone is not enough — an icon is
+ * what a thumb aims at. So the second Mac's icon is a different colour, derived
+ * rather than chosen, which means it is stable across reinstalls and needs
+ * nobody to pick anything.
+ */
+const FG = (() => {
+  const name = (process.argv[2] ?? process.env.CS_BRIDGE_NAME ?? "").trim()
+  if (!name) return [0xd9, 0x77, 0x57]
+  let hash = 0x811c9dc5
+  for (const byte of Buffer.from(name, "utf8")) {
+    hash ^= byte
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  // Claude orange is ~18°; every icon keeps its saturation and lightness so the
+  // family still looks like one app.
+  return hsl(hash % 360, 0.62, 0.59)
+})()
+
+function hsl(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
+    : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  return [r, g, b].map((v) => Math.round((v + m) * 255))
+}
 const UNITS = 180
 const CORNER = 40
 const STROKE = 12

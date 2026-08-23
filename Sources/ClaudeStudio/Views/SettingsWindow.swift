@@ -38,6 +38,7 @@ struct SettingsView: View {
     @State private var section: Section = .notifications
     @State private var showToken = false
     @State private var copied = false
+    @State private var installSheet = false
 
     private enum Section: String, CaseIterable, Identifiable {
         case notifications, terminal, sessions, phone, about
@@ -208,10 +209,16 @@ struct SettingsView: View {
         }
         .onAppear {
             bridge.refresh()
+            // Look properly, not just at the files: the mesh is the thing that is
+            // usually wrong, and its state is not visible anywhere else in the app.
+            bridge.check()
             // Open the walkthrough by itself while something is still missing: that
             // is exactly when someone needs it, and it is also when they have the
             // least idea that it exists.
             if !bridge.mesh.isConnected || !bridge.isInstalled { guideOpen = true }
+        }
+        .sheet(isPresented: $installSheet) {
+            PhoneInstallSheet(bridge: bridge) { installSheet = false }
         }
     }
 
@@ -223,7 +230,7 @@ struct SettingsView: View {
     /// visible from anywhere else in the app.
     private var meshCard: some View {
         VStack(spacing: 0) {
-            row(meshTitle, note: meshNote, last: true) {
+            row(meshTitle, note: meshNote, last: checkAnswer == nil) {
                 HStack(spacing: 8) {
                     if bridge.mesh.isInstalled && !bridge.mesh.isConnected {
                         SmallButton(title: "Sign in", icon: "person.badge.key",
@@ -237,11 +244,39 @@ struct SettingsView: View {
                             NSWorkspace.shared.open(URL(string: "https://tailscale.com/download")!)
                         }
                     }
-                    SmallButton(title: "Check") { bridge.refresh() }
+                    if bridge.checkState == .checking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        SmallButton(title: "Check") { bridge.check() }
+                    }
                 }
+            }
+
+            // The answer, in the tool's own words. Without it, checking while
+            // signed out changes nothing on screen — which is what made the
+            // button look broken exactly when it was the only thing to press.
+            if let answer = checkAnswer {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: bridge.mesh.isConnected
+                            ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(bridge.mesh.isConnected ? Theme.running : Theme.warning)
+                    Text(answer)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.text2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
         }
         .background(card)
+    }
+
+    private var checkAnswer: String? {
+        if case .done(let message) = bridge.checkState { return message }
+        return nil
     }
 
     private var meshTitle: String {
@@ -283,7 +318,28 @@ struct SettingsView: View {
                         .tint(Theme.accent)
                         .labelsHidden()
                 } else {
-                    SmallButton(title: "Refresh") { bridge.refresh() }
+                    // One button, and it does the whole thing. What used to be
+                    // here was a paragraph asking for a shell script inside a git
+                    // checkout that an installed app does not have.
+                    SmallButton(title: "Install", icon: "arrow.down.circle",
+                                prominent: true) {
+                        installSheet = true
+                        bridge.install()
+                    }
+                }
+            }
+
+            if bridge.isInstalled {
+                let missing = bridge.missingRequirements
+                if !missing.isEmpty {
+                    row("Missing: \(missing.map(\.name).joined(separator: ", "))",
+                        note: "The service cannot run without \(missing.count == 1 ? "it" : "them"). "
+                            + missing.map { "\($0.name) \($0.why)" }.joined(separator: "; ") + ".") {
+                        SmallButton(title: "Install", prominent: true) {
+                            installSheet = true
+                            bridge.install()
+                        }
+                    }
                 }
             }
 
@@ -307,9 +363,17 @@ struct SettingsView: View {
                             .background(RoundedRectangle(cornerRadius: 6).fill(.white))
                     }
 
-                    Text("Scan with your phone's camera, then add it to the Home Screen.")
-                        .font(Theme.ui(11))
-                        .foregroundStyle(Theme.text3)
+                    VStack(spacing: 3) {
+                        Text("Scan with your phone's camera, then add it to the Home Screen.")
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.text3)
+                        // Which Mac, and by what name. On a phone that carries two
+                        // of these, the name IS the difference between them — and
+                        // it is also why the app survives a changed address.
+                        Text("\(PhoneInstaller.machineName) · \(bridge.mesh.host ?? "—")")
+                            .font(Theme.mono(10))
+                            .foregroundStyle(Theme.text3)
+                    }
 
                     HStack(spacing: 8) {
                         SmallButton(title: showToken ? "Hide link" : "Show link") {
@@ -377,11 +441,12 @@ struct SettingsView: View {
                        + "can reach from any network, without opening a port on your router. "
                        + "Pick one — you do not need both.")
 
-                    step(2, "Install the bridge on this Mac",
-                         "In the Claude Studio repository, run Bridge/install.sh once. It "
-                       + "installs ttyd, generates the access token and registers a launchd "
-                       + "agent, so your sessions stay reachable even while this app is closed. "
-                       + "Running it again later is safe and keeps the existing token.")
+                    step(2, "Press Install above",
+                         "Everything on this Mac happens there: what the bridge needs is "
+                       + "installed through Homebrew, an access token is generated and a "
+                       + "background service is registered, so your sessions stay reachable "
+                       + "even while this app is closed. Pressing it again later is safe and "
+                       + "keeps the token every phone already scanned.")
 
                     step(3, "Scan the QR code above with the phone's camera",
                          "The code carries the address and the token together, so there is "
@@ -406,6 +471,12 @@ struct SettingsView: View {
                          "Open its menu → Notifications & settings, enable them, and send the "
                        + "test notification to confirm. After that you get a push the moment a "
                        + "session finishes and hands the turn back to you.")
+
+                    step(7, "A second Mac? Repeat it there",
+                         "Each Mac publishes under its own private name, so the phone installs "
+                       + "it as a second app — named after that machine and tinted a different "
+                       + "colour — alongside the first. Both keep working; neither replaces the "
+                       + "other. You will be asked to trust that Mac's certificate once too.")
 
                     Text("If the phone ever stops connecting, check the private network first — "
                        + "a signed-out mesh is what almost every failure turns out to be.")
@@ -448,15 +519,19 @@ struct SettingsView: View {
 
     private var bridgeNote: String {
         if !bridge.isInstalled {
-            return "Not installed yet. Run Bridge/install.sh in the repository once, then come back."
+            return "One button: it installs what the bridge needs (node, ttyd, tmux, through "
+                 + "Homebrew), registers a background service that starts with this Mac, and "
+                 + "hands you a QR code. Your sessions stay reachable even while this app is closed."
         }
-        if bridge.address == nil {
+        if bridge.mesh.host == nil {
             return "There is no private address to serve on, so the service exits and retries. It starts by itself once the network above is up."
         }
         if !bridge.isRunning {
             return "The service is stopped. Turn it on to open your sessions to the phone."
         }
-        return "Serving on \(bridge.address ?? "—"):\(PhoneBridge.port), reachable only from your private network. Your Claude subscription on this Mac does the work; the phone only sends keystrokes."
+        return "Serving as \(bridge.mesh.host ?? "—"):\(PhoneBridge.port) on your private network "
+             + "and nowhere else. Your Claude subscription on this Mac does the work; the phone "
+             + "only sends keystrokes."
     }
 
     private var about: some View {
@@ -566,5 +641,77 @@ struct SettingsView: View {
                 Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 16)
             }
         }
+    }
+}
+
+// MARK: - Installing phone access
+
+/// What the Install button opens.
+///
+/// It shows the work rather than a spinner, for one concrete reason: the slow step
+/// is `brew install ttyd`, which is minutes long the first time and looks exactly
+/// like a hang. Seeing Homebrew's own output is the difference between waiting and
+/// force-quitting — and when something does fail, the reason is already on screen
+/// instead of buried in a log file nobody was told about.
+struct PhoneInstallSheet: View {
+    @ObservedObject var bridge: PhoneBridge
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(bridge.installing ? "Setting up phone access…" : "Phone access")
+                    .font(Theme.ui(15, .semibold))
+                    .foregroundStyle(Theme.text)
+                if bridge.installing { ProgressView().controlSize(.small) }
+                Spacer()
+                Text(PhoneInstaller.machineName)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.text3)
+            }
+            .padding(.bottom, 12)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(bridge.installLog.isEmpty ? "Starting…" : bridge.installLog)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.text2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .onChange(of: bridge.installLog) { _, _ in
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            .frame(height: 260)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.field)
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.separator)))
+
+            if !bridge.installing {
+                Text(bridge.isInstalled
+                     ? "Installed. It starts with this Mac; scan the QR code with your phone."
+                     : "Not installed. Nothing else on this Mac was changed.")
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(bridge.isInstalled ? Theme.running : Theme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+            }
+
+            HStack(spacing: 10) {
+                SmallButton(title: "Copy log") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(bridge.installLog, forType: .string)
+                }
+                Spacer()
+                SmallButton(title: bridge.installing ? "Hide" : "Done",
+                            prominent: !bridge.installing, action: onDismiss)
+            }
+            .padding(.top, 16)
+        }
+        .padding(22)
+        .frame(width: 560)
+        .background(Theme.bg)
     }
 }

@@ -115,6 +115,19 @@ const CHROME = /^[\s─━═╌•]*$/u
  * the list. `capture-pane` returns the whole visible screen, so the trimming
  * happens here rather than via `-S`.
  */
+/**
+ * The visible screen exactly as tmux paints it — box rules and all.
+ *
+ * `capture` throws the chrome away because a preview is two lines of prose. The
+ * choice reader needs the opposite: the frame is where Claude's options live,
+ * and their numbers only make sense in the lines they were drawn on.
+ */
+export function captureRaw(name, lines = 60) {
+  const result = run(["capture-pane", "-p", "-t", name])
+  if (!result.ok) return []
+  return result.stdout.split("\n").map((line) => line.trimEnd()).slice(-lines)
+}
+
 export function capture(name, lines = 2) {
   const result = run(["capture-pane", "-p", "-t", name])
   if (!result.ok) return []

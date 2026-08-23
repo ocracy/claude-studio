@@ -188,6 +188,7 @@ async function refresh() {
   try {
     snapshot = await api("/api/state")
     noteBuild(snapshot.buildId)
+    if (snapshot.machine) $("machine-name").textContent = snapshot.machine
     if (views.list.classList.contains("hidden")) updateBadge()
     else render()
   } catch (error) {

@@ -11,6 +11,8 @@
 
 import { snapshot } from "./state.mjs"
 import { notify } from "./push.mjs"
+import * as tmux from "./tmux.mjs"
+import { choiceActions, readChoices } from "./choices.mjs"
 
 const INTERVAL = 2500
 
@@ -54,11 +56,17 @@ async function tick() {
       // was actually working — an idle tab that gets opened reports "waiting"
       // straight away and is not news.
       if (session.state === "waiting" && previous === "working") {
+        // If it is waiting on a numbered choice, the notification carries the
+        // choice: answering it should not cost an app launch, a terminal
+        // attach and a keyboard. Read once, here — the pane is a tmux call and
+        // this loop runs every 2.5 seconds for every session.
+        const choices = readChoices(tmux.captureRaw(session.tmux))
         await notify({
           title: `${session.name} is waiting`,
-          body: `${project.name} — Claude finished and needs you.`,
+          body: choices?.question || `${project.name} — Claude finished and needs you.`,
           tmux: session.tmux,
           project: project.path,
+          actions: choiceActions(choices),
         }).catch(() => {})
       }
     }

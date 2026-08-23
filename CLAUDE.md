@@ -64,11 +64,13 @@ Sources/StudioBridge/       # second executable: the MCP server the app register
                             # extracting a library, since Models.swift imports SwiftUI.
                             # `ProjectReader.shortID` MUST match `Project.shortID`.
 
-Bridge/                     # cs-bridge: phone access over Netbird. A launchd agent,
-                            # NOT part of the app — sessions stay reachable while the
-                            # app is closed. Dependency-free Node + ttyd; it reads the
-                            # same files the app writes and drives the same tmux socket.
-                            # `lib/shortid.mjs` MUST match `Project.shortID` too.
+Bridge/                     # cs-bridge: phone access over a private mesh. Shipped in
+                            # the bundle, staged into Application Support and run from
+                            # there by a launchd agent the app installs (PhoneInstaller)
+                            # — NOT part of this process, so sessions stay reachable
+                            # while the app is closed. Dependency-free Node + ttyd; it
+                            # reads the same files the app writes and drives the same
+                            # tmux socket. `lib/shortid.mjs` MUST match `Project.shortID`.
 ```
 
 ## Hard-won rules
@@ -217,6 +219,47 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
   because a TUI only re-lays-out on SIGWINCH.
 - **Multi-line input**: `/terminal-setup` cannot run inside tmux. Shift+Enter → `\`+CR
   and Option+Enter → ESC+CR are mapped in `TerminalEngine.installKeyMonitor`.
+- **Installing the phone bridge**: the APP does it — `PhoneInstaller`, one button in
+  Settings → Phone. `Bridge/` ships in the bundle (`Contents/Resources/Bridge`), is
+  copied to `Paths.phoneBridgeDir` and RUNS FROM THERE, the same discipline
+  `ProjectBridge` uses and for the same reason: an update replaces the bundle and a
+  launchd plist stores an absolute path. It used to be `Bridge/install.sh` writing a
+  runner that pointed INTO the git checkout, which made a clone a runtime dependency of
+  an installed app and killed the agent silently when the folder moved. The runner is
+  generated in Swift (one generator, not two) with `Shell.userPath` EMBEDDED — launchd
+  hands an agent a minimal environment and `#!/bin/zsh -l` cannot be trusted to read
+  `.zshrc`. Dependencies go through Homebrew with `Shell.runStreaming`, because
+  `brew install ttyd` is minutes of silence that looks exactly like a hang; with no
+  Homebrew the step fails with the command to paste rather than a shell error.
+  `refreshInstalled()` at launch re-stages after an app update and kickstarts the agent.
+  A "Check" that recomputes state silently is a button that looks broken exactly when it
+  is the only thing to press — `PhoneBridge.check()` answers in the mesh tool's own words.
+- **One phone, two Macs**: the phone is pointed at the mesh HOSTNAME
+  (`mac.netbird.cloud`, Netbird's `FQDN:` line; Tailscale's `DNSName`), never the IP.
+  An installed web app is bound to its origin, and the IP is the part that changes — when
+  it does, the icon on the Home Screen dies with no address bar to correct it from. The
+  name also gives each Mac a distinct origin, which is what lets two of them install side
+  by side. Three things then keep them apart for a human: `server.mjs` serves
+  `manifest.json` DYNAMICALLY with `CS_BRIDGE_NAME` in the name (so the repo file stays a
+  template), `make-cert.sh` names a NEW root after the Mac — ASCII-sanitised, because a
+  curly apostrophe in a computer name comes back as `\xC3\xA2…` in every certificate
+  viewer — and `make-icons.mjs` tints the icon by a hash of that name. The cert's SAN
+  carries `DNS:<fqdn>` beside the IPs; the name must be in the SAN, the common name is
+  ignored. Moving from an IP origin to a name origin means re-adding the app once.
+- **Answering from the notification**: a session that hands the turn back is often
+  waiting on a numbered choice, and on a phone that is one decision buried behind an app
+  launch, a terminal attach and a keyboard. `Bridge/lib/choices.mjs` reads the options off
+  the pane (`tmux.captureRaw` — `capture` strips exactly the frame the options live in),
+  the watcher puts them in the push payload as `actions`, and `sw.js` sends the digit
+  straight to `/api/sessions/<name>/keys` with `credentials: "include"` — a service
+  worker fetch does not send the token cookie otherwise, and the answer would 401 with
+  nothing on screen. The digit goes WITHOUT Enter: Claude's prompts act on the keypress.
+  The whole reader hangs on one discriminator: **an option must be SELECTED** (`❯`).
+  Claude writes numbered lists in its answers all the time and one of those above the
+  input box is shape-identical to a prompt; without the caret check the phone would offer
+  buttons that type a digit into a text box. Android shows two actions
+  (`Notification.maxActions`), so it is the first option and the LAST — yes and no; iOS
+  shows none, which is why the body must read as a complete notification on its own.
 - **Phone bridge**: `Bridge/cs-attach.sh` attaches WITHOUT `-D`, so the Mac's client is
   not dropped — `window-size latest` (written into `tmux.conf`) sizes the window from
   the most recent client instead of shrinking to the smallest. It passes `-e CS_TAB_ID`
@@ -260,8 +303,8 @@ Bridge/                     # cs-bridge: phone access over Netbird. A launchd ag
 - **TLS is not optional for the phone**: service workers, Web Push and "install as
   app" all require a secure context, so over plain HTTP the phone gets a terminal and
   nothing else. `Bridge/make-cert.sh` issues a root ONCE (never regenerate it — every
-  device that trusted it would break) and reissues the leaf whenever the Netbird address
-  changes; the name must be in `subjectAltName` (the common name is ignored) and the leaf
+  device that trusted it would break) and reissues the leaf whenever the mesh address or
+  NAME changes; both go in `subjectAltName` (the common name is ignored) and the leaf
   stays under the 825-day ceiling browsers enforce. HTTP keeps serving `/ca.crt`
   (deliberately unauthenticated — it is the public root, and it cannot sit behind the
   HTTPS it bootstraps) and `/setup`, which is where the QR code points.

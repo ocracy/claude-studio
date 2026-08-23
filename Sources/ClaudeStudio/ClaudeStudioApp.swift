@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Tmux.ensureConfig()
             _ = Shell.userPath
             await MainActor.run { ProjectBridge.install() }
+            // An update replaces the bundle, and the phone bridge runs from a copy
+            // of it. Without this the launchd agent keeps serving the version that
+            // happened to be installed the day the button was pressed.
+            await MainActor.run { PhoneInstaller.refreshInstalled() }
         }
 
         // Is a new version out? Checked silently; a badge appears in the top bar.

@@ -91,7 +91,7 @@ const TOKEN = (() => {
   try {
     return readFileSync(tokenFile, "utf8").trim()
   } catch {
-    console.error(`cs-bridge: no token at ${tokenFile}. Run Bridge/install.sh first.`)
+    console.error(`cs-bridge: no token at ${tokenFile}. Open Claude Studio → Settings → Phone and press Install.`)
     process.exit(1)
   }
 })()
@@ -179,6 +179,38 @@ const STATIC = new Set([
 ])
 
 /**
+ * The manifest, named after THIS Mac.
+ *
+ * One phone can carry two of these — a laptop and a desktop, each publishing its
+ * own bridge — and two icons both labelled "Claude Studio" is a Home Screen
+ * nobody can navigate. The origin already keeps them apart technically; the name
+ * is what keeps them apart for the person holding the phone.
+ *
+ * Served rather than read from disk so the file stays the artwork-and-colours
+ * template it is, with no machine's name baked into the repository.
+ */
+function serveManifest(res) {
+  let manifest = {}
+  try {
+    manifest = JSON.parse(readFileSync(join(WEB, "manifest.json"), "utf8"))
+  } catch {
+    // Falls through to the defaults below: a phone with no manifest cannot
+    // install the page at all, which is worse than a manifest with no icons.
+  }
+  const machine = (process.env.CS_BRIDGE_NAME ?? "").trim()
+  const body = JSON.stringify({
+    ...manifest,
+    name: machine ? `Claude Studio — ${machine}` : "Claude Studio",
+    short_name: machine ? machine.split(/[\s(]/)[0].slice(0, 12) : "Studio",
+  })
+  res.writeHead(200, {
+    "content-type": "application/manifest+json; charset=utf-8",
+    "cache-control": "no-cache",
+  })
+  res.end(body)
+}
+
+/**
  * Installability assets, served WITHOUT the token.
  *
  * Chrome fetches the manifest and its icons outside the page's own credential
@@ -230,7 +262,14 @@ async function handleAPI(req, res, url) {
     // older copy of the interface. Installed to the Home Screen there is no
     // address bar and no reload button, so without this a change on the Mac can
     // stay invisible on the phone indefinitely.
-    return json(res, 200, { ...snapshot(), buildId: buildId() })
+    // The machine's name rides along for the same reason it is in the manifest:
+    // with two Macs on one phone, "which one am I looking at" is a question the
+    // interface has to answer without being asked.
+    return json(res, 200, {
+      ...snapshot(),
+      buildId: buildId(),
+      machine: (process.env.CS_BRIDGE_NAME ?? "").trim() || null,
+    })
   }
 
   if (req.method === "POST" && path === "/api/sessions") {
@@ -362,6 +401,7 @@ async function handle(req, res) {
   }
 
   const asset = url.pathname.slice(1)
+  if (asset === "manifest.json") return serveManifest(res)
   if (PUBLIC.has(asset)) return serveStatic(res, asset)
 
   if (!authorized(req, url)) {

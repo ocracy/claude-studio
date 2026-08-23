@@ -74,6 +74,54 @@ enum Shell {
         }
     }
 
+    /// Runs a command and reports its output line by line as it arrives.
+    ///
+    /// `run` hands everything back at the end, which is fine for a status probe
+    /// and useless for `brew install ttyd`: that is minutes of silence in front
+    /// of someone who pressed a button and has no way to tell it apart from a
+    /// hang. Blocking, so callers stay off the main thread — the installer runs
+    /// its steps in order and needs each one's exit code before the next.
+    @discardableResult
+    static func runStreaming(_ launchPath: String, _ args: [String],
+                             env: [String: String]? = nil,
+                             onLine: @escaping (String) -> Void) -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: launchPath)
+        p.arguments = args
+        var merged = ProcessInfo.processInfo.environment
+        merged["PATH"] = userPath
+        for (k, v) in env ?? [:] { merged[k] = v }
+        p.environment = merged
+
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() } catch {
+            onLine("\(error)")
+            return -1
+        }
+
+        // Read to EOF in chunks rather than `readabilityHandler`: this runs on a
+        // background queue already, and a handler would need the same buffering
+        // for partial lines with a run loop to keep it alive.
+        var buffer = Data()
+        while true {
+            let chunk = pipe.fileHandleForReading.availableData
+            if chunk.isEmpty { break }
+            buffer.append(chunk)
+            while let index = buffer.firstIndex(of: 0x0A) {
+                let line = String(data: buffer[..<index], encoding: .utf8) ?? ""
+                buffer.removeSubrange(...index)
+                onLine(line)
+            }
+        }
+        if !buffer.isEmpty, let tail = String(data: buffer, encoding: .utf8), !tail.isEmpty {
+            onLine(tail)
+        }
+        p.waitUntilExit()
+        return p.terminationStatus
+    }
+
     /// Fire-and-forget command; output is discarded.
     static func runDetached(_ command: String) {
         let p = Process()

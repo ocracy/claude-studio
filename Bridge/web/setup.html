@@ -81,8 +81,12 @@
 
 <div class="setup">
   <h1>Set up notifications</h1>
-  <p class="lede">
-    Your Mac serves this over your private Netbird network. To let the phone
+  <!-- Named the moment the manifest arrives. Setting a second Mac up while the
+       first is already on the Home Screen, this line is the only thing that says
+       which one you are looking at. -->
+  <p class="lede" id="lede">
+    <span id="machine"></span>
+    This Mac serves this page over your private network. To let the phone
     install it as an app and receive notifications, it first has to trust the
     certificate your Mac created — a one-time step.
   </p>
@@ -160,6 +164,18 @@
   document.getElementById("secure-link").href = secure
   document.getElementById("ready-link").href = secure
   document.getElementById("skip").href = `/index.html${query}`
+
+  // The manifest is served without the token (Chrome fetches it outside the
+  // page's credential context), so it is readable here before anything else is.
+  fetch("/manifest.json", { cache: "no-store" })
+    .then((response) => response.json())
+    .then((manifest) => {
+      const name = String(manifest.name || "").replace(/^Claude Studio\s*—\s*/, "")
+      if (!name || name === "Claude Studio") return
+      document.getElementById("machine").textContent = `${name}. `
+      document.getElementById("machine").style.fontWeight = "600"
+    })
+    .catch(() => {})
 
   /**
    * Has the certificate been trusted yet?

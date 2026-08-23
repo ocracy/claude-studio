@@ -35,6 +35,13 @@ BRIDGE="$(dirname "$BIN")/StudioBridge"
 cp "$BRIDGE" "$APP/Contents/Helpers/claude-studio-bridge"
 chmod +x "$APP/Contents/Helpers/claude-studio-bridge"
 
+# The phone bridge. It MUST be here as well as in build.sh: this script does its own
+# packaging, and without it the release ships an app whose Install button reports the
+# bridge missing from the bundle — see PhoneInstaller.
+cp -R "Bridge" "$APP/Contents/Resources/Bridge"
+chmod +x "$APP/Contents/Resources/Bridge/cs-attach.sh" \
+         "$APP/Contents/Resources/Bridge/make-cert.sh"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -49,15 +49,74 @@ self.addEventListener("push", (event) => {
       // the page still controls.
       vibrate: message.silent ? [] : [180, 90, 180],
       silent: Boolean(message.silent),
+      // When the session is waiting on a numbered choice, the answer is a
+      // button. Android shows two; iOS shows none and the tap still opens the
+      // session, which is why the body has to read as a complete notification
+      // on its own. `maxActions` is 0 there, and passing actions anyway is
+      // harmless — they are simply ignored.
+      actions: (message.actions || []).slice(0, Notification.maxActions ?? 2),
       data: message,
     }),
   )
 })
 
-// Tapping the notification should land on the session it is about.
+/**
+ * Answer without opening anything.
+ *
+ * The digit goes straight to the session over the same endpoint the terminal
+ * uses. `credentials: "include"` is what carries the token cookie — a service
+ * worker fetch does not send it otherwise, and the request would come back 401
+ * with nothing on screen to explain why.
+ */
+async function sendKey(tmuxName, key) {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(tmuxName)}/keys`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: key }),
+  })
+  if (!response.ok) throw new Error(`keys: ${response.status}`)
+}
+
+// Tapping the notification should land on the session it is about; tapping one
+// of its buttons should answer and leave the phone alone.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close()
-  const target = event.notification.data?.tmux ? `/?open=${event.notification.data.tmux}` : "/"
+  const data = event.notification.data ?? {}
+  const target = data.tmux ? `/?open=${data.tmux}` : "/"
+
+  // A choice button. Claude's numbered prompts act on the keypress itself, so
+  // the digit is sent WITHOUT Enter — an extra newline would land in whatever
+  // came after the prompt.
+  if (event.action?.startsWith("key:") && data.tmux) {
+    const key = event.action.slice(4)
+    const label = (event.notification.actions ?? [])
+      .find((entry) => entry.action === event.action)?.title
+    event.waitUntil(
+      sendKey(data.tmux, key)
+        .then(() =>
+          self.registration.showNotification(data.title ?? "Claude Studio", {
+            body: label ? `Answered: ${label}` : `Sent ${key}`,
+            icon: "/icon-192.png",
+            badge: "/icon-192.png",
+            tag: data.tmux,
+            silent: true,
+            data,
+          }),
+        )
+        .catch((error) =>
+          // The phone has no console anyone can read; this is the one place a
+          // failed answer can say so, and it must not look like it worked.
+          self.registration.showNotification("Could not answer", {
+            body: String(error?.message ?? error),
+            icon: "/icon-192.png",
+            tag: data.tmux,
+            data,
+          }),
+        ),
+    )
+    return
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {

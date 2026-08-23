@@ -27,6 +27,14 @@ cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp ".build/release/StudioBridge" "$APP/Contents/Helpers/claude-studio-bridge"
 chmod +x "$APP/Contents/Helpers/claude-studio-bridge"
 
+# The phone bridge: node + web app + scripts, copied out of the bundle into
+# Application Support and RUN FROM THERE (see PhoneInstaller). It used to run from
+# whatever git checkout happened to be lying around, which made a clone a runtime
+# dependency of an installed app.
+cp -R "Bridge" "$APP/Contents/Resources/Bridge"
+chmod +x "$APP/Contents/Resources/Bridge/cs-attach.sh" \
+         "$APP/Contents/Resources/Bridge/make-cert.sh"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
