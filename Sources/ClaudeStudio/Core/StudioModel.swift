@@ -90,7 +90,15 @@ final class StudioModel: ObservableObject {
 
     @Published var pane: Pane = .sessions
     @Published var tabs: [StudioTab] = []
-    @Published var activeTabID: String?
+    /// The tab on screen in this window — reported app-wide, because a finished
+    /// turn on a tab you are looking at has been seen by definition, and waiting
+    /// for a separate gesture would leave it orange while you read the answer.
+    @Published var activeTabID: String? {
+        didSet {
+            guard activeTabID != oldValue else { return }
+            SessionStates.shared.setVisibleTab(activeTabID, for: ObjectIdentifier(self))
+        }
+    }
     /// Session names currently alive in tmux.
     @Published var liveSessions: Set<String> = []
     @Published var sidebarWidth: CGFloat = 260
@@ -147,6 +155,14 @@ final class StudioModel: ObservableObject {
     /// Same reason as `runsObserver`: connecting the bridge is one click, and the row
     /// it changes lives in a view that holds only the model.
     private var mcpObserver: AnyCancellable?
+    /// Session status is read from the app-wide `SessionStates` through the engine, so
+    /// nothing in the window observes the object that actually changes. Without this
+    /// forward the status dots and the tab bar redrew only when something else
+    /// happened to publish — which is why "working" could sit there after the turn
+    /// had already come back.
+    private var statesObserver: AnyCancellable?
+    /// The engine publishes service status; the views hold only the model.
+    private var engineObserver: AnyCancellable?
 
     init(project: Project) {
         self.project = project
@@ -163,6 +179,12 @@ final class StudioModel: ObservableObject {
             self?.objectWillChange.send()
         }
         mcpObserver = mcp.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        statesObserver = SessionStates.shared.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        engineObserver = engine.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
     }
@@ -245,19 +267,26 @@ final class StudioModel: ObservableObject {
     func stop() {
         refreshTimer?.invalidate()
         runs.stopPolling()
+        SessionStates.shared.releaseVisible(for: ObjectIdentifier(self))
         store.mutate {
             $0.sidebarWidth = Double(self.sidebarWidth)
             $0.lastView = self.pane.rawValue
         }
 
+        // The views go now; the tmux sessions go on a background queue. Killing them
+        // here meant one synchronous process per service and per terminal, run in a
+        // row while the window was trying to close — the closing animation stopped
+        // dead on a project with a few of each.
+        var doomed: [String] = []
         for service in store.config.services {
             engine.discard(service.id.uuidString)
-            Tmux.kill(TerminalEngine.serviceSession(service, project: project))
+            doomed.append(TerminalEngine.serviceSession(service, project: project))
         }
         for terminal in store.config.terminals {
             engine.discard("terminal:\(terminal.id.uuidString)")
-            Tmux.kill(tmuxName(for: terminal))
+            doomed.append(tmuxName(for: terminal))
         }
+        Tmux.killDetached(doomed)
     }
 
     // MARK: - Sessions
@@ -287,15 +316,41 @@ final class StudioModel: ObservableObject {
         sessions.first { $0.tabKey == id }
     }
 
-    /// Closed sessions that can be reopened.
-    var pastSessions: [SessionRecord] { sessions.filter { !isOpen($0) } }
+    /// Closed sessions that can be reopened. Saved ones are listed separately and
+    /// never fall off the end of this list, which is the whole point of saving one.
+    var pastSessions: [SessionRecord] { sessions.filter { !isOpen($0) && !$0.saved } }
+
+    /// Kept on purpose, open or not.
+    var savedSessions: [SessionRecord] { sessions.filter(\.saved) }
+
+    /// Saved and not currently open — the ones the "+" menu offers to bring back.
+    var savedClosedSessions: [SessionRecord] { sessions.filter { $0.saved && !isOpen($0) } }
+
+    /// Keeps a session in the saved list. Nothing is copied and nothing is pinned
+    /// open: the record already outlives tmux, and reopening it resumes the same
+    /// conversation. What saving changes is that it is still there to be found
+    /// after a hundred other sessions have come and gone.
+    func setSaved(_ record: SessionRecord, saved: Bool) {
+        store.mutate {
+            guard let index = $0.sessions.firstIndex(where: { $0.tmux == record.tmux }) else { return }
+            $0.sessions[index].saved = saved
+        }
+    }
 
     func attention(of record: SessionRecord) -> Attention {
         engine.attention[record.tabKey] ?? .idle
     }
 
+    /// How many sessions are actually on you — a question, or a finished turn you
+    /// have not looked at. NOT "how many handed the turn back", which is what the
+    /// old count said and why it could read seventeen while nothing needed doing.
     var attentionCount: Int {
-        openSessions.filter { attention(of: $0) == .waiting }.count
+        openSessions.filter { attention(of: $0).needsAttention }.count
+    }
+
+    /// The ones holding a question, which looking at does not clear.
+    var questionCount: Int {
+        openSessions.filter { attention(of: $0).isQuestion }.count
     }
 
     /// Adopts tmux sessions that belong to this project but have no record — so
@@ -331,9 +386,12 @@ final class StudioModel: ObservableObject {
                 .filter { !$0.name.contains("-sh-") && !$0.name.contains("-sv-") }
                 .map(\.name))
             await MainActor.run {
-                self.liveSessions = names
-                self.syncSessionContext()
+                // Only on a change. The set is usually identical from one tick to the
+                // next, and publishing it anyway invalidated every view in the window
+                // every four seconds for nothing.
+                if names != self.liveSessions { self.liveSessions = names }
                 self.persistClaudeSIDs()
+                self.adoptClaudeTitles()
                 if self.autoAttachPending, self.tabs.isEmpty,
                    AppSettings.shared.autoAttachLastSession,
                    let latest = self.openSessions.first {
@@ -342,13 +400,6 @@ final class StudioModel: ObservableObject {
                 }
             }
         }
-    }
-
-    /// Keep notification text available to the engine.
-    private func syncSessionContext() {
-        var titles: [String: String] = [:]
-        for record in store.config.sessions { titles[record.tabKey] = record.name }
-        engine.sessionTitles = titles
     }
 
     /// Persist the Claude session ids captured by the hook, so a closed session
@@ -361,6 +412,31 @@ final class StudioModel: ObservableObject {
             // from another machine) still knows which conversation it belongs to.
             let name = record.tmux
             Task.detached(priority: .utility) { Tmux.setOption(name, "@cs_sid", sid) }
+        }
+    }
+
+    /// Names the sessions nobody named, after Claude's own title for the
+    /// conversation.
+    ///
+    /// Claude sets the terminal title over OSC as soon as it has a subject —
+    /// "✳ Optimize GROUP BY sorgusu" — and tmux has been reporting it all along
+    /// (`paneTitles`), for nothing. Meanwhile the sidebar filled up with "Claude
+    /// 208", "Claude 209": naming a session is a thing you have to remember to do
+    /// BEFORE there is anything to name it after.
+    ///
+    /// Only a name the app itself made up is replaced (`isAutoNamed`), and only
+    /// once — the first title sticks, because a tab whose name changes every turn
+    /// is not a name, it is a status line. Renaming makes the record no longer
+    /// auto-named, which is what stops it.
+    private func adoptClaudeTitles() {
+        guard AppSettings.shared.autoTitleSessions else { return }
+        let titles = SessionStates.shared.paneTitles
+        for record in store.config.sessions where record.isAutoNamed {
+            guard isOpen(record),
+                  let raw = titles[record.tmux],
+                  let title = SessionStates.cleanPaneTitle(raw)
+            else { continue }
+            renameSession(record, to: String(title.prefix(48)))
         }
     }
 
@@ -385,7 +461,6 @@ final class StudioModel: ObservableObject {
                             title: title, initialPrompt: prompt, autoRun: autoRun,
                             extraEnv: extraEnv, linkSettings: linkSettings)
         liveSessions.insert(record.tmux)
-        syncSessionContext()
         return record
     }
 
@@ -423,7 +498,23 @@ final class StudioModel: ObservableObject {
                             linkSettings: linkSettings)
         store.touchSession(tmux: record.tmux)
         liveSessions.insert(record.tmux)
-        syncSessionContext()
+    }
+
+    /// Brings a session to the front of this window — attaching it first if this
+    /// window is not already showing it. What the island's rows do.
+    func revealSession(tmux: String) {
+        pane = .sessions
+        guard let record = store.session(tmux: tmux) else {
+            // A session tmux knows about and `.cs/sessions.json` does not: adopting
+            // it is `adoptOrphanSessions`' job, and it runs on open.
+            adoptOrphanSessions()
+            return
+        }
+        if tabs.contains(where: { $0.id == record.tabKey }) {
+            activeTabID = record.tabKey
+        } else {
+            openSession(record)
+        }
     }
 
     /// Every conversation Claude Code recorded for this project, newest first.
@@ -458,7 +549,6 @@ final class StudioModel: ObservableObject {
                             title: record.name, resumeSID: transcript.id,
                             linkSettings: linkSettings)
         liveSessions.insert(record.tmux)
-        syncSessionContext()
     }
 
     /// Can a closed session's conversation be brought back?
@@ -476,9 +566,9 @@ final class StudioModel: ObservableObject {
         // A closed session can be renamed too, and its tmux session no longer exists —
         // `set-option` on it only prints an error nobody reads.
         if liveSessions.contains(record.tmux) {
-            Tmux.setOption(record.tmux, "@cs_title", clean)
+            let name = record.tmux
+            Task.detached(priority: .utility) { Tmux.setOption(name, "@cs_title", clean) }
         }
-        syncSessionContext()
     }
 
     /// Closes a session: tmux is killed and the tab and sidebar entry go away —
@@ -491,8 +581,12 @@ final class StudioModel: ObservableObject {
         engine.discard(record.tabKey)
         liveSessions.remove(record.tmux)
         store.touchSession(tmux: record.tmux)
+        // The delay stays (it is what lets the client die first); the kill itself
+        // moves off the main thread. Closing several tabs in a row otherwise queued
+        // one synchronous process after another onto the thread drawing the window.
         let name = record.tmux
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 150_000_000)
             Tmux.kill(name)
         }
     }
@@ -533,7 +627,10 @@ final class StudioModel: ObservableObject {
         engine.discard(key)
         store.removeTerminal(terminal.id)
         let name = tmuxName(for: terminal)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { Tmux.kill(name) }
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            Tmux.kill(name)
+        }
     }
 
     private func tmuxName(for terminal: TerminalTab) -> String {
@@ -1146,7 +1243,6 @@ final class StudioModel: ObservableObject {
                             linkSettings: linkSettings)
         store.touchSession(tmux: record.tmux)
         liveSessions.insert(record.tmux)
-        syncSessionContext()
     }
 
     func openCron(_ schedule: Schedule) {
@@ -1184,6 +1280,26 @@ final class StudioModel: ObservableObject {
         if activeTabID == id {
             activeTabID = tabs.indices.contains(index) ? tabs[index].id : tabs.last?.id
         }
+    }
+
+    /// Drag-reorder in the tab bar. The order is this window's, for as long as it
+    /// is open — it is not written to `.cs`, because tabs are what you happen to
+    /// have open, not part of the project.
+    func moveTab(_ id: String, before other: String) {
+        guard id != other, let from = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let tab = tabs.remove(at: from)
+        guard let to = tabs.firstIndex(where: { $0.id == other }) else {
+            tabs.insert(tab, at: min(from, tabs.count))
+            return
+        }
+        tabs.insert(tab, at: to)
+    }
+
+    /// Moves a tab to the end — where a drag past the last one lands.
+    func moveTabToEnd(_ id: String) {
+        guard let from = tabs.firstIndex(where: { $0.id == id }), from != tabs.count - 1 else { return }
+        let tab = tabs.remove(at: from)
+        tabs.append(tab)
     }
 
     var activeTab: StudioTab? { tabs.first { $0.id == activeTabID } }

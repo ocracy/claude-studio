@@ -24,6 +24,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("terminal.fontSize")   var terminalFontSize = 12.5
     /// Reattach to the most recent session when a project opens.
     @AppStorage("session.autoAttach")  var autoAttachLastSession = true
+    /// The island at the top of the screen: every project's sessions in one place,
+    /// above whatever you are working in.
+    @AppStorage("island.enabled")      var islandEnabled = true
+    /// Rename a session nobody named after Claude's own title for the conversation.
+    @AppStorage("session.autoTitle")   var autoTitleSessions = true
     /// Order of the activity rail, as comma-separated pane names. Empty means the
     /// built-in order; unknown or missing names are ignored, so the list survives
     /// a release that adds or removes a section.
@@ -36,11 +41,17 @@ final class AppSettings: ObservableObject {
     private init() {}
 
     /// Waiting-session announcement — one soft tone, optional banner.
-    func announceWaiting(session: String, project: String) {
+    ///
+    /// The body says WHICH of the two it is. "Claude is waiting for you" was said
+    /// for a finished report and for a permission prompt alike, which is the same
+    /// flattening the orange dot used to do: the banner that actually needs you
+    /// read exactly like the twelve that did not.
+    func announceWaiting(session: String, project: String, question: String? = nil) {
         if soundEnabled { Notify.play(soundName) }
         if notifyEnabled {
             Notify.post(title: project, subtitle: session,
-                        body: "Claude is waiting for you.", sound: nil)
+                        body: question?.nilIfEmpty ?? "Finished — nothing to answer.",
+                        sound: nil)
         }
     }
 

@@ -23,6 +23,12 @@ enum Paths {
 
     static let tmuxConfig = appSupport.appendingPathComponent("tmux.conf")
 
+    /// Which finished sessions have been looked at, and as of when. Beside the
+    /// state files rather than in a project's `.cs`, because it answers for every
+    /// project at once — and it has to survive a relaunch, or every session that
+    /// finished yesterday demands attention again this morning.
+    static let seenSessionsFile = appSupport.appendingPathComponent("seen-sessions.json")
+
     /// `<tabID>.json` state files written by the hook script.
     static let sessionStateDir: URL = {
         let url = appSupport.appendingPathComponent("session-state", isDirectory: true)

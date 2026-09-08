@@ -85,26 +85,104 @@ struct SessionRecord: Identifiable, Hashable, Codable {
     /// Claude's own session id (for `claude --resume`).
     var claudeSID: String?
     var lastUsed: Date = Date()
+    /// Kept in the "saved" list: it never falls off the end of "previous
+    /// sessions", and reopening it resumes the conversation.
+    var saved: Bool = false
 
     /// Tab and hook identifier (`CS_TAB_ID`).
     var tabKey: String { "session:\(tmux)" }
+
+    /// Has this session only ever carried the name the app gave it? Those are the
+    /// ones Claude's own conversation title is allowed to replace — a name the
+    /// user typed is never overwritten.
+    var isAutoNamed: Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("Claude ") else { return trimmed.isEmpty || trimmed == "Claude" }
+        return Int(trimmed.dropFirst("Claude ".count)) != nil
+    }
+
+    init(id: UUID = UUID(), name: String, tmux: String,
+         claudeSID: String? = nil, lastUsed: Date = Date(), saved: Bool = false) {
+        self.id = id
+        self.name = name
+        self.tmux = tmux
+        self.claudeSID = claudeSID
+        self.lastUsed = lastUsed
+        self.saved = saved
+    }
+
+    /// Decoded by hand for the usual reason: the synthesized decoder throws on a
+    /// missing key even where there is a default, so `saved` — absent from every
+    /// `sessions.json` written before it existed — would have taken the whole
+    /// session list down on upgrade.
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            ((try? box.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
+        }
+        id        = value(.id, UUID())
+        name      = value(.name, "Claude")
+        tmux      = value(.tmux, "")
+        claudeSID = (try? box.decodeIfPresent(String.self, forKey: .claudeSID)) ?? nil
+        lastUsed  = value(.lastUsed, Date())
+        saved     = value(.saved, false)
+    }
 
     static func make(projectShortID: String, name: String) -> SessionRecord {
         let id = UUID()
         return SessionRecord(id: id, name: name,
                              tmux: "cs-\(projectShortID)-\(id.uuidString.prefix(8).lowercased())")
     }
+
+    /// The project a tmux session belongs to, read back out of its own name.
+    ///
+    /// `cs-<shortID>-<8 hex>` — the shortID itself contains hyphens, so it is the
+    /// middle that has to be taken, not a component. This is what lets a session
+    /// found in the shared state directory be traced to a window without the
+    /// state file having to carry a path.
+    static func projectShortID(ofTmux name: String) -> String? {
+        guard name.hasPrefix("cs-") else { return nil }
+        let body = name.dropFirst(3)
+        guard let last = body.lastIndex(of: "-") else { return nil }
+        let short = String(body[body.startIndex..<last])
+        return short.isEmpty ? nil : short
+    }
 }
 
-/// Claude's live state, reported by the hook bridge.
+/// Claude's live state, reported by the hook bridge and confirmed against the
+/// session's own screen.
+///
+/// `waiting` and `done` are the split that makes the colour mean something. Both
+/// used to be `waiting`, which is how a screen full of orange dots came to say
+/// nothing: most of them were finished turns nobody had to answer, and the one
+/// session actually holding a question looked exactly like them. A question is
+/// orange until it is ANSWERED; a finished turn is orange until it is SEEN.
 enum Attention: String, Codable {
-    case idle, working, waiting
+    case idle, working, waiting, done, seen
+
+    /// Orange: this session is on you.
+    var needsAttention: Bool { self == .waiting || self == .done }
+
+    /// Is it a question, rather than a turn that simply ended?
+    var isQuestion: Bool { self == .waiting }
 
     var label: String {
         switch self {
         case .working: return "working"
-        case .waiting: return "waiting"
+        case .waiting: return "needs you"
+        case .done:    return "finished"
+        case .seen:    return "done"
         case .idle:    return "ready"
+        }
+    }
+
+    /// The palette-free colour, for surfaces that belong to no project — the
+    /// island above all. Inside a project window `theme.idle` replaces the grey.
+    var color: Color {
+        switch self {
+        case .working:        return Theme.running
+        case .waiting, .done: return Theme.waiting
+        case .seen, .idle:    return Theme.idle
         }
     }
 }

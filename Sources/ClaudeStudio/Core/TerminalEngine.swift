@@ -106,12 +106,18 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
     /// Service id → status.
     @Published var serviceStatus: [UUID: ServiceStatus] = [:]
+
+    /// Session state and pane titles are READ from the app-wide monitor, never polled
+    /// here: both sources are global, so one engine per window meant the same
+    /// directory read and the same `tmux list-panes -a` repeated once per open window,
+    /// every 1.5 s, on the main thread. See `SessionStates`.
+    ///
     /// Session key → Claude's live state (from the hook bridge).
-    @Published var attention: [String: Attention] = [:]
+    var attention: [String: Attention] { SessionStates.shared.attention }
     /// tmux session name → the live title Claude sets.
-    @Published var paneTitles: [String: String] = [:]
+    var paneTitles: [String: String] { SessionStates.shared.paneTitles }
     /// Tab key → Claude's own session id (for `--resume`).
-    @Published var claudeSIDs: [String: String] = [:]
+    var claudeSIDs: [String: String] { SessionStates.shared.claudeSIDs }
 
     private var views: [String: StudioTerminalView] = [:]
     /// Spawn was requested but the process is not `running` yet — guards against
@@ -140,14 +146,17 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
     }
 
     private lazy var baseEnvironment: [String] = Self.buildEnvironment()
-    /// Context for notification text; filled in by `StudioModel`.
+    /// Which project this engine serves. Notification text no longer comes from here
+    /// — the state file names its own project — but a window's engine still needs to
+    /// know whose it is.
     var projectName = ""
-    var sessionTitles: [String: String] = [:]
 
     override init() {
         super.init()
-        Tmux.ensureConfig()
-        HookBridge.installIfNeeded()
+        // `Tmux.ensureConfig` and `HookBridge.installIfNeeded` are the app's job, done
+        // once at launch off the main thread (see `AppDelegate`). Repeating them per
+        // engine meant every new window wrote two files and ran `tmux source-file`
+        // synchronously on the main thread before it could draw.
         installScrollMonitor()
         installKeyMonitor()
         startPolling()
@@ -213,6 +222,9 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         if v.process?.running == true { kill(v.process.shellPid, SIGTERM) }
         v.removeFromSuperview()
         HookBridge.clearState(key)
+        // …and drop it from the shared map at once, or the closed tab keeps its old
+        // status — and its share of the Dock badge — until the next sweep.
+        SessionStates.shared.forget(key)
     }
 
     // MARK: - Claude session (persistent via tmux)
@@ -281,15 +293,20 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         settleGeometry(key: key, session: Tmux.isAvailable ? session : nil)
 
         if Tmux.isAvailable {
-            after(0.6) {
-                Tmux.setOption(session, "@cs_project", project.shortID)
-                Tmux.setOption(session, "@cs_title", title)
-                Tmux.touch(session)
-                // Tag the session with the conversation id so a session adopted on
-                // another launch can still be resumed.
-                if let sid = resumeSID { Tmux.setOption(session, "@cs_sid", sid) }
+            // Off the main thread and in one call. Four synchronous `tmux` processes
+            // fired on the main thread 0.6 s into opening a tab is exactly the stall
+            // you feel when opening or closing sessions quickly.
+            let shortID = project.shortID
+            let used = String(Int(Date().timeIntervalSince1970))
+            var options = ["@cs_project": shortID, "@cs_title": title, "@cs_used": used]
+            // Tag the session with the conversation id so a session adopted on
+            // another launch can still be resumed.
+            if let sid = resumeSID { options["@cs_sid"] = sid }
+            let tags = options
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                Tmux.setOptions(session, tags)
             }
-
         }
 
         // With auto-run off the prompt is typed into the box but not sent — the
@@ -339,10 +356,11 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         after(1.0) { [weak self] in self?.starting.remove(key) }
         settleGeometry(key: key, session: Tmux.isAvailable ? session : nil)
         if Tmux.isAvailable {
-            after(0.6) {
-                Tmux.setOption(session, "@cs_project", project.shortID)
-                Tmux.setOption(session, "@cs_title", title)
-                Tmux.setOption(session, "@cs_kind", "shell")
+            let tags = ["@cs_project": project.shortID, "@cs_title": title,
+                        "@cs_kind": "shell"]
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                Tmux.setOptions(session, tags)
             }
         }
     }
@@ -460,10 +478,11 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             let keepAlive = "\(Shell.quoted(Tmux.path ?? "tmux")) set-option remain-on-exit on 2>/dev/null; "
             let inner = keepAlive + "cd \(Shell.quoted(cwd)) && \(service.command)"
             wrapped = Tmux.attachCommand(session: session, env: [:], inner: inner)
-            after(0.6) {
-                Tmux.setOption(session, "@cs_project", project.shortID)
-                Tmux.setOption(session, "@cs_title", service.name)
-                Tmux.setOption(session, "@cs_kind", "service")
+            let tags = ["@cs_project": project.shortID, "@cs_title": service.name,
+                        "@cs_kind": "service"]
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                Tmux.setOptions(session, tags)
             }
         } else {
             wrapped = "stty cols \(cols) rows \(rows) 2>/dev/null; "
@@ -508,7 +527,7 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
             Tmux.interrupt(session)
             after(3) { [weak self] in
                 guard let self else { return }
-                Tmux.kill(session)
+                Tmux.killDetached([session])
                 self.serviceSessions.removeValue(forKey: service.id)
                 self.engineDiscard(key)
                 self.serviceStatus[service.id] = .stopped
@@ -670,48 +689,17 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
 
     // MARK: - Monitoring
 
-    /// Polls hook state files and tmux titles at a low frequency. Polling rather
-    /// than watching: launchd and tmux write independently of the app, and a 1.5 s
-    /// loop is both cheap and live enough.
+    /// Polls the things that are this window's own: the state of the services it
+    /// started. Session state and pane titles are global and belong to
+    /// `SessionStates`, which reads them once for the whole app.
+    ///
+    /// The timer only exists while there is something to watch. A window with no
+    /// services used to fork a `tmux` every 1.5 s to be told nothing had changed.
     private func startPolling() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
-            Task { @MainActor in self.poll() }
-        }
-    }
-
-    private func poll() {
-        let states = HookBridge.readAll()
-        var next: [String: Attention] = [:]
-        var sids: [String: String] = [:]
-        for (key, state) in states {
-            switch state.state {
-            case "working": next[key] = .working
-            case "waiting": next[key] = .waiting
-            default:        next[key] = .idle
-            }
-            if let sid = state.sid, !sid.isEmpty { sids[key] = sid }
-        }
-
-        // Announce on the TRANSITION into waiting — not on every poll.
-        for (key, value) in next where value == .waiting && attention[key] != .waiting {
-            if attention[key] != nil {
-                AppSettings.shared.announceWaiting(session: sessionTitles[key] ?? "Claude",
-                                                  project: projectName)
-            }
-        }
-        attention = next
-        claudeSIDs.merge(sids) { _, new in new }
-
-        if AppSettings.shared.badgeEnabled {
-            Notify.badge(next.values.filter { $0 == .waiting }.count)
-        }
-
         guard Tmux.isAvailable else { return }
-        pollServiceStates()
-        Task.detached(priority: .utility) {
-            let titles = Tmux.paneTitles()
-            await MainActor.run { self.paneTitles = titles }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+            Task { @MainActor in self.pollServiceStates() }
         }
     }
 
@@ -725,8 +713,10 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
         guard !probes.isEmpty else { return }
 
         Task.detached(priority: .utility) {
+            // One `list-panes -a` for every service, not one call per service.
+            let all = Tmux.paneStates()
             var states: [UUID: Tmux.PaneState?] = [:]
-            for (id, session) in probes { states[id] = Tmux.paneState(session) }
+            for (id, session) in probes { states[id] = all[session] }
             let result = states
             await MainActor.run {
                 for (id, state) in result {
@@ -741,7 +731,10 @@ final class TerminalEngine: NSObject, ObservableObject, LocalProcessTerminalView
                         continue
                     }
                     let code = state.exitCode ?? 0
-                    self.serviceStatus[id] = code == 0 ? .stopped : .crashed
+                    let next: ServiceStatus = code == 0 ? .stopped : .crashed
+                    // Only on a change: writing the same value still publishes, and a
+                    // dead pane stays dead for as long as it is on screen.
+                    if self.serviceStatus[id] != next { self.serviceStatus[id] = next }
                     if code != 0, !self.announcedCrashes.contains(id) {
                         self.announcedCrashes.insert(id)
                         AppSettings.shared.announceFinished(title: "Service stopped",

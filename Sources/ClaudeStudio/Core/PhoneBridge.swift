@@ -175,18 +175,59 @@ final class PhoneBridge: ObservableObject {
 
     private var plist: URL { Paths.launchAgentsDir.appendingPathComponent("\(Self.label).plist") }
 
-    private init() { refresh() }
+    /// Deliberately empty. This used to `refresh()`, which was affordable while the
+    /// first touch of `shared` was someone opening Settings; the watchdog moved that
+    /// touch to app launch, and `refresh()` is three process spawns on the calling
+    /// thread. The watchdog's first tick fills everything in off the main thread a
+    /// moment later, and Settings refreshes on appear regardless.
+    private init() {}
 
     // MARK: - Status
 
+    /// Every assignment here is compared first.
+    ///
+    /// This used to write all five unconditionally, which was harmless while it only
+    /// ran when someone opened Settings. The watchdog calls it once a minute forever,
+    /// and an `@Published` write invalidates every view that reads it whether or not
+    /// the value moved — the same bug `attention` and `serviceStatus` had.
     func refresh() {
-        isInstalled = PhoneInstaller.isInstalled
-        isEnabled = isInstalled && jobIsLoaded
-        isRunning = Shell.portIsListening(Self.port)
-        mesh = MeshStatus.detect()
-        address = mesh.address
-        token = try? String(contentsOf: Paths.bridgeToken, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        apply(Self.measure(installed: PhoneInstaller.isInstalled, jobIsLoaded: jobIsLoaded))
+    }
+
+    /// One reading of everything that can change underneath us.
+    ///
+    /// Split out of `refresh()` so the watchdog can take it off the main thread:
+    /// `MeshStatus.detect()` and `portIsListening` are both process spawns, and this
+    /// now runs once a minute for the life of the app. The two main-actor answers
+    /// (`isInstalled`, `jobIsLoaded`) are passed in rather than asked for here — they
+    /// are cheap, and taking them as arguments is what keeps this side isolation-free.
+    nonisolated private static func measure(installed: Bool, jobIsLoaded: Bool) -> Reading {
+        Reading(
+            installed: installed,
+            enabled: installed && jobIsLoaded,
+            running: Shell.portIsListening(port),
+            mesh: MeshStatus.detect(),
+            token: try? String(contentsOf: Paths.bridgeToken, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private struct Reading: Sendable {
+        var installed: Bool
+        var enabled: Bool
+        var running: Bool
+        var mesh: MeshStatus
+        var token: String?
+    }
+
+    private func apply(_ reading: Reading) {
+        if isInstalled != reading.installed { isInstalled = reading.installed }
+        if isEnabled != reading.enabled { isEnabled = reading.enabled }
+        if isRunning != reading.running { isRunning = reading.running }
+        if mesh != reading.mesh { mesh = reading.mesh }
+        if address != reading.mesh.address { address = reading.mesh.address }
+        if token != reading.token { token = reading.token }
+
+        announce(reading)
     }
 
     /// Looks again — and says what it found.
@@ -199,18 +240,100 @@ final class PhoneBridge: ObservableObject {
     func check() {
         guard checkState != .checking else { return }
         checkState = .checking
+        let loaded = jobIsLoaded
+        let installed = PhoneInstaller.isInstalled
         Task.detached(priority: .userInitiated) {
-            let mesh = MeshStatus.detect()
-            let listening = Shell.portIsListening(Self.port)
-            let message = Self.describe(mesh: mesh, listening: listening)
+            let reading = Self.measure(installed: installed, jobIsLoaded: loaded)
+            let message = Self.describe(mesh: reading.mesh, listening: reading.running)
             let found = await MainActor.run { PhoneInstaller.requirements() }
             await MainActor.run {
-                self.refresh()
+                self.apply(reading)
                 self.requirements = found
                 self.checkState = .done(message)
             }
         }
     }
+
+    // MARK: - Watchdog
+
+    /// A drop has been announced and not yet taken back. This is the whole memory the
+    /// announcer needs: it makes a repeat reading silent and a recovery meaningful,
+    /// and without it the "back" banner would fire on every launch that happens to
+    /// find the mesh healthy.
+    private var announcedDown = false
+    private var watchdog: Task<Void, Never>?
+
+    /// Watches the private network for the life of the app.
+    ///
+    /// The mesh is the one thing phone access cannot survive without, and until now
+    /// nothing looked at it unless Settings → Phone was open. A Netbird peer login
+    /// expires after about a day; the tunnel went down, the phone stopped working,
+    /// and nothing on this Mac said so — the failure was only discoverable by
+    /// reaching for the phone and finding it dead, often days later.
+    ///
+    /// App-wide and started once, like `SessionStates` and `Island`: the mesh is a
+    /// property of the machine, not of a window.
+    func startWatchdog() {
+        guard watchdog == nil else { return }
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                // Once a minute. `MeshStatus.detect()` is a process spawn and the
+                // mesh is not something that changes by the second — the 1.5 s
+                // rhythm the session poll runs at would be pure waste here.
+                let (installed, loaded) = await MainActor.run {
+                    (PhoneInstaller.isInstalled, self?.jobIsLoaded ?? false)
+                }
+                let reading = await Task.detached(priority: .utility) {
+                    PhoneBridge.measure(installed: installed, jobIsLoaded: loaded)
+                }.value
+                guard let self else { return }
+                await MainActor.run { self.apply(reading) }
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+    }
+
+    /// Says something only when the answer CHANGED.
+    ///
+    /// Announcing on the state rather than the transition would put a banner on
+    /// screen every minute for as long as the tunnel stayed down — the same trap the
+    /// phone's push notifications avoid by firing on `working` → `waiting`.
+    ///
+    /// The first reading is the deliberate exception. A session poll seeds silently
+    /// because a first sighting says nothing about what came before; here the
+    /// opposite holds — if the mesh is already down when the app opens, that is
+    /// precisely the fact nobody has been told, so it is announced once and then
+    /// falls quiet.
+    private func announce(_ reading: Reading) {
+        let connected = reading.mesh.isConnected
+
+        // Silent for anyone who does not use phone access: with the bridge missing
+        // or switched off, a mesh that is down costs them nothing.
+        guard reading.installed, reading.enabled, AppSettings.shared.notifyEnabled else {
+            announcedDown = false
+            return
+        }
+
+        if !connected {
+            guard !announcedDown else { return }
+            announcedDown = true
+            Notify.post(title: "Phone access is down",
+                        body: Self.describe(mesh: reading.mesh, listening: reading.running),
+                        sound: Notify.alertSound)
+        } else if announcedDown {
+            announcedDown = false
+            // Quiet on the way back up: the problem is gone, and a sound for that is
+            // a sound for something nobody has to act on.
+            Notify.post(title: "Phone access is back",
+                        body: "\(reading.mesh.tool?.name ?? "The private network") is up at "
+                            + "\(reading.mesh.host ?? "—").",
+                        sound: nil)
+        }
+    }
+
+    /// The mesh is down while phone access is supposed to be working — the one state
+    /// worth interrupting for. Read by the island.
+    var isBroken: Bool { isInstalled && isEnabled && !mesh.isConnected }
 
     nonisolated private static func describe(mesh: MeshStatus, listening: Bool) -> String {
         guard let tool = mesh.tool else {

@@ -122,13 +122,22 @@ private struct TopBar: View {
 
             Spacer(minLength: 12)
 
+            // "17 waiting" used to count every session that had handed the turn
+            // back, which on a busy day was every session — and said nothing. It
+            // counts what is actually on you now, and names the half that cannot be
+            // cleared by looking.
             if model.attentionCount > 0 {
                 HStack(spacing: 6) {
                     StatusDot(color: Theme.waiting)
-                    Text("\(model.attentionCount) waiting")
+                    Text(model.questionCount > 0
+                         ? "\(model.questionCount) asking · \(model.attentionCount) unread"
+                         : "\(model.attentionCount) unread")
                 }
                 .font(Theme.ui(11.5))
                 .foregroundStyle(theme.text2)
+                .help(model.questionCount > 0
+                      ? "\(model.questionCount) session(s) are waiting on an answer; the rest have finished."
+                      : "Finished turns you have not looked at yet.")
             }
 
             // "Start services" used to sit here, on every screen. It belongs where
@@ -303,13 +312,35 @@ private struct TabBar: View {
     @State private var renaming: String?
     @State private var renameText = ""
     @FocusState private var renameFocused: Bool
+    /// The tab being dragged, for reordering.
+    @State private var dragging: String?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
                 ForEach(model.tabs) { tab in
                     item(tab)
+                        .onDrag {
+                            dragging = tab.id
+                            return NSItemProvider(object: tab.id as NSString)
+                        }
+                        .onDrop(of: [.text], isTargeted: nil) { _ in
+                            guard let source = dragging, source != tab.id else { return false }
+                            model.moveTab(source, before: tab.id)
+                            dragging = nil
+                            return true
+                        }
                 }
+                // Dropping past the last tab means "put it at the end" — without a
+                // target there, a drag to the right of the row silently does nothing.
+                Color.clear
+                    .frame(width: 60, height: 34)
+                    .onDrop(of: [.text], isTargeted: nil) { _ in
+                        guard let source = dragging else { return false }
+                        model.moveTabToEnd(source)
+                        dragging = nil
+                        return true
+                    }
             }
         }
         .frame(height: 34)
@@ -333,6 +364,11 @@ private struct TabBar: View {
                     .onSubmit { commitRename(tab) }
                     .onExitCommand { renaming = nil }
             } else {
+                if model.sessionRecord(forTab: tab.id)?.saved == true {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(theme.accent)
+                }
                 Text(tab.title)
                     .font(Theme.ui(12))
                     .foregroundStyle(selected ? theme.text : theme.text2)
@@ -359,8 +395,11 @@ private struct TabBar: View {
         .onTapGesture(count: 2) { beginRename(tab) }
         .onTapGesture { model.activeTabID = tab.id }
         .contextMenu {
-            if model.sessionRecord(forTab: tab.id) != nil {
+            if let record = model.sessionRecord(forTab: tab.id) {
                 Button("Rename") { beginRename(tab) }
+                Button(record.saved ? "Remove from saved" : "Save session") {
+                    model.setSaved(record, saved: !record.saved)
+                }
                 Divider()
             }
             Button("Close tab") { model.closeTab(id: tab.id) }
@@ -389,9 +428,11 @@ private struct TabBar: View {
         switch tab.kind {
         case .session:
             switch model.engine.attention[tab.terminalKey] ?? .idle {
-            case .working: return Theme.running
-            case .waiting: return Theme.waiting
-            case .idle:    return theme.idle
+            case .working:        return Theme.running
+            // A question and an unread finish are both on you; a finish you have
+            // already looked at is not, and goes quiet.
+            case .waiting, .done: return Theme.waiting
+            case .seen, .idle:    return theme.idle
             }
         case .service:
             guard let id = UUID(uuidString: tab.ref) else { return theme.idle }

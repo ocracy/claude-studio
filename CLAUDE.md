@@ -50,13 +50,16 @@ Sources/ClaudeStudio/
 │   ├── Runs.swift             # run reports (the reports are the state)
 │   ├── Scheduler.swift        # runner script + launchd plist
 │   ├── HookBridge.swift       # Claude Code hooks → session state
+│   ├── SessionStates.swift    # the app-wide reader: state files, pane titles, screens
+│   ├── PaneReader.swift       # what a session is waiting FOR, read off its screen
 │   ├── ClaudeTranscripts.swift# resume availability check
 │   ├── Settings.swift         # user preferences (sound, notifications, terminal)
 │   ├── Updater.swift          # GitHub release self-updater
 │   ├── Recents.swift          # recent projects + folder picker
 │   └── StudioModel.swift      # all state for one window
 └── Views/                 # Windows, RootView, WelcomeView, StudioView, Sidebar, Detail,
-                           # Sheets, SettingsWindow, CommandPalette, Markdown, TerminalHost
+                           # Sheets, SettingsWindow, CommandPalette, Markdown, TerminalHost,
+                           # Island (the panel above every app, owned by no window)
 
 Sources/StudioBridge/       # second executable: the MCP server the app registers with
                             # Claude. No SwiftTerm, no SwiftUI. It duplicates a trimmed
@@ -199,6 +202,104 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   user types arrives as `UserPromptExpansion` instead. The hook spools the RAW event as
   one file per event and Swift parses it — shell JSON parsing is where hooks go to die.
   `UsageMonitor` is app-wide: per-window consumers would race over the same spool.
+- **Session state is read ONCE for the whole app** (`SessionStates`), never per
+  window. `session-state/` holds every project's sessions and `list-panes -a` every
+  project's panes: both are global, so a per-window poll did N times the work and then
+  drew the same conclusion N times. It is also what made the waiting notification name
+  the WRONG PROJECT — each window's engine announced whatever it read out of the shared
+  directory under its own `projectName`, so one session finishing produced one banner
+  per open window, each titled with that window's project. The state file has carried
+  `project` and `name` since it was written; those are what the banner says. Two more
+  traps in the same place: announcing only when a previous `working` was recorded lost
+  every turn shorter than the 1.5 s poll (a first sighting IS a transition, after the
+  seeding tick), and a killed client never runs `SessionEnd`, so dead sessions kept a
+  state file that held them "waiting" forever and inflated the Dock badge — the sweep
+  compares against the PANE LIST, not `Tmux.sessions()`, whose `@cs_project` tag is
+  written 0.6 s late and would read a brand-new session as dead.
+- **What orange means**: a hook says a session handed the turn back; it cannot say
+  whether it did so ON A QUESTION, and that difference is the whole value of the
+  colour. Both used to be `waiting`, which is how a screen of eighteen orange dots
+  came to say nothing — most were finished turns nobody had to answer, and the one
+  session actually holding a permission prompt looked identical. So `Attention`
+  splits into **waiting** (a question — orange until ANSWERED) and **done** (a
+  finished turn — orange until SEEN, then `seen` and grey). Three things make the
+  split trustworthy. First, `Stop` and `Notification` are installed with DIFFERENT
+  hook arguments (`stop` / `notify`); they both still write `state: "waiting"`, so
+  the phone bridge reads exactly what it always did, and only `kind` is new.
+  Second, `mergeSettings` matches on the ARGUMENT, not just on the script name —
+  an install that only asked "is our script wired up?" would have left every
+  existing machine on the old collapsed wiring forever — and deletes its own stale
+  entries first, or the event fires twice with two arguments. Third and decisive,
+  the SCREEN is the authority (`PaneReader`, the Swift twin of the phone's
+  `choices.mjs` — keep them in step): the prompt is drawn in the TUI and vanishes
+  the moment it is answered, so a selected numbered list is proof and its absence
+  is proof. The hook only gets a say when tmux cannot be read, and even then the
+  sixty-second idle Notification is refused by its message text — it fires on
+  every finished turn left alone for a minute and would put all of them back into
+  orange permanently. `Tmux.capturePanes` reads every waiting session in ONE
+  chained call, and only sessions `list-panes` just confirmed: a `capture-pane` on
+  a session that has gone takes the whole batch's output with it.
+- **"Seen" is a state, not a gesture**: `SessionStates` tracks which tab each
+  window is showing (`setVisibleTab`) and resolves a finished turn as `seen` when
+  it is on screen with the app in front. A one-shot "mark as read" on tab
+  selection is not enough — the common case is sitting on a tab while the answer
+  arrives, and that would have gone orange under the user's eyes. Being seen is
+  forgotten the moment the session goes back to `working`, so the NEXT finish is
+  orange again. Selecting a tab re-resolves through `recompute()` on the LAST
+  poll's material, deferred into a `Task` — publishing straight out of a SwiftUI
+  update is the flicker. And it is written to disk (`seen-sessions.json`), because
+  in memory alone every session that finished yesterday demanded attention again
+  the next morning, which is the same wall of orange the split existed to end. The
+  file stores the state's TIMESTAMP, not just the key: what was seen is a
+  particular finish, not the session, so a turn that ended while the app was closed
+  is still orange when it comes back — which is the one case that must not go
+  quiet. Keys with no state file left are pruned on the sweep, and the write only
+  happens when the answer moves.
+- **The island** (`Island`) is the only surface that belongs to no window, which is
+  the point: a session hands the turn back while you are somewhere else entirely.
+  A borderless `nonactivatingPanel` at `.statusBar` level with
+  `canJoinAllSpaces`, hanging from `max(screen.safeAreaInsets.top,
+  NSStatusBar.system.thickness)` — under the notch on the Macs that have one and
+  under the menu bar on the rest, which is the one position never behind anything.
+  Hover is an `NSTrackingArea` with **`.activeAlways`**, never SwiftUI's
+  `onHover`: the panel is never key, and the only time the island matters is when
+  another application is in front. The WINDOW FRAME is what animates — a panel
+  left permanently at its expanded size would swallow clicks meant for whatever is
+  underneath — so AppKit has to know the height before SwiftUI lays out, which is
+  why the row height is a constant. `acceptsFirstMouse` is overridden or the first
+  click on a row is spent activating a window that cannot be activated. Going
+  there is `WindowManager.reveal`, and it finds the project by the path the hook
+  now records OR by the short id embedded in the tmux name — deterministic for the
+  same reason `Project.shortID` is FNV-1a — so a session started before the path
+  was recorded is still reachable, and a project with no window open is opened.
+- **Sessions name themselves**: Claude sets the conversation's title over OSC
+  ("✳ Optimize GROUP BY sorgusu") and tmux has been reporting it as `pane_title`
+  all along, unused, while the sidebar filled up with "Claude 208". Only a name
+  the APP invented is replaced (`SessionRecord.isAutoNamed`), and renaming makes
+  the record no longer auto-named — which is what stops it, because a tab whose
+  name changes every turn is not a name, it is a status line. A pane nobody has
+  run Claude in yet reports the hostname; `cleanPaneTitle` refuses it.
+- **`SessionRecord` decodes BY HAND**, like `Service` and `ProjectLink` and for the
+  identical reason: the synthesized decoder throws on a missing key even where
+  there is a default, so adding `saved` would have failed the whole array and
+  silently emptied every project's session list on upgrade.
+- **Never publish an unchanged value**: `attention`, `paneTitles`, `liveSessions` and
+  `serviceStatus` were all assigned on every tick, and an `@Published` write
+  invalidates every view that reads it whether or not the value moved — a full SwiftUI
+  pass and a chrome repaint twice a second, per window, forever. Compare, then assign.
+  The other half of the same bug: nothing observed the engine, so the status dots
+  redrew only when something ELSE happened to publish; `StudioModel` forwards
+  `SessionStates` and `engine` for the reason it forwards `RunStore`.
+- **`Tmux.run` is fork + exec + wait — never on the main thread.** Opening a tab fired
+  four `set-option` calls in a row 0.6 s in, closing a window killed one session per
+  service and per terminal one after another, and every new window re-ran
+  `ensureConfig` and the hook install: that is the stall you feel when working across
+  many tabs, and it grows with the number of windows. Tags go out as one chained call
+  (`setOptions`), kills go through `killDetached`, and the delays that ordering depends
+  on become a `Task.sleep` rather than a main-queue `asyncAfter`. Batch reads the same
+  way: `paneStates()` answers for every service in one `list-panes -a` instead of a
+  process per service. The one deliberate exception is `Tmux.exists` in `openSession`
+  — attach-or-resume must not ride on a stale set, and `liveSessions` short-circuits it.
 - **Naming**: a **command** is Claude's own slash command (`.claude/commands`); a
   **script** is a one-shot shell command we store in `.cs/scripts.json`. Do not mix
   the two — `commands.json` was the old name for scripts and is migrated on load.
@@ -399,6 +500,29 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   session expires after about a day: a phone that "suddenly stopped working" has
   almost always hit that, which is why Settings → Phone can sign in again and
   restart the agent instead of leaving it to a 30-second launchd throttle.
+- **A tunnel that dies with nobody watching**: the expiry above is a POLICY, not a
+  fault — Netbird's dashboard turns "Login Expiration" off per peer, and that is the
+  actual fix for a Mac that stays on a desk (Tailscale's key expiry is the same
+  toggle in a different panel, which is why switching mesh tools solves nothing).
+  What the app owes is the other half: until `PhoneBridge.startWatchdog` nothing on
+  this Mac looked at the mesh unless Settings → Phone happened to be open, so the
+  tunnel went down, the phone stopped answering, and the failure was discoverable
+  only by reaching for the phone — days later, in the case this was written for.
+  Four things make the watchdog quiet enough to leave running forever. It polls at
+  **60 s**, not the session poll's 1.5 s: `MeshStatus.detect()` is a process spawn
+  and the mesh does not move by the second. `refresh()` had to become
+  compare-then-assign first — it wrote all five `@Published` values unconditionally,
+  harmless while it only ran on demand and a full SwiftUI pass a minute once it did
+  not. It announces on the **transition**, never the state, exactly as the phone's
+  push does: a banner per poll for as long as a tunnel stays down is how a warning
+  becomes noise. And the FIRST reading is the deliberate opposite of `SessionStates`'
+  seeding tick — a first sighting of a dead mesh is precisely the fact nobody has
+  been told, so it is announced once and then falls silent. With the bridge missing
+  or switched off it says nothing at all. The fix needs a surface, because
+  `osascript display notification` carries no action: the **island** takes one alert
+  row (`Island.alertHeight`, a constant for the reason every height there is one)
+  whose click is `connectMesh()`, and it is the only place in the app that is on
+  screen while another application is in front — which is every time this matters.
 - **Skill runs**: the runner script is the SAME for launchd, "run in background" and
   "Run now" — only "Run now" puts it in a tmux tab so it can be watched. Its `claude`
   call needs `--verbose` and `| tee -a .run.log`: print mode says nothing until the

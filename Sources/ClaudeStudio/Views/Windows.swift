@@ -44,6 +44,48 @@ final class WindowManager: NSObject, NSWindowDelegate {
         controllers.removeAll { $0 === controller }
     }
 
+    /// Goes to a session named by the island, wherever it lives.
+    ///
+    /// The island lists every project at once, including projects with no window
+    /// open — that is most of what it is for. So "go there" is three cases: the
+    /// window exists and shows the tab (select it), the window exists and does not
+    /// (open the session in it), or there is no window at all and the project has
+    /// to be opened first.
+    ///
+    /// The project is found by PATH when the state file carries one, and otherwise
+    /// by the short id embedded in the tmux session name — which is deterministic
+    /// (`Project.shortID` is FNV-1a for exactly this reason), so a session written
+    /// by a version that did not record the path is still reachable.
+    func reveal(_ live: SessionStates.Live) {
+        NSApp.activate(ignoringOtherApps: true)
+        let short = SessionRecord.projectShortID(ofTmux: live.tmux)
+
+        if let existing = controllers.first(where: { controller in
+            guard let project = controller.project else { return false }
+            return project.path == live.projectPath || project.shortID == short
+        }) {
+            existing.window.makeKeyAndOrderFront(nil)
+            existing.activeModel?.revealSession(tmux: live.tmux)
+            return
+        }
+
+        guard let project = project(for: live, shortID: short) else { return }
+        open(project: project)
+        // `load` builds the model synchronously, so the session can be opened in
+        // the same turn — the window is already showing the right project.
+        controllers.first { $0.project?.path == project.path }?
+            .activeModel?.revealSession(tmux: live.tmux)
+    }
+
+    private func project(for live: SessionStates.Live, shortID: String?) -> Project? {
+        if !live.projectPath.isEmpty,
+           FileManager.default.fileExists(atPath: live.projectPath) {
+            return Project(path: live.projectPath)
+        }
+        guard let shortID else { return nil }
+        return Recents.shared.projects.first { $0.shortID == shortID }
+    }
+
     /// Applies a menu command to the key window's model.
     func perform(_ command: StudioCommand) {
         switch command {

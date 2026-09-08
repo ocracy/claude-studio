@@ -88,6 +88,32 @@ enum Tmux {
         _ = run(["set-option", "-t", session, key, value])
     }
 
+    /// Several options in ONE tmux invocation.
+    ///
+    /// Every `run` is a fork, an exec and a wait on a server that may be busy, and
+    /// these were called in groups of three or four in a row — on the main thread, at
+    /// the exact moment a tab was being opened. tmux chains commands with `;`, so the
+    /// whole group costs one process instead of four.
+    static func setOptions(_ session: String, _ options: [String: String]) {
+        guard !options.isEmpty else { return }
+        var args: [String] = []
+        for (key, value) in options.sorted(by: { $0.key < $1.key }) {
+            if !args.isEmpty { args.append(";") }
+            args += ["set-option", "-t", session, key, value]
+        }
+        _ = run(args)
+    }
+
+    /// Kills sessions off the main thread. Closing a window killed one session per
+    /// service and per terminal, each a synchronous process, one after another.
+    static func killDetached(_ names: [String]) {
+        let targets = names.filter { !$0.isEmpty }
+        guard !targets.isEmpty, isAvailable else { return }
+        Task.detached(priority: .utility) {
+            for name in targets { kill(name) }
+        }
+    }
+
     static func touch(_ session: String) {
         setOption(session, "@cs_used", String(Int(Date().timeIntervalSince1970)))
     }
@@ -113,6 +139,27 @@ enum Tmux {
         let exitCode: Int?
     }
 
+    /// Every session's pane state in ONE call.
+    ///
+    /// `paneState` per service forks a `tmux` each; a window running six services
+    /// forked six every 1.5 s, and `list-panes -a` already has to walk the same list
+    /// to answer any one of them. A session missing from the result is a session that
+    /// no longer exists — the same thing `paneState` reports as `nil`.
+    static func paneStates() -> [String: PaneState] {
+        let r = run(["list-panes", "-a", "-F",
+                     "#{session_name}\t#{pane_dead}\t#{pane_dead_status}"])
+        guard r.status == 0 else { return [:] }
+        var out: [String: PaneState] = [:]
+        for line in r.out.split(separator: "\n") {
+            let f = line.components(separatedBy: "\t")
+            guard f.count >= 2, !f[0].isEmpty else { continue }
+            let dead = f[1] != "0"
+            let code = f.count > 2 ? Int(f[2]) : nil
+            out[f[0]] = PaneState(dead: dead, exitCode: dead ? code : nil)
+        }
+        return out
+    }
+
     static func paneState(_ session: String) -> PaneState? {
         let r = run(["display-message", "-p", "-t", session,
                      "#{pane_dead}\t#{pane_dead_status}"])
@@ -134,6 +181,41 @@ enum Tmux {
     static func capture(_ session: String, lines: Int = 400) -> String {
         let r = run(["capture-pane", "-p", "-J", "-S", "-\(max(1, lines))", "-t", session])
         return r.status == 0 ? r.out : ""
+    }
+
+    /// The visible screen of several sessions, in ONE tmux call.
+    ///
+    /// What a session is waiting FOR lives nowhere but its screen: Claude draws
+    /// the prompt into the TUI and blocks on a keypress — there is no hook payload
+    /// for it, no file and no API. So the screens have to be read, and reading
+    /// them one `capture-pane` at a time would be a fork per waiting session every
+    /// poll, which on a busy machine is exactly the per-window cost `SessionStates`
+    /// exists to avoid.
+    ///
+    /// Deliberately WITHOUT `-J`: joining wrapped lines also erases the frame the
+    /// selection caret sits in, and that caret is the one mark that tells a prompt
+    /// apart from a numbered list Claude happened to print in an answer.
+    ///
+    /// Sessions are marked off with a `\u{1}` line, which no terminal draws.
+    static func capturePanes(_ sessions: [String]) -> [String: [String]] {
+        guard !sessions.isEmpty, isAvailable else { return [:] }
+        var args: [String] = []
+        for session in sessions {
+            if !args.isEmpty { args.append(";") }
+            args += ["display-message", "-p", "-t", session, "\u{1}\(session)",
+                     ";", "capture-pane", "-p", "-t", session]
+        }
+        let r = run(args)
+        guard !r.out.isEmpty else { return [:] }
+
+        var out: [String: [String]] = [:]
+        for block in r.out.components(separatedBy: "\u{1}") where !block.isEmpty {
+            var lines = block.components(separatedBy: "\n")
+            let name = lines.removeFirst()
+            guard !name.isEmpty else { continue }
+            out[name] = lines
+        }
+        return out
     }
 
     /// Pins every client of the session to an exact size, then repaints. Called

@@ -196,7 +196,11 @@ struct Sidebar: View {
 
     private var footerText: String {
         switch model.pane {
-        case .sessions:  return "\(model.openSessions.count) open · \(model.pastSessions.count) previous"
+        case .sessions:
+            let saved = model.savedSessions.count
+            let open = "\(model.openSessions.count) open"
+            let previous = "\(model.pastSessions.count) previous"
+            return saved > 0 ? "\(open) · \(saved) saved · \(previous)" : "\(open) · \(previous)"
         case .skills:    return "\(model.skills.skills.count) skills · .claude/skills"
         case .mcp:       return model.mcp.checkingHealth
                                 ? "checking connections…"
@@ -301,11 +305,21 @@ struct Sidebar: View {
                     HStack(spacing: 8) {
                         StatusDot(color: color(for: model.attention(of: record)))
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(record.name)
-                                .font(Theme.ui(12.5))
-                                .foregroundStyle(theme.text)
-                                .lineLimit(1)
-                            Text("\(model.attention(of: record).label) · \(record.lastUsed.relative)")
+                            HStack(spacing: 4) {
+                                if record.saved {
+                                    Image(systemName: "bookmark.fill")
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(theme.accent)
+                                }
+                                Text(record.name)
+                                    .font(Theme.ui(12.5))
+                                    .foregroundStyle(theme.text)
+                                    .lineLimit(1)
+                            }
+                            // What it is waiting FOR, when it is waiting for
+                            // something — the state on its own ("waiting") was true
+                            // of every row and told them apart from nothing.
+                            Text(meta(for: record))
                                 .font(Theme.ui(10.5))
                                 .foregroundStyle(theme.text3)
                                 .lineLimit(1)
@@ -320,10 +334,26 @@ struct Sidebar: View {
                 .onTapGesture { model.openSession(record) }
                 .contextMenu {
                     Button("Rename") { beginRename(record) }
+                    Button(record.saved ? "Remove from saved" : "Save session") {
+                        model.setSaved(record, saved: !record.saved)
+                    }
                     Button("Close session") { model.closeSession(record) }
                     Divider()
                     Button("Delete record") { model.deleteSession(record) }
                 }
+            }
+        }
+
+        // Saved sessions are listed in full and before the rest: "previous" is
+        // capped at eight because it is a tail nobody reads, and a session you
+        // deliberately kept must never fall off the end of it.
+        if !model.savedClosedSessions.isEmpty {
+            SectionLabel(text: "saved")
+                .padding(.horizontal, 8)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+            ForEach(model.savedClosedSessions) { record in
+                closedSession(record)
             }
         }
 
@@ -333,42 +363,73 @@ struct Sidebar: View {
                 .padding(.top, 14)
                 .padding(.bottom, 4)
             ForEach(model.pastSessions.prefix(8)) { record in
-                if renaming == record.tmux {
-                    renameField(record)
-                } else {
-                    // Built by hand rather than through `row`, for the same reason an
-                    // open session is: `row` is a Button, and a Button takes the first
-                    // click of a double click as one more press — the session would
-                    // reopen instead of the field appearing. A name matters MORE here
-                    // than above: this list is what is left of a conversation once its
-                    // tab is gone, and "claude" three times over says nothing.
-                    HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 6)) {
-                        HStack(spacing: 8) {
-                            StatusDot(color: theme.idle)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(record.name)
-                                    .font(Theme.ui(12.5))
-                                    .foregroundStyle(theme.text)
-                                    .lineLimit(1)
-                                Text(model.canResume(record)
-                                     ? "resumes conversation · \(record.lastUsed.relative)"
-                                     : "starts fresh · \(record.lastUsed.relative)")
-                                    .font(Theme.ui(10.5))
-                                    .foregroundStyle(theme.text3)
-                                    .lineLimit(1)
+                closedSession(record)
+            }
+        }
+    }
+
+    /// The line under an open session's name.
+    ///
+    /// When something is on you it says WHAT — the question Claude is holding, or
+    /// the last thing it said. The bare state was true of every row at once
+    /// ("waiting", eighteen times) and so distinguished nothing.
+    private func meta(for record: SessionRecord) -> String {
+        let state = model.attention(of: record)
+        if state.needsAttention,
+           let headline = SessionStates.shared.live
+            .first(where: { $0.key == record.tabKey })?.headline {
+            return headline
+        }
+        return "\(state.label) · \(record.lastUsed.relative)"
+    }
+
+    /// A session with no tab: saved, or simply previous.
+    ///
+    /// Built by hand rather than through `row`, for the same reason an open
+    /// session is: `row` is a Button, and a Button takes the first click of a
+    /// double click as one more press — the session would reopen instead of the
+    /// field appearing. A name matters MORE here than above: this list is what is
+    /// left of a conversation once its tab is gone, and "claude" three times over
+    /// says nothing.
+    @ViewBuilder private func closedSession(_ record: SessionRecord) -> some View {
+        if renaming == record.tmux {
+            renameField(record)
+        } else {
+            HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 6)) {
+                HStack(spacing: 8) {
+                    StatusDot(color: theme.idle)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 4) {
+                            if record.saved {
+                                Image(systemName: "bookmark.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(theme.accent)
                             }
-                            Spacer(minLength: 4)
+                            Text(record.name)
+                                .font(Theme.ui(12.5))
+                                .foregroundStyle(theme.text)
+                                .lineLimit(1)
                         }
+                        Text(model.canResume(record)
+                             ? "resumes conversation · \(record.lastUsed.relative)"
+                             : "starts fresh · \(record.lastUsed.relative)")
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(theme.text3)
+                            .lineLimit(1)
                     }
-                    .onTapGesture(count: 2) { beginRename(record) }
-                    .onTapGesture { model.openSession(record) }
-                    .contextMenu {
-                        Button("Reopen") { model.openSession(record) }
-                        Button("Rename") { beginRename(record) }
-                        Divider()
-                        Button("Delete record") { model.deleteSession(record) }
-                    }
+                    Spacer(minLength: 4)
                 }
+            }
+            .onTapGesture(count: 2) { beginRename(record) }
+            .onTapGesture { model.openSession(record) }
+            .contextMenu {
+                Button("Reopen") { model.openSession(record) }
+                Button("Rename") { beginRename(record) }
+                Button(record.saved ? "Remove from saved" : "Save session") {
+                    model.setSaved(record, saved: !record.saved)
+                }
+                Divider()
+                Button("Delete record") { model.deleteSession(record) }
             }
         }
     }
@@ -399,9 +460,9 @@ struct Sidebar: View {
 
     private func color(for state: Attention) -> Color {
         switch state {
-        case .working: return Theme.running
-        case .waiting: return Theme.waiting
-        case .idle:    return theme.idle
+        case .working:        return Theme.running
+        case .waiting, .done: return Theme.waiting
+        case .seen, .idle:    return theme.idle
         }
     }
 
@@ -843,6 +904,11 @@ private struct SessionOpener: View {
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
     @State private var name = ""
+    /// Focused as the popover appears. Without it the field looked ready to type
+    /// into and was not: Enter went nowhere, and "+ , Enter" — the fastest way to
+    /// start an unnamed session, and the one everybody reaches for — did nothing
+    /// at all until the field had been clicked first.
+    @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -853,58 +919,95 @@ private struct SessionOpener: View {
                 TextField("session name (optional)", text: $name)
                     .textFieldStyle(.plain)
                     .font(Theme.ui(12.5))
+                    .focused($focused)
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .background(RoundedRectangle(cornerRadius: 5).fill(theme.field)
-                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(theme.separator)))
+                        .overlay(RoundedRectangle(cornerRadius: 5)
+                            .strokeBorder(focused ? theme.accent : theme.separator)))
                     .onSubmit(create)
                 SmallButton(title: "Open", prominent: true, action: create)
             }
             .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            .padding(.bottom, 4)
 
+            Text("Leave it empty and Claude names the session itself.")
+                .font(Theme.ui(10))
+                .foregroundStyle(theme.text3)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+
+            // Saved first and in full: that is what saving one is for.
+            if !model.savedClosedSessions.isEmpty {
+                Divider()
+                section("saved", records: model.savedClosedSessions, icon: "bookmark.fill")
+            }
             if !model.pastSessions.isEmpty {
                 Divider()
-                SectionLabel(text: "previous sessions")
-                    .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
-
-                ScrollView {
-                    VStack(spacing: 1) {
-                        ForEach(model.pastSessions.prefix(12)) { record in
-                            Button {
-                                model.openSession(record)
-                                onDismiss()
-                            } label: {
-                                HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: model.canResume(record)
-                                              ? "arrow.uturn.backward" : "bubble.left")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(theme.text3)
-                                            .frame(width: 14)
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(record.name)
-                                                .font(Theme.ui(12.5))
-                                                .foregroundStyle(theme.text)
-                                            Text(model.canResume(record)
-                                                 ? "resumes conversation · \(record.lastUsed.relative)"
-                                                 : "starts fresh · \(record.lastUsed.relative)")
-                                                .font(Theme.ui(10.5))
-                                                .foregroundStyle(theme.text3)
-                                        }
-                                        Spacer()
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 8)
-                }
-                .frame(maxHeight: 220)
+                section("previous sessions", records: Array(model.pastSessions.prefix(12)),
+                        icon: nil)
             }
         }
-        .frame(width: 320)
+        .frame(width: 340)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = true }
+        }
+    }
+
+    private func section(_ title: String, records: [SessionRecord],
+                         icon: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(text: title)
+                .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(records) { record in
+                        Button {
+                            model.openSession(record)
+                            onDismiss()
+                        } label: {
+                            row(record, icon: icon)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(record.saved ? "Remove from saved" : "Save session") {
+                                model.setSaved(record, saved: !record.saved)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 8)
+            }
+            .frame(maxHeight: records.count > 5 ? 220 : CGFloat(records.count) * 44 + 8)
+        }
+    }
+
+    private func row(_ record: SessionRecord, icon: String?) -> some View {
+        HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
+            HStack(spacing: 8) {
+                Image(systemName: icon
+                      ?? (model.canResume(record) ? "arrow.uturn.backward" : "bubble.left"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(icon == nil ? theme.text3 : theme.accent)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(record.name)
+                        .font(Theme.ui(12.5))
+                        .foregroundStyle(theme.text)
+                        .lineLimit(1)
+                    // A saved session outlives the machine being on: reopening it
+                    // resumes the same conversation, and the row says which of the
+                    // two it will do before it is pressed.
+                    Text(model.canResume(record)
+                         ? "resumes conversation · \(record.lastUsed.relative)"
+                         : "starts fresh · \(record.lastUsed.relative)")
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(theme.text3)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+            }
+        }
     }
 
     private func create() {

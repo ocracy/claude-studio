@@ -265,9 +265,9 @@ private struct TerminalPane: View {
         switch tab.kind {
         case .session:
             switch model.engine.attention[tab.terminalKey] ?? .idle {
-            case .working: return Theme.running
-            case .waiting: return Theme.waiting
-            case .idle:    return theme.idle
+            case .working:        return Theme.running
+            case .waiting, .done: return Theme.waiting
+            case .seen, .idle:    return theme.idle
             }
         case .service:
             guard let service = serviceValue else { return theme.idle }

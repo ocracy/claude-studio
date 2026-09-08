@@ -8,6 +8,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HeaderDoubleClick.install()
         // One consumer for the whole app: windows would race over the same spool.
         UsageMonitor.shared.start()
+        // Same reason, plus a second one: the session-state directory and tmux's pane
+        // list are global, so a per-window poll repeated identical work once per open
+        // window and then announced the same session finishing once per window, each
+        // time under that window's project name.
+        SessionStates.shared.start()
+        // The one surface that is not inside a window, and the only one that can
+        // answer "which of my eighteen sessions wants something?" while the app is
+        // not even in front.
+        Island.shared.start()
+        // The private network is the one thing phone access cannot survive without,
+        // and nothing looked at it unless Settings → Phone happened to be open — so a
+        // tunnel that expired overnight was only discoverable by picking up the phone
+        // and finding it dead.
+        PhoneBridge.shared.startWatchdog()
 
         // Heavy setup happens in the background: hook bridge, tmux config, PATH
         // snapshot. The window never waits for them.

@@ -190,6 +190,15 @@ struct SettingsView: View {
                       note: "Close and reopen a project and you continue where you left off.",
                       isOn: $settings.autoAttachLastSession)
 
+            toggleRow("Name sessions after the conversation",
+                      note: "Claude gives every conversation a title; a session you did not name takes it instead of \"Claude 209\". A name you typed is never replaced.",
+                      isOn: $settings.autoTitleSessions)
+
+            toggleRow("Show the island",
+                      note: "A strip under the menu bar with every project's sessions: which ones are asking you something, which have finished, and which are still working. Hover to open it, click a row to go there.",
+                      isOn: Binding(get: { settings.islandEnabled },
+                                    set: { settings.islandEnabled = $0; Island.shared.sync(force: true) }))
+
             infoRow("Persistence",
                     note: "Sessions live in tmux and outlive the app. Closing one keeps its record, so it reopens under the same name with the same conversation.",
                     last: true)
@@ -300,8 +309,14 @@ struct SettingsView: View {
             var note = "This Mac is \(address) on your \(tool.name) network. Everything the "
                      + "phone sends travels inside that tunnel; nothing is exposed to the internet."
             if tool == .netbird {
-                note += " Netbird sessions expire after a day or so — if the phone suddenly "
-                      + "stops connecting, this is almost always why. Sign in again here."
+                // Signing in again is the remedy, not the fix: the expiry is a policy,
+                // and pointing someone at the button forever leaves them re-authorising
+                // a machine that sits on their desk. The setting that ends it is one
+                // toggle away, and it is worth naming here rather than nowhere.
+                note += " Netbird expires a peer's login after about a day, which is why "
+                      + "the phone stops connecting overnight. Turn Login Expiration off "
+                      + "for this Mac in the Netbird dashboard (Peers → this machine) and "
+                      + "it stops happening; until then, sign in again here."
             }
             return note
         }
