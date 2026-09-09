@@ -504,6 +504,7 @@ private struct IslandView: View {
     @ObservedObject private var bridge = PhoneBridge.shared
     @State private var alertHovering = false
     @State private var settingsHovering = false
+    @State private var markHovering = false
 
     var body: some View {
         Group {
@@ -682,25 +683,41 @@ private struct IslandView: View {
     /// window either, and it is the only surface that is there when every window
     /// is showing something else.
     private var settingsRow: some View {
-        Button { island.openSettings() } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 9.5))
-                Text("settings")
-                    .font(Theme.ui(10))
-                Spacer()
+        HStack(spacing: 0) {
+            footerButton(icon: "gearshape", title: "settings",
+                         hovering: settingsHovering) { island.openSettings() }
+                .onHover { settingsHovering = $0 }
+
+            Spacer(minLength: 8)
+
+            // Only when there is something to clear, and it clears only the
+            // finished turns — a question is answered or it is not.
+            if states.unreadCount > 0 {
+                footerButton(icon: "checkmark", title: "mark \(states.unreadCount) read",
+                             hovering: markHovering) { states.markAllSeen() }
+                    .onHover { markHovering = $0 }
             }
-            .foregroundStyle(Color.white.opacity(settingsHovering ? 0.75 : 0.32))
-            .padding(.horizontal, 14)
-            .frame(height: Island.footerHeight)
-            .background(Color.white.opacity(settingsHovering ? 0.06 : 0))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { settingsHovering = $0 }
+        .frame(height: Island.footerHeight)
         .overlay(alignment: .top) {
             Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
         }
+    }
+
+    private func footerButton(icon: String, title: String, hovering: Bool,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 9.5))
+                Text(title).font(Theme.ui(10))
+            }
+            .foregroundStyle(Color.white.opacity(hovering ? 0.75 : 0.32))
+            .padding(.horizontal, 14)
+            .frame(height: Island.footerHeight)
+            .background(Color.white.opacity(hovering ? 0.06 : 0))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// One click, in the one place that is on screen while another app is in front.

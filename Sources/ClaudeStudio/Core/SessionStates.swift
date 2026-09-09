@@ -458,6 +458,32 @@ final class SessionStates: ObservableObject {
         return clean
     }
 
+    /// Marks every finished turn read at once.
+    ///
+    /// Questions are deliberately untouched. A question does not stop being one
+    /// by being looked at — it is answered or it is not — so a button that
+    /// cleared them would be a button that quietly loses work, which is the one
+    /// thing "mark all read" must never be.
+    func markAllSeen() {
+        var changed = false
+        for row in live where row.attention == .done {
+            let stamp = lastStates[row.key]?.ts ?? row.at.timeIntervalSince1970
+            if seen[row.key] != stamp {
+                seen[row.key] = stamp
+                changed = true
+            }
+        }
+        guard changed else { return }
+        // Re-resolve off the last poll's material and let `apply` write the file,
+        // so this goes through exactly the same path a tab being looked at does.
+        recompute()
+    }
+
+    /// Finished turns nobody has read yet — what "mark all read" would clear.
+    var unreadCount: Int {
+        live.reduce(0) { $0 + ($1.attention == .done ? 1 : 0) }
+    }
+
     /// Forgets a key immediately, so a closed tab's status does not linger for a tick.
     func forget(_ key: String) {
         seen.removeValue(forKey: key)
