@@ -239,6 +239,20 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   orange permanently. `Tmux.capturePanes` reads every waiting session in ONE
   chained call, and only sessions `list-panes` just confirmed: a `capture-pane` on
   a session that has gone takes the whole batch's output with it.
+- **Green is checked against the screen too.** `Stop` only fires when Claude
+  finishes cleanly, so a session killed mid-turn — or one whose client went away —
+  keeps a state file that says `working` forever, and the dot stayed green over a
+  conversation that had ended hours before. That is worse than no colour at all,
+  because green is the state you act on by leaving it alone. Claude draws
+  **"esc to interrupt"** for exactly as long as there is something to interrupt,
+  which makes it the one honest witness (`PaneReader.Screen.isWorking` /
+  `looksBusy`). Both halves of the override are needed: the screen must have been
+  READ and lack the footer, AND the hook's timestamp must be older than 20 s — a
+  turn that started a second ago may not have painted its first frame, and calling
+  that finished would flicker every session orange the moment it was given work.
+  A genuinely long turn is safe either way: it refreshes the timestamp on each
+  tool call, or it is sitting inside one with the footer on screen. This is why
+  every LIVE session's pane is captured each tick, not only the waiting ones.
 - **Starting is not working**: `SessionStart` reports **idle**, not `working`.
   Claude comes up, draws its prompt and waits, and no further hook fires until
   something is typed — so a freshly opened tab sat on green indefinitely, and so

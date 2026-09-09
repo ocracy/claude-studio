@@ -8,7 +8,7 @@
 
 import { readdirSync, readFileSync } from "node:fs"
 import { basename } from "node:path"
-import { lastSpokenLine, readChoices } from "./choices.mjs"
+import { lastSpokenLine, looksBusy, readChoices } from "./choices.mjs"
 import { cocoaToMillis, readSessions } from "./sessions.mjs"
 import { recents, seenSessions, sessionStateDir, writeAtomically } from "./paths.mjs"
 import { shortID } from "./shortid.mjs"
@@ -87,6 +87,21 @@ export function markSeen(tmuxName) {
 }
 
 /**
+ * Does the hook say `working` over a turn that is plainly over?
+ *
+ * `Stop` only fires when Claude finishes cleanly, so a session killed mid-turn
+ * keeps a file that says `working` forever. Both conditions are needed: the
+ * screen must have been read and lack the interrupt footer, AND the hook's own
+ * timestamp must be old — a turn that started a second ago may not have painted
+ * its first frame, and calling that finished would flicker every session orange
+ * the moment it was given work. The twin of `SessionStates.isStaleWork`.
+ */
+function staleWork(hook, screen) {
+  if (!screen || screen.busy) return false
+  return Date.now() / 1000 - Number(hook.ts ?? 0) > 20
+}
+
+/**
  * The three colours, and what each one is allowed to mean.
  *
  *   working — a turn is IN FLIGHT. Not "a terminal is open": starting Claude
@@ -107,8 +122,12 @@ export function markSeen(tmuxName) {
  * a minute, and taking it for a question would make everything orange forever.
  */
 function resolve(hook, screen, seenAt) {
-  if (hook?.state === "working") return { state: "working", asking: false }
-  if (hook?.state !== "waiting") return { state: "idle", asking: false }
+  if (hook?.state === "working" && !staleWork(hook, screen)) {
+    return { state: "working", asking: false }
+  }
+  if (hook?.state !== "working" && hook?.state !== "waiting") {
+    return { state: "idle", asking: false }
+  }
 
   const asking = screen
     ? Boolean(screen.options?.length)
@@ -138,7 +157,9 @@ export function snapshot({ withPreview = true } = {}) {
       // are two readings of the same screen, and taking it twice would double
       // the tmux calls this poll makes for nothing.
       const raw = withPreview && session ? tmux.captureRaw(record.tmux) : null
-      const screen = raw ? readChoices(raw) : null
+      // One object either way: `readChoices` returns null unless the shape is
+      // unmistakably a prompt, and `busy` has to be answerable even then.
+      const screen = raw ? { ...(readChoices(raw) ?? {}), busy: looksBusy(raw) } : null
 
       // Not running is not a colour: a record with no session behind it is a
       // thing you could start, not a thing that wants something.

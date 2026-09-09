@@ -184,17 +184,18 @@ final class SessionStates: ObservableObject {
                 ? Set(titles.keys) : nil
             if sweeping { HookBridge.sweepTemporaries() }
 
-            // Only the sessions the hook says are waiting have anything worth
-            // reading, and only ones tmux still knows about — a `capture-pane` on a
-            // session that has gone away is an error in the middle of a chained
-            // command, which would take the whole batch's output with it.
-            let waiting = states.compactMap { key, state -> String? in
-                guard state.state == "waiting",
+            // Every live session, not only the waiting ones: the screen is the
+            // authority for green as well now. Only sessions tmux still knows
+            // about — a `capture-pane` on one that has gone away is an error in
+            // the middle of a chained command, and it would take the whole
+            // batch's output with it.
+            let watched = states.compactMap { key, state -> String? in
+                guard state.state != "idle",
                       let name = Self.tmuxName(ofTabKey: key),
                       titles[name] != nil else { return nil }
                 return name
             }
-            let screens = PaneReader.readAll(sessions: waiting)
+            let screens = PaneReader.readAll(sessions: watched)
             // What the phone has marked read since the last poll. Disk work, so it
             // belongs out here with the rest of it.
             let diskSeen = Self.readSeenFile()
@@ -384,9 +385,9 @@ final class SessionStates: ObservableObject {
     private func resolve(key: String, state: HookBridge.State,
                          screen: PaneReader.Screen?) -> Attention {
         switch state.state {
-        case "working":
+        case "working" where !isStaleWork(state, screen):
             return .working
-        case "waiting":
+        case "working", "waiting":
             let asking = screen?.isAsking ?? state.hookSuggestsQuestion
             if asking { return .waiting }
             if let at = seen[key], at >= (state.ts ?? 0) { return .seen }
@@ -394,6 +395,27 @@ final class SessionStates: ObservableObject {
         default:
             return .idle
         }
+    }
+
+    /// Does the hook say `working` over a turn that is plainly over?
+    ///
+    /// `Stop` only fires when Claude finishes cleanly. A session killed mid-turn,
+    /// or one whose client went away, leaves its file saying `working` forever —
+    /// and the dot stayed green over a conversation that had ended hours before,
+    /// which is worse than no colour at all, because green is the one state you
+    /// act on by leaving it alone.
+    ///
+    /// Two conditions, and both are needed. The screen has to have been READ and
+    /// to lack "esc to interrupt", which Claude draws for exactly as long as
+    /// there is something to interrupt. And the hook's own timestamp has to be
+    /// old: a turn that started a second ago may not have painted its first frame
+    /// yet, and calling that finished would flicker every session orange the
+    /// moment it was given work. A genuinely long turn is safe either way — it
+    /// either refreshes the timestamp on each tool call, or it is sitting inside
+    /// one with the footer on screen.
+    private func isStaleWork(_ state: HookBridge.State, _ screen: PaneReader.Screen?) -> Bool {
+        guard let screen, !screen.isWorking else { return false }
+        return Date().timeIntervalSince1970 - (state.ts ?? 0) > 20
     }
 
     /// `session:<tmux name>` → `<tmux name>`; `nil` for anything that is not a

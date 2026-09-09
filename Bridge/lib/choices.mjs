@@ -125,6 +125,20 @@ export function lastSpokenLine(rawLines) {
   return null
 }
 
+/**
+ * Is a turn actually in flight?
+ *
+ * Claude draws "esc to interrupt" for exactly as long as there is something to
+ * interrupt, which makes it the one honest witness to green. The hook is not:
+ * `Stop` never fires for a session killed mid-turn, so its file says `working`
+ * forever and the dot stays green over a conversation that ended hours ago.
+ *
+ * The twin of `PaneReader.Screen.isWorking`.
+ */
+export function looksBusy(rawLines) {
+  return rawLines.some((line) => line.toLowerCase().includes("esc to interrupt"))
+}
+
 const FOOTER = [
   "esc to interrupt", "shift+tab to cycle", "? for shortcuts", "new task?",
   "auto mode on", "bypass permissions", "ctrl+c to exit", "to save ", "for agents",

@@ -23,6 +23,15 @@ enum PaneReader {
         var options: [String] = []
         /// The last thing the session actually said — the island's second line.
         var lastLine: String?
+        /// Is a turn actually in flight?
+        ///
+        /// Claude draws "esc to interrupt" in its footer for exactly as long as
+        /// there is something to interrupt, which makes it the one honest witness
+        /// to green. A hook cannot be: `Stop` never fires for a session that was
+        /// killed mid-turn, or whose client went away, so its file says `working`
+        /// forever and the dot stays green over a conversation that ended hours
+        /// ago.
+        var isWorking = false
 
         /// Is a numbered prompt on screen, waiting to be answered?
         var isAsking: Bool { !options.isEmpty }
@@ -45,6 +54,7 @@ enum PaneReader {
             screen.options = choices.options
         }
         screen.lastLine = lastSpokenLine(raw: rawLines, stripped: lines)
+        screen.isWorking = lines.contains { $0.lowercased().contains("esc to interrupt") }
         return screen
     }
 

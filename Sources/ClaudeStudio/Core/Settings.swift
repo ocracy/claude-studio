@@ -27,6 +27,9 @@ final class AppSettings: ObservableObject {
     /// The island at the top of the screen: every project's sessions in one place,
     /// above whatever you are working in.
     @AppStorage("island.enabled")      var islandEnabled = true
+    /// Which rows the island lists: `all`, `attention` (orange) or `working`
+    /// (green). Remembered, because it is a way of working rather than a glance.
+    @AppStorage("island.filter")       var islandFilter = "all"
     /// Rename a session nobody named after Claude's own title for the conversation.
     @AppStorage("session.autoTitle")   var autoTitleSessions = true
     /// Order of the activity rail, as comma-separated pane names. Empty means the

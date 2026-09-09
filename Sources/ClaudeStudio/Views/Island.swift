@@ -53,6 +53,10 @@ final class Island: ObservableObject {
     /// The mesh alert. Its own constant for the same reason every other height here
     /// is one: the frame is animated, so AppKit needs the number before SwiftUI runs.
     fileprivate static let alertHeight: CGFloat = 38
+    /// The settings row. It moved down here to give the header's right lobe to
+    /// the filter — which is the thing you reach for while looking at the list,
+    /// and settings is not.
+    fileprivate static let footerHeight: CGFloat = 30
     fileprivate static let maxExpandedHeight: CGFloat = 460
     fileprivate static let maxRows = 12
 
@@ -202,12 +206,31 @@ final class Island: ObservableObject {
 
     // MARK: - Geometry
 
+    /// What the list is narrowed to. Questions and unread finishes first, then
+    /// whatever is still running — the order is the same whichever filter is on,
+    /// so a row does not move when one is picked.
     fileprivate var rows: [SessionStates.Live] {
         let states = SessionStates.shared
         let waiting = states.actionable
         let working = states.live.filter { $0.attention == .working }
             .sorted { $0.at > $1.at }
-        return Array((waiting + working).prefix(Self.maxRows))
+        let all: [SessionStates.Live]
+        switch AppSettings.shared.islandFilter {
+        case "attention": all = waiting
+        case "working":   all = working
+        default:          all = waiting + working
+        }
+        return Array(all.prefix(Self.maxRows))
+    }
+
+    fileprivate var filter: String {
+        get { AppSettings.shared.islandFilter }
+        set {
+            guard newValue != AppSettings.shared.islandFilter else { return }
+            AppSettings.shared.islandFilter = newValue
+            objectWillChange.send()
+            sync()
+        }
     }
 
     private func targetFrame() -> NSRect {
@@ -220,7 +243,7 @@ final class Island: ObservableObject {
         let size = expanded
             ? NSSize(width: Self.expandedWidth,
                      height: min(Self.maxExpandedHeight,
-                                 geometry.strip + 16
+                                 geometry.strip + 16 + Self.footerHeight
                                  + (meshIsBroken ? Self.alertHeight : 0)
                                  + CGFloat(max(rows.count, 1)) * Self.rowHeight))
             : NSSize(width: collapsedWidth, height: geometry.strip)
@@ -465,6 +488,44 @@ private struct IslandView: View {
         }
     }
 
+    /// Narrow the list to one colour, from the place you are already looking.
+    ///
+    /// It sits where the settings button used to, because this is what you reach
+    /// for while reading the list and settings is not — those moved to the row at
+    /// the bottom, which is still the only way to reach them with no project open.
+    private var filterChips: some View {
+        HStack(spacing: 4) {
+            chip("all", isOn: island.filter == "all") { island.filter = "all" }
+            chip(dot: Theme.waiting, isOn: island.filter == "attention") {
+                island.filter = island.filter == "attention" ? "all" : "attention"
+            }
+            chip(dot: Theme.running, isOn: island.filter == "working") {
+                island.filter = island.filter == "working" ? "all" : "working"
+            }
+        }
+    }
+
+    private func chip(_ title: String? = nil, dot: Color? = nil, isOn: Bool,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Group {
+                if let dot { StatusDot(color: dot, size: 6) }
+                else if let title {
+                    Text(title)
+                        .font(Theme.ui(9.5, .medium))
+                        .foregroundStyle(Color.white.opacity(isOn ? 0.85 : 0.4))
+                }
+            }
+            .frame(width: 22, height: 18)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.white.opacity(isOn ? 0.14 : 0.04)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(title.map { "Show \($0)" }
+              ?? (dot == Theme.waiting ? "Only what is on you" : "Only what is running"))
+    }
+
     private var workingBadge: some View {
         HStack(spacing: 5) {
             if island.meshIsBroken {
@@ -494,27 +555,14 @@ private struct IslandView: View {
                         .foregroundStyle(Color.white.opacity(0.85))
                         .lineLimit(1)
                 },
-                trailing: Button { island.openSettings() } label: {
-                    HStack(spacing: 5) {
-                        Text("settings")
-                            .font(Theme.ui(9.5))
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 10))
-                    }
-                    .foregroundStyle(Color.white.opacity(settingsHovering ? 0.8 : 0.34))
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.white.opacity(settingsHovering ? 0.09 : 0)))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .onHover { settingsHovering = $0 })
+                trailing: filterChips)
 
             Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
 
             if island.meshIsBroken { meshAlert }
 
             if island.rows.isEmpty {
-                Text("Nothing is running.")
+                Text(emptyText)
                     .font(Theme.ui(11.5))
                     .foregroundStyle(Color.white.opacity(0.35))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -528,6 +576,43 @@ private struct IslandView: View {
                     .padding(.vertical, 6)
                 }
             }
+
+            settingsRow
+        }
+    }
+
+    private var emptyText: String {
+        switch island.filter {
+        case "attention": return "Nothing is waiting on you."
+        case "working":   return "Nothing is running."
+        default:          return "Nothing is running."
+        }
+    }
+
+    /// Settings belong to the application, not to a project — but the gear lived
+    /// in a project window's top bar, so reaching a global preference meant first
+    /// choosing a project it has nothing to do with. The island belongs to no
+    /// window either, and it is the only surface that is there when every window
+    /// is showing something else.
+    private var settingsRow: some View {
+        Button { island.openSettings() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 9.5))
+                Text("settings")
+                    .font(Theme.ui(10))
+                Spacer()
+            }
+            .foregroundStyle(Color.white.opacity(settingsHovering ? 0.75 : 0.32))
+            .padding(.horizontal, 14)
+            .frame(height: Island.footerHeight)
+            .background(Color.white.opacity(settingsHovering ? 0.06 : 0))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { settingsHovering = $0 }
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
         }
     }
 
