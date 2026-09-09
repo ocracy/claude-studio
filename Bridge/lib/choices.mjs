@@ -139,6 +139,32 @@ export function looksBusy(rawLines) {
   return rawLines.some((line) => line.toLowerCase().includes("esc to interrupt"))
 }
 
+const SPINNER = /^[✻✳✶✽✢·*⠂⠄⠈⠐⠠⡀⢀⠁⠉⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u
+
+/**
+ * Claude's own status line — "Ebbing… (51s · ↓ 1.4k tokens)" — without the
+ * spinner glyph.
+ *
+ * It is the one line that changes every second while a turn runs, and it carries
+ * the elapsed time and the token count: together they answer "is this moving, and
+ * for how long" without opening anything. For a working session it is the
+ * interesting line, and the last thing said is stale by definition.
+ *
+ * The twin of `PaneReader.statusLine`. The mode footer starts with the same
+ * family of glyphs, hence the bracket test and the explicit refusals.
+ */
+export function statusLine(rawLines) {
+  for (let index = rawLines.length - 1; index >= 0; index -= 1) {
+    const line = stripFrame(rawLines[index])
+    if (!SPINNER.test(line) || !line.includes("(") || !line.includes(")")) continue
+    const text = line.slice(1).trim()
+    const lower = text.toLowerCase()
+    if (!text || lower.includes("auto mode") || lower.includes("shift+tab")) continue
+    return text.length > 120 ? `${text.slice(0, 120)}…` : text
+  }
+  return null
+}
+
 const FOOTER = [
   "esc to interrupt", "shift+tab to cycle", "? for shortcuts", "new task?",
   "auto mode on", "bypass permissions", "ctrl+c to exit", "to save ", "for agents",

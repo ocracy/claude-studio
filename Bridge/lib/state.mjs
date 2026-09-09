@@ -8,7 +8,7 @@
 
 import { readdirSync, readFileSync } from "node:fs"
 import { basename } from "node:path"
-import { lastSpokenLine, looksBusy, readChoices } from "./choices.mjs"
+import { lastSpokenLine, looksBusy, readChoices, statusLine } from "./choices.mjs"
 import { cocoaToMillis, readSessions } from "./sessions.mjs"
 import { recents, seenSessions, sessionStateDir, writeAtomically } from "./paths.mjs"
 import { shortID } from "./shortid.mjs"
@@ -159,7 +159,9 @@ export function snapshot({ withPreview = true } = {}) {
       const raw = withPreview && session ? tmux.captureRaw(record.tmux) : null
       // One object either way: `readChoices` returns null unless the shape is
       // unmistakably a prompt, and `busy` has to be answerable even then.
-      const screen = raw ? { ...(readChoices(raw) ?? {}), busy: looksBusy(raw) } : null
+      const screen = raw
+        ? { ...(readChoices(raw) ?? {}), busy: looksBusy(raw), activity: statusLine(raw) }
+        : null
 
       // Not running is not a colour: a record with no session behind it is a
       // thing you could start, not a thing that wants something.
@@ -180,7 +182,9 @@ export function snapshot({ withPreview = true } = {}) {
         // One line, already chosen: the question when there is one, otherwise
         // the last thing the session said. The phone should not have to guess
         // which of the two it is holding.
-        headline: screen?.question || (raw ? lastSpokenLine(raw) : null),
+        headline: screen?.question
+          || (resolved.state === "working" ? screen?.activity : null)
+          || (raw ? lastSpokenLine(raw) : null),
       }
     })
     sessions.sort((a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0))

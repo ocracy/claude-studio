@@ -34,6 +34,13 @@ final class Island: ObservableObject {
     /// Runs only while the island is open. See `checkPointer`.
     private var hoverPoll: Timer?
     private var outsideTicks = 0
+    /// Open because something is asking, not because the pointer is here.
+    private var pinned = false
+    /// Questions already noticed, so opening happens once per question.
+    private var announcedQuestions: Set<String> = []
+    private var noticedOnce = false
+    /// Has the pointer been over the island since it opened itself?
+    private var pinAcknowledged = false
     /// The frame the panel is currently laid out for, so an unchanged tick does
     /// not restart the animation.
     private var currentFrame: NSRect = .zero
@@ -49,7 +56,13 @@ final class Island: ObservableObject {
     /// change width every time a count gains a digit.
     fileprivate static let lobeWidth: CGFloat = 62
     fileprivate static let expandedWidth: CGFloat = 470
-    fileprivate static let rowHeight: CGFloat = 46
+    /// Two lines of text under the name, not one: the point of the row is what
+    /// the session is saying, and a single truncated line was a hint rather than
+    /// a message.
+    fileprivate static let rowHeight: CGFloat = 60
+    fileprivate static let optionHeight: CGFloat = 30
+    /// Claude's prompts run to three or four; past that the island is a dialog.
+    fileprivate static let maxOptions = 4
     /// The mesh alert. Its own constant for the same reason every other height here
     /// is one: the frame is animated, so AppKit needs the number before SwiftUI runs.
     fileprivate static let alertHeight: CGFloat = 38
@@ -66,7 +79,10 @@ final class Island: ObservableObject {
         observers.append(SessionStates.shared.objectWillChange.sink { [weak self] _ in
             // The publish has not happened yet at this point; the next runloop turn
             // is when the values are readable.
-            Task { @MainActor in self?.sync() }
+            Task { @MainActor in
+                self?.noticeQuestions()
+                self?.sync()
+            }
         })
         observers.append(AppSettings.shared.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in self?.sync() }
@@ -143,20 +159,76 @@ final class Island: ObservableObject {
         expanded = true
         outsideTicks = 0
         sync()
+        startHoverPoll()
+    }
+
+    private func checkPointer() {
+        guard expanded else { stopHoverPoll(); return }
+        let inside = pointerIsInside(margin: 10)
+        if inside { pinAcknowledged = true }
+        // Held open by a question: it opened itself, so a pointer that never asked
+        // for it must not be what takes it away. The hold ends when the question
+        // does — or the moment it has been LOOKED at, which is the whole thing it
+        // was trying to achieve; after that it is an ordinary panel again.
+        if pinned {
+            let stillAsking = SessionStates.shared.actionable
+                .contains { $0.attention.isQuestion }
+            if !stillAsking || pinAcknowledged { pinned = false }
+        }
+        if pinned { outsideTicks = 0; return }
+        if inside { outsideTicks = 0; return }
+        outsideTicks += 1
+        guard outsideTicks >= 2 else { return }
+        stopHoverPoll()
+        expanded = false
+        sync()
+    }
+
+    /// Opens itself when a session starts asking something.
+    ///
+    /// A question is the one state that cannot clear itself: it waits until it is
+    /// answered, and until then that session is doing nothing at all. A banner
+    /// says so once and is gone; a dot in a strip has to be noticed. So the island
+    /// opens, and stays open until the question is answered — the pointer is not
+    /// what put it there and must not be what takes it away.
+    private func noticeQuestions() {
+        let asking = Set(SessionStates.shared.actionable
+            .filter { $0.attention.isQuestion }.map(\.key))
+        let seeding = !noticedOnce
+        noticedOnce = true
+        defer { announcedQuestions = asking }
+        // The first reading only records. A question that was already waiting when
+        // the app launched is not news, and having the island fling itself open on
+        // every start is how a thing that opens itself stops being trusted.
+        guard !seeding, AppSettings.shared.islandEnabled,
+              !asking.subtracting(announcedQuestions).isEmpty
+        else { return }
+        pinned = true
+        pinAcknowledged = false
+        guard !expanded else { sync(); return }
+        expanded = true
+        outsideTicks = 0
+        sync()
+        startHoverPoll()
+    }
+
+    private func startHoverPoll() {
         hoverPoll?.invalidate()
         hoverPoll = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { _ in
             Task { @MainActor in self.checkPointer() }
         }
     }
 
-    private func checkPointer() {
-        guard expanded else { stopHoverPoll(); return }
-        if pointerIsInside(margin: 10) { outsideTicks = 0; return }
-        outsideTicks += 1
-        guard outsideTicks >= 2 else { return }
-        stopHoverPoll()
-        expanded = false
-        sync()
+    /// Answers a numbered prompt without opening anything.
+    ///
+    /// Straight to tmux, which takes the keystroke whether or not a terminal is
+    /// attached — so a question in a project with no window open is answerable
+    /// from here too. WITHOUT Enter: Claude's prompts act on the keypress itself.
+    fileprivate func answer(_ live: SessionStates.Live, option index: Int) {
+        let session = live.tmux
+        let digit = String(index + 1)
+        Task.detached(priority: .userInitiated) { Tmux.sendKey(session, digit) }
+        pinned = false
     }
 
     private func stopHoverPoll() {
@@ -211,16 +283,28 @@ final class Island: ObservableObject {
     /// so a row does not move when one is picked.
     fileprivate var rows: [SessionStates.Live] {
         let states = SessionStates.shared
-        let waiting = states.actionable
+        // WORKING FIRST. What is running is what you came to look at — it is the
+        // only part of the list that changes while you watch it, and the rows
+        // below are, by definition, not going anywhere.
         let working = states.live.filter { $0.attention == .working }
             .sorted { $0.at > $1.at }
+        let waiting = states.actionable
         let all: [SessionStates.Live]
         switch AppSettings.shared.islandFilter {
         case "attention": all = waiting
         case "working":   all = working
-        default:          all = waiting + working
+        default:          all = working + waiting
         }
         return Array(all.prefix(Self.maxRows))
+    }
+
+    /// Rows carry their options with them, so a row is as tall as what it has to
+    /// say. AppKit animates the window frame and therefore needs the total before
+    /// SwiftUI lays anything out — which is why this is arithmetic rather than a
+    /// measurement.
+    fileprivate static func height(of row: SessionStates.Live) -> CGFloat {
+        guard !row.options.isEmpty else { return rowHeight }
+        return rowHeight + CGFloat(min(row.options.count, maxOptions)) * optionHeight + 6
     }
 
     fileprivate var filter: String {
@@ -245,7 +329,8 @@ final class Island: ObservableObject {
                      height: min(Self.maxExpandedHeight,
                                  geometry.strip + 16 + Self.footerHeight
                                  + (meshIsBroken ? Self.alertHeight : 0)
-                                 + CGFloat(max(rows.count, 1)) * Self.rowHeight))
+                                 + (rows.isEmpty ? Self.rowHeight
+                                    : rows.reduce(0) { $0 + Self.height(of: $1) })))
             : NSSize(width: collapsedWidth, height: geometry.strip)
 
         return NSRect(x: geometry.frame.midX - size.width / 2,
@@ -570,7 +655,9 @@ private struct IslandView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(island.rows) { row in
-                            IslandRow(live: row) { island.open(row) }
+                            IslandRow(live: row,
+                                      open: { island.open(row) },
+                                      answer: { island.answer(row, option: $0) })
                         }
                     }
                     .padding(.vertical, 6)
@@ -659,11 +746,22 @@ private struct IslandView: View {
 
 private struct IslandRow: View {
     let live: SessionStates.Live
-    let action: () -> Void
+    let open: () -> Void
+    let answer: (Int) -> Void
     @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
+        VStack(spacing: 0) {
+            summary
+            if !live.options.isEmpty { options }
+        }
+        // A question is the only row you can act on without going anywhere, so it
+        // is the only one that is lit.
+        .background(live.attention.isQuestion ? Theme.waiting.opacity(0.07) : .clear)
+    }
+
+    private var summary: some View {
+        Button(action: open) {
             HStack(spacing: 9) {
                 StatusDot(color: live.attention.color, size: 6)
                     .padding(.top, 1)
@@ -689,17 +787,71 @@ private struct IslandRow: View {
                                 .background(Capsule().fill(Theme.waiting.opacity(0.16)))
                         }
                     }
+                    // Two lines: what the session is saying is the reason the row
+                    // exists, and one truncated line was a hint rather than a
+                    // message. While it is working this is Claude's own status
+                    // line, which moves every second.
                     Text(live.headline ?? live.attention.label)
                         .font(Theme.ui(10.5))
-                        .foregroundStyle(Color.white.opacity(0.42))
-                        .lineLimit(1)
+                        .foregroundStyle(Color.white.opacity(live.attention == .working ? 0.55 : 0.42))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 4)
             }
             .padding(.horizontal, 14)
-            .frame(height: Island.rowHeight)
+            .frame(height: Island.rowHeight, alignment: .center)
             .background(hovering ? Color.white.opacity(0.07) : .clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+
+    /// The prompt, answerable where it is.
+    ///
+    /// The alternative is what this replaces: notice the dot, find the window,
+    /// find the tab, read a wall of TUI, press a digit. The keystroke goes
+    /// through tmux, so the project does not even have to be open.
+    private var options: some View {
+        VStack(spacing: 2) {
+            ForEach(Array(live.options.prefix(Island.maxOptions).enumerated()), id: \.offset) {
+                index, label in
+                IslandOption(number: index + 1, label: label) { answer(index) }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
+    }
+}
+
+private struct IslandOption: View {
+    let number: Int
+    let label: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text("\(number)")
+                    .font(Theme.mono(9.5))
+                    .foregroundStyle(Theme.waiting)
+                    .frame(width: 16, height: 16)
+                    .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Theme.waiting.opacity(0.18)))
+                Text(label)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: Island.optionHeight - 2)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(hovering ? 0.12 : 0.05)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

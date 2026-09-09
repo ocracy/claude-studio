@@ -177,6 +177,17 @@ enum Tmux {
         _ = run(["send-keys", "-t", session, "C-c"])
     }
 
+    /// Types a key into a session, attached or not.
+    ///
+    /// This is what lets the island answer a question for a project with no
+    /// window open: tmux takes the keystroke on the session's behalf, and Claude
+    /// cannot tell it apart from the keyboard. Deliberately WITHOUT Enter —
+    /// Claude's numbered prompts act on the keypress itself, and a stray newline
+    /// would land in whatever comes next.
+    static func sendKey(_ session: String, _ key: String) {
+        _ = run(["send-keys", "-t", session, key])
+    }
+
     /// The last `lines` lines of a pane, history included, wrapped lines joined.
     static func capture(_ session: String, lines: Int = 400) -> String {
         let r = run(["capture-pane", "-p", "-J", "-S", "-\(max(1, lines))", "-t", session])

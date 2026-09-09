@@ -42,13 +42,23 @@ final class SessionStates: ObservableObject {
         var attention: Attention
         /// The question a selected numbered prompt is asking, when there is one.
         var question: String?
+        /// Its options, in order — so the question can be ANSWERED from the
+        /// island. tmux takes the keystroke whether or not a terminal is attached,
+        /// which is what makes this work for a project with no window open.
+        var options: [String] = []
         /// The last thing the session said, for everything else.
         var detail: String?
+        /// What it is doing this second, while it is working.
+        var activity: String?
         var at: Date
 
         var id: String { key }
         /// The one line worth showing under the name.
-        var headline: String? { question?.nilIfEmpty ?? detail?.nilIfEmpty }
+        var headline: String? {
+            question?.nilIfEmpty
+                ?? (attention == .working ? activity?.nilIfEmpty : nil)
+                ?? detail?.nilIfEmpty
+        }
     }
 
     /// Tab key → Claude's live state.
@@ -274,7 +284,9 @@ final class SessionStates: ObservableObject {
                              projectPath: state.ppath ?? "",
                              attention: resolved,
                              question: screen?.question,
+                             options: resolved.isQuestion ? (screen?.options ?? []) : [],
                              detail: screen?.lastLine,
+                             activity: screen?.activity,
                              at: Date(timeIntervalSince1970: state.ts ?? 0)))
         }
 

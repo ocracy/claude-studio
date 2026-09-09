@@ -23,6 +23,10 @@ enum PaneReader {
         var options: [String] = []
         /// The last thing the session actually said — the island's second line.
         var lastLine: String?
+        /// What it is doing THIS second, while it is doing it: Claude's own status
+        /// line, "Ebbing… (51s · ↓ 1.4k tokens)". For a working session this is the
+        /// interesting line and the last thing it said is stale by definition.
+        var activity: String?
         /// Is a turn actually in flight?
         ///
         /// Claude draws "esc to interrupt" in its footer for exactly as long as
@@ -36,9 +40,13 @@ enum PaneReader {
         /// Is a numbered prompt on screen, waiting to be answered?
         var isAsking: Bool { !options.isEmpty }
 
-        /// One line for a list row: the question if it is asking, otherwise the
-        /// last thing said.
-        var headline: String? { question?.nilIfEmpty ?? lastLine?.nilIfEmpty }
+        /// One line for a list row: the question if it is asking, what it is doing
+        /// if it is doing something, and otherwise the last thing it said.
+        var headline: String? {
+            question?.nilIfEmpty
+                ?? (isWorking ? activity?.nilIfEmpty : nil)
+                ?? lastLine?.nilIfEmpty
+        }
     }
 
     /// Reads every named session's screen in one tmux call.
@@ -55,7 +63,31 @@ enum PaneReader {
         }
         screen.lastLine = lastSpokenLine(raw: rawLines, stripped: lines)
         screen.isWorking = lines.contains { $0.lowercased().contains("esc to interrupt") }
+        screen.activity = statusLine(lines)
         return screen
+    }
+
+    /// Claude's own status line, without the spinner glyph in front of it.
+    ///
+    /// It is the one line that changes every second while a turn runs, and it
+    /// carries the elapsed time and the token count — which together answer "is
+    /// this moving, and how long has it been" without opening anything. The
+    /// footer's mode hints start with the same family of glyphs, so a bracket is
+    /// required: the status line always carries `(…)`.
+    private static func statusLine(_ lines: [String]) -> String? {
+        for line in lines.reversed() {
+            guard let first = line.unicodeScalars.first,
+                  "✻✳✶✽✢·*⠂⠄⠈⠐⠠⡀⢀⠁⠉⠙⠹⠸⠼⠴⠦⠧⠇⠏".unicodeScalars.contains(first),
+                  line.contains("("), line.contains(")")
+            else { continue }
+            let text = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+            let lower = text.lowercased()
+            // The mode footer looks similar and is not an activity.
+            if lower.contains("auto mode") || lower.contains("shift+tab") { continue }
+            guard !text.isEmpty else { continue }
+            return text.count > 120 ? String(text.prefix(120)) + "…" : text
+        }
+        return nil
     }
 
     // MARK: - Frame

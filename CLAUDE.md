@@ -325,6 +325,22 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   now records OR by the short id embedded in the tmux name — deterministic for the
   same reason `Project.shortID` is FNV-1a — so a session started before the path
   was recorded is still reachable, and a project with no window open is opened.
+- **The island answers questions, and opens itself to ask them.** A question is
+  the one state that cannot clear itself — until it is answered that session is
+  doing nothing at all — and a dot in a strip has to be noticed. So a NEW question
+  opens the panel and pins it there; the pin ends when the question does, or the
+  moment the pointer has been over the island, which is the whole thing it was
+  after. The first reading only seeds (`noticedOnce`): a question already waiting
+  at launch is not news, and something that flings itself open on every start
+  stops being trusted. Answering goes straight to `Tmux.sendKey` — **not** through
+  a terminal — so a project with no window open is answerable too, and WITHOUT
+  Enter, since Claude's prompts act on the keypress. Rows are **working first**:
+  what is running is the only part of the list that changes while you watch it,
+  and its second line is Claude's own status line (`PaneReader.statusLine` /
+  `statusLine` in `choices.mjs` — twins), which moves every second and carries the
+  elapsed time and token count. Row heights are ARITHMETIC (`Island.height(of:)`),
+  because AppKit animates the window frame and needs the total before SwiftUI lays
+  anything out.
 - **Sessions name themselves**: Claude sets the conversation's title over OSC
   ("✳ Optimize GROUP BY sorgusu") and tmux has been reporting it as `pane_title`
   all along, unused, while the sidebar filled up with "Claude 208". Only a name
