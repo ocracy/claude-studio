@@ -239,6 +239,12 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   orange permanently. `Tmux.capturePanes` reads every waiting session in ONE
   chained call, and only sessions `list-panes` just confirmed: a `capture-pane` on
   a session that has gone takes the whole batch's output with it.
+- **Starting is not working**: `SessionStart` reports **idle**, not `working`.
+  Claude comes up, draws its prompt and waits, and no further hook fires until
+  something is typed — so a freshly opened tab sat on green indefinitely, and so
+  did every resumed one, on the Mac and on the phone alike. `UserPromptSubmit` is
+  what turns it green. Green has to mean a turn is actually in flight or it means
+  nothing, which is the whole point of the split above.
 - **"Seen" is a state, not a gesture**: `SessionStates` tracks which tab each
   window is showing (`setVisibleTab`) and resolves a finished turn as `seen` when
   it is on screen with the app in front. A one-shot "mark as read" on tab
@@ -254,7 +260,40 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   particular finish, not the session, so a turn that ended while the app was closed
   is still orange when it comes back — which is the one case that must not go
   quiet. Keys with no state file left are pruned on the sweep, and the write only
-  happens when the answer moves.
+  happens when the answer moves. **Two processes write it** — the app, and the
+  bridge when you open a session on the phone — so neither owns it: the disk copy
+  is folded in on every poll (`absorb`) and a write re-reads first, removing only
+  the marks THIS pass deliberately retired. Without that, reading an answer on the
+  phone left it orange on the desk, or the Mac's next write silently erased it.
+- **tmux needs a UTF-8 locale, and launchd does not give it one.** In the C
+  locale tmux SANITISES its format output: every byte it considers unprintable
+  becomes `_` — including the **TAB** these formats separate fields with, and
+  every non-ASCII character in a session title. A missing tab is not cosmetic.
+  `split("\t")` collapses to one field, the map is keyed by the whole line
+  instead of the session name, every lookup misses, and the phone reported every
+  running session as **"not running"** while the app right next to it showed them
+  open. It looked like a tmux problem, a socket problem and a permissions problem
+  in turn, and was none of them: the identical code from a login shell — which
+  has a locale — worked perfectly, which is exactly what made it hard to see. So
+  `LANG` is forced in three places: the runner script (beside the embedded PATH,
+  and `ttyd` and the terminals it attaches inherit it), `Bridge/lib/tmux.mjs`'s
+  `ENV`, and `Tmux.run` in Swift — a GUI process launched by launchd can be just
+  as bare.
+- **The phone's colours are the Mac's colours**: `Bridge/lib/state.mjs` resolves
+  the same three, from the same evidence — the hook, the screen (`readChoices`)
+  and `seen-sessions.json`. It emits `working | waiting | idle`, where `waiting`
+  covers both halves of orange, because those are the three the stylesheet has.
+  The `asking` flag says which half. The HEADLINE is chosen on the Mac
+  (`lastSpokenLine`, the twin of `PaneReader`'s — keep them in step) rather than
+  in the browser, so the phone is not running a second guess at what a screen
+  means; before it existed every row previewed the TUI's own footer. One
+  `captureRaw` per live session serves the preview and the question both.
+- **The phone's list defaults to OPEN**: a project keeps every session record it
+  has ever had, so the list led with dozens of closed conversations and buried the
+  two that were running. `Open | Needs you | All` in the list bar, remembered in
+  `localStorage`. The class is `list-filter`, never `filter` — Tailwind ships a
+  `.filter` utility in a later layer and the two would quietly fight over the
+  `filter` property forever.
 - **The island** (`Island`) is the only surface that belongs to no window, which is
   the point: a session hands the turn back while you are somewhere else entirely.
   A borderless `nonactivatingPanel` at `.statusBar` level with

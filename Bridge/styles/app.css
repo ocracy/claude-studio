@@ -167,6 +167,29 @@
   .session .name { @apply block font-medium; }
   .session .preview { @apply mt-[3px] block truncate font-mono text-xs leading-tight text-muted; }
 
+  /* A question does not stop being one by being looked at, unlike a finished
+     turn — and both are the same orange, so the row has to say which it is. */
+  .session .name .tag {
+    @apply ml-1.5 rounded-full px-1.5 py-px align-[1px] text-[10px] font-semibold
+           uppercase tracking-wider text-waiting;
+    background: color-mix(in srgb, var(--color-waiting) 18%, transparent);
+  }
+
+  /* Named `list-filter`, never `filter`: Tailwind ships a `.filter` utility of
+     its own and it sits in a later layer, so the two would quietly fight over
+     the `filter` property forever.
+     Native, so each phone draws its own picker rather than a menu that has to
+     be re-implemented and would need the back-gesture guard around it. */
+  .list-filter {
+    @apply flex-none appearance-none rounded-[9px] border border-line bg-surface
+           py-1.5 pr-6 pl-2.5 text-xs text-muted;
+    background-image: linear-gradient(45deg, transparent 50%, var(--color-muted) 50%),
+                      linear-gradient(135deg, var(--color-muted) 50%, transparent 50%);
+    background-position: right 11px top 13px, right 7px top 13px;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+  }
+
   .dot { @apply size-2.5 flex-none rounded-full bg-idle; }
   .dot.working { @apply bg-working; animation: pulse 1.4s ease-in-out infinite; }
   .dot.waiting { @apply bg-waiting; }

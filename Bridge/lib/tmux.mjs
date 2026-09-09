@@ -27,11 +27,27 @@ export const tmuxPath = (() => {
   }
 })()
 
+/**
+ * A UTF-8 locale, forced.
+ *
+ * launchd hands an agent an environment with no `LANG` at all, and in the C
+ * locale tmux SANITISES its format output: every byte it considers unprintable
+ * becomes `_` — including the TAB this file separates fields with, and every
+ * non-ASCII character in a session title. The tab going missing is not a
+ * cosmetic problem: `split("\t")` then yields one field, the map is keyed by the
+ * whole line instead of the session name, every lookup misses, and the phone
+ * reports every running session as "not running". It looked like a tmux or a
+ * permissions problem and was neither — the same code from a login shell, which
+ * has a locale, worked perfectly.
+ */
+const ENV = { ...process.env, LANG: process.env.LANG || "en_US.UTF-8" }
+
 function run(args) {
   try {
     const stdout = execFileSync(tmuxPath, ["-S", tmuxSocket, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      env: ENV,
     })
     return { ok: true, stdout }
   } catch (error) {

@@ -195,16 +195,21 @@ final class SessionStates: ObservableObject {
                 return name
             }
             let screens = PaneReader.readAll(sessions: waiting)
+            // What the phone has marked read since the last poll. Disk work, so it
+            // belongs out here with the rest of it.
+            let diskSeen = Self.readSeenFile()
 
             let readStates = states
             let readTitles = titles
             let readLive = live
             let readScreens = screens
             let readSweeping = sweeping
+            let readSeen = diskSeen
             await MainActor.run {
                 self.lastStates = readStates
                 self.lastScreens = readScreens
                 self.lastLive = readLive
+                self.absorb(readSeen)
                 self.apply(readStates, paneTitles: readTitles,
                            screens: readScreens, live: readLive, sweeping: readSweeping)
                 self.ticking = false
@@ -228,6 +233,10 @@ final class SessionStates: ObservableObject {
         var next: [String: Attention] = [:]
         var sids: [String: String] = [:]
         var rows: [Live] = []
+        // Marks this pass deliberately took away, as opposed to ones it simply has
+        // not heard of. Only these are removed from the file — anything else there
+        // belongs to the phone, which writes the same file.
+        var retired: Set<String> = []
 
         for (key, state) in states {
             // A session whose tmux session is gone left its state file behind: the
@@ -239,7 +248,7 @@ final class SessionStates: ObservableObject {
             if let alive, let tmux, !alive.contains(tmux) {
                 // Gone: skip it now, delete the file on the slow path.
                 if sweeping { HookBridge.clearState(key) }
-                seen.removeValue(forKey: key)
+                if seen.removeValue(forKey: key) != nil { retired.insert(key) }
                 continue
             }
 
@@ -247,7 +256,12 @@ final class SessionStates: ObservableObject {
             let resolved = resolve(key: key, state: state, screen: screen)
             next[key] = resolved
             if resolved == .seen { seen[key] = max(seen[key] ?? 0, state.ts ?? 0) }
-            if resolved == .working { seen.removeValue(forKey: key) }
+            // Only a mark that was actually there counts as retired — otherwise
+            // every working session would claim a removal on every poll and the
+            // file would be re-read twice a second for nothing.
+            if resolved == .working, seen.removeValue(forKey: key) != nil {
+                retired.insert(key)
+            }
             if let sid = state.sid, !sid.isEmpty { sids[key] = sid }
 
             guard let tmux else { continue }
@@ -303,24 +317,58 @@ final class SessionStates: ObservableObject {
 
         // A key with no state file left is a session that is gone; keeping its mark
         // would grow the file forever. Only written when the answer actually moved.
-        if !states.isEmpty { seen = seen.filter { states[$0.key] != nil } }
-        saveSeenIfNeeded()
+        if !states.isEmpty {
+            for key in seen.keys where states[key] == nil {
+                seen.removeValue(forKey: key)
+                retired.insert(key)
+            }
+        }
+        saveSeenIfNeeded(retiring: retired)
     }
 
     // MARK: - Remembering what has been seen
 
-    private func loadSeen() {
+    /// The file as it is on disk. Read off the main thread with everything else.
+    nonisolated static func readSeenFile() -> [String: Double] {
         guard let data = try? Data(contentsOf: Paths.seenSessionsFile),
               let stored = try? JSONDecoder().decode([String: Double].self, from: data)
-        else { return }
+        else { return [:] }
+        return stored
+    }
+
+    private func loadSeen() {
+        let stored = Self.readSeenFile()
         seen = stored
         seenOnDisk = stored
     }
 
-    private func saveSeenIfNeeded() {
-        guard seen != seenOnDisk else { return }
+    /// Two processes share this file — the app and the phone bridge, which marks a
+    /// session read when you open it on the phone. So it is MERGED in both
+    /// directions rather than owned: the disk is folded in on every poll, and a
+    /// write re-reads immediately before it replaces anything. The
+    /// `sessions.json` discipline, for the same reason and with the same failure
+    /// if it is skipped — whichever side wrote last would silently erase the
+    /// other's, and a session read on the phone would go back to orange on the
+    /// Mac (or the reverse) with nothing to explain it.
+    private func absorb(_ disk: [String: Double]) {
+        guard !disk.isEmpty else { return }
+        var merged = seen
+        merged.merge(disk) { mine, theirs in max(mine, theirs) }
+        if merged != seen { seen = merged }
+    }
+
+    private func saveSeenIfNeeded(retiring retired: Set<String>) {
+        guard seen != seenOnDisk || !retired.isEmpty else { return }
+        let disk = Self.readSeenFile()
+        var merged = disk
+        // Only the marks this pass deliberately took away are removed. Anything
+        // else on disk that we have not heard of is the phone's, written between
+        // this poll's read and this write, and dropping it would put a session the
+        // user just read back into orange.
+        for key in retired { merged.removeValue(forKey: key) }
+        merged.merge(seen) { _, mine in mine }
         seenOnDisk = seen
-        guard let data = try? JSONEncoder().encode(seen) else { return }
+        guard merged != disk, let data = try? JSONEncoder().encode(merged) else { return }
         Paths.writeAtomically(data, to: Paths.seenSessionsFile)
     }
 

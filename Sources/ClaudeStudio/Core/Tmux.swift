@@ -285,6 +285,16 @@ enum Tmux {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: tmux)
         p.arguments = ["-S", socketPath] + args
+        // A UTF-8 locale, forced. In the C locale — which is what a GUI process
+        // launched by launchd can easily have — tmux SANITISES its format output:
+        // every byte it thinks unprintable becomes `_`, including the TAB these
+        // formats separate fields with and every non-ASCII character in a title.
+        // A missing tab is not cosmetic: the parse collapses to one field and
+        // every session looks like it does not exist. See Bridge/lib/tmux.mjs,
+        // where exactly that made the phone report everything as "not running".
+        var environment = ProcessInfo.processInfo.environment
+        if environment["LANG"] == nil { environment["LANG"] = "en_US.UTF-8" }
+        p.environment = environment
         let out = Pipe()
         p.standardOutput = out
         p.standardError = Pipe()

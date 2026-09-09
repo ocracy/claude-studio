@@ -18,7 +18,12 @@ enum HookBridge {
         ("UserPromptSubmit", "working"),
         ("PreToolUse",       "working"),
         ("PostToolUse",      "working"),
-        ("SessionStart",     "working"),
+        // NOT "working". Starting is not working: Claude comes up, draws its
+        // prompt and waits, and no further hook fires until something is typed —
+        // so a freshly opened tab sat on green indefinitely, and so did every
+        // resumed one. Green has to mean a turn is actually in flight, or it
+        // means nothing. `UserPromptSubmit` is what turns it green.
+        ("SessionStart",     "idle"),
         ("Stop",             "stop"),
         ("Notification",     "notify"),
         ("SessionEnd",       "end"),

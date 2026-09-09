@@ -23,7 +23,7 @@ import { appSupport, tokenFile } from "./lib/paths.mjs"
 import { readChoices } from "./lib/choices.mjs"
 import { assertMatchesSwift } from "./lib/shortid.mjs"
 import { addSession, removeSession, touchSession } from "./lib/sessions.mjs"
-import { locate, readProjects, snapshot } from "./lib/state.mjs"
+import { locate, markSeen, readProjects, snapshot } from "./lib/state.mjs"
 import * as tmux from "./lib/tmux.mjs"
 import * as push from "./lib/push.mjs"
 import * as watcher from "./lib/watcher.mjs"
@@ -333,6 +333,18 @@ async function handleAPI(req, res, url) {
     if (!locate(name)) return json(res, 404, { error: "unknown session" })
     if (!tmux.exists(name)) return json(res, 200, { choices: null })
     return json(res, 200, { choices: readChoices(tmux.captureRaw(name)) })
+  }
+
+  // Opening a session on the phone IS looking at it, so a finished turn stops
+  // being orange — on the Mac as well, because both write the same file. Without
+  // this, reading an answer on the phone left it demanding attention on the desk
+  // forever, which is the opposite of what reading it means.
+  const seen = path.match(/^\/api\/sessions\/([^/]+)\/seen$/)
+  if (req.method === "POST" && seen) {
+    const name = decodeURIComponent(seen[1])
+    if (!locate(name)) return json(res, 404, { error: "unknown session" })
+    markSeen(name)
+    return json(res, 200, { ok: true })
   }
 
   const keys = path.match(/^\/api\/sessions\/([^/]+)\/keys$/)

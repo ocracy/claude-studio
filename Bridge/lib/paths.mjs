@@ -17,6 +17,18 @@ export const tmuxConfig = join(appSupport, "tmux.conf")
 export const sessionStateDir = join(appSupport, "session-state")
 export const tokenFile = join(appSupport, "bridge-token")
 
+/**
+ * Which finished turns have been READ, and as of when — `tab id → hook ts`.
+ *
+ * Shared with the app, in both directions: the Mac marks a session read when its
+ * tab is on screen, the phone marks one when you open it. So neither side owns
+ * the file and both re-read immediately before writing — the `sessions.json`
+ * discipline, and the same failure if it is skipped: whichever wrote last would
+ * erase the other, and a session you just read would go back to orange with
+ * nothing to explain it. See SessionStates.saveSeenIfNeeded.
+ */
+export const seenSessions = join(appSupport, "seen-sessions.json")
+
 // Fixed socket, never `-L`: the GUI app and a login shell resolve TMUX_TMPDIR
 // differently, which would spawn two separate tmux servers. See Tmux.swift.
 export const tmuxSocket = `/tmp/claude-studio-${userInfo().uid}.sock`

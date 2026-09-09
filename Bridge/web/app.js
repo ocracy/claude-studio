@@ -139,13 +139,37 @@ function toast(message) {
  * the element out from under a finger mid-tap — the tap then lands on nothing.
  * Existing rows are reused and only their text and badge change.
  */
+/**
+ * Which sessions the list shows. Kept across launches, because it is a way of
+ * working rather than a momentary choice.
+ *
+ * `open` is the default and the reason the filter exists at all: a project keeps
+ * every session record it has ever had, so the list opened on a wall of closed
+ * conversations with the two that were actually running somewhere inside it.
+ */
+let filter = localStorage.getItem("cs.filter") || "open"
+
+function matchesFilter(session) {
+  if (filter === "all") return true
+  if (filter === "attention") return session.state === "waiting"
+  return session.live
+}
+
 function render() {
   const container = $("projects")
-  const withSessions = snapshot.projects.filter((p) => p.sessions.length)
+  const withSessions = snapshot.projects
+    .map((project) => ({ ...project, sessions: project.sessions.filter(matchesFilter) }))
+    .filter((project) => project.sessions.length)
 
   if (!withSessions.length) {
-    if (!container.querySelector(".empty")) {
-      container.innerHTML = `<p class="empty">No sessions yet.<br>Create one below.</p>`
+    const message = filter === "attention"
+      ? "Nothing is waiting on you."
+      : filter === "open"
+        ? "Nothing is running.<br>Create a session below."
+        : "No sessions yet.<br>Create one below."
+    const existing = container.querySelector(".empty")
+    if (!existing || existing.dataset.for !== filter) {
+      container.innerHTML = `<p class="empty" data-for="${filter}">${message}</p>`
     }
     return
   }
@@ -181,7 +205,7 @@ function render() {
         row.innerHTML = `
           <button class="session-open">
             <span class="dot"></span>
-            <span class="body"><span class="name"></span><span class="preview"></span></span>
+            <span class="body"><span class="name"><span class="label"></span></span><span class="preview"></span></span>
           </button>
           <button class="session-more" aria-label="Actions">⋯</button>`
         group.append(row)
@@ -189,9 +213,25 @@ function render() {
       group.append(row)
 
       row.querySelector(".dot").className = `dot ${session.state}`
-      row.querySelector(".name").textContent = session.name
+      row.querySelector(".name .label").textContent = session.name
+
+      // Orange means two things and only one of them clears by being read, so
+      // the one that does not says so.
+      let tag = row.querySelector(".name .tag")
+      if (session.asking && !tag) {
+        tag = document.createElement("span")
+        tag.className = "tag"
+        tag.textContent = "asking"
+        row.querySelector(".name").append(tag)
+      } else if (!session.asking && tag) {
+        tag.remove()
+      }
+
+      // The headline is chosen on the Mac — the question when there is one, the
+      // last thing said otherwise — so the phone is not running a second guess
+      // at what a session's screen means.
       row.querySelector(".preview").textContent = session.live
-        ? session.preview.at(-1) || "running"
+        ? session.headline || "running"
         : "not running — tap to start"
 
       const target = {
@@ -340,6 +380,11 @@ function openSession(session) {
   // staring at a TUI is exactly the friction the buttons exist to remove.
   renderAsk(null)
   refreshAsk()
+  // Opening it IS reading it, so a finished turn stops being orange — here and
+  // on the Mac, which shares the file this writes. A question is untouched: the
+  // colour only clears when it is answered.
+  api(`/api/sessions/${encodeURIComponent(session.tmux)}/seen`, { method: "POST" })
+    .catch(() => {})
   poll(4000)
 }
 
@@ -849,6 +894,13 @@ async function saveProjectChoices() {
 }
 
 // ── wiring ───────────────────────────────────────────────────────────────
+
+$("filter").value = filter
+$("filter").onchange = (event) => {
+  filter = event.target.value
+  localStorage.setItem("cs.filter", filter)
+  render()
+}
 
 $("open-menu").onclick = openMenu
 $("menu-cancel").onclick = closeMenu

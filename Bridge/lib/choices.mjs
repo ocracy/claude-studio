@@ -102,6 +102,52 @@ export function readChoices(rawLines) {
 }
 
 /**
+ * The last thing the session actually SAID.
+ *
+ * Not "the last non-empty line": below Claude's answer sit the input box, the
+ * spinner's epitaph ("✻ Cogitated for 4m 20s"), the mode footer and the token
+ * hint — four lines of furniture, none of which the session said. Showing one of
+ * those as the preview under a tab is how every row came to read "⏵⏵ auto mode
+ * on (shift+tab to cycle)".
+ *
+ * The twin of `PaneReader.lastSpokenLine` in Swift; the two must stay in step,
+ * or the phone and the Mac describe the same session differently.
+ *
+ * @param {string[]} rawLines  the pane exactly as tmux painted it
+ */
+export function lastSpokenLine(rawLines) {
+  for (let index = rawLines.length - 1; index >= 0; index -= 1) {
+    const raw = rawLines[index]
+    const text = stripFrame(raw)
+    if (!text || isFurniture(raw, text)) continue
+    return text.length > 120 ? `${text.slice(0, 120)}…` : text
+  }
+  return null
+}
+
+const FOOTER = [
+  "esc to interrupt", "shift+tab to cycle", "? for shortcuts", "new task?",
+  "auto mode on", "bypass permissions", "ctrl+c to exit", "to save ", "for agents",
+]
+
+/**
+ * The RAW line matters as well as the stripped one: the rule that carries the
+ * conversation's title (`──────── fix-openai-batch ──`) is nothing but frame,
+ * and stripping the frame off it leaves an ordinary-looking sentence that was
+ * never said.
+ */
+function isFurniture(raw, text) {
+  if (/^[─━═╭╮╰╯┌┐└┘├┤]/u.test(raw.trim())) return true
+  if (/^[❯›‣>]/u.test(text)) return true
+  // The spinner, its epitaph, and the tool-output gutter.
+  if (/^[✻✳✶✽✢·*⏵⏸⎿⠂⠄⠈⠐⠠⡀⢀⠁⠉⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u.test(text)) return true
+  if (text.startsWith("/") && text.length <= 30) return true
+  if (/^[─━═\-·\s]*$/u.test(text)) return true
+  const lower = text.toLowerCase()
+  return FOOTER.some((hint) => lower.includes(hint))
+}
+
+/**
  * The buttons a notification carries.
  *
  * Android allows two (`Notification.maxActions`), and with three options the
