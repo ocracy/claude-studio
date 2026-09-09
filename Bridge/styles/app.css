@@ -106,6 +106,9 @@
   }
 
   .bar h1 { @apply m-0 flex-1 text-[17px] font-semibold; }
+  /* The title is a rename button, so it has to shed everything a button brings
+     with it and keep only the tap target. */
+  button.title { @apply items-start rounded-none border-0 bg-transparent p-0 text-left; }
   .bar .title { @apply flex min-w-0 flex-1 flex-col; }
   .bar .title span { @apply truncate text-base font-semibold; }
   .bar .title small { @apply text-xs text-muted; }
@@ -242,6 +245,28 @@
   .keys::-webkit-scrollbar { display: none; }
   .keys button { @apply flex-none bg-surface px-[13px] py-[7px] font-mono text-sm; }
   .keys button.warn { @apply text-danger; }
+  /* Not a key. It opens a list instead of sending something, and it is first in
+     a row that scrolls, so it says so in the accent rather than blending in. */
+  .keys button.snippet-key { @apply border-accent font-semibold text-accent; }
+
+  /* ── ready-made commands ────────────────────────────────────────────── */
+
+  .snippet {
+    @apply mb-2 flex w-full items-stretch overflow-hidden rounded-xl border border-line bg-raised;
+  }
+
+  .snippet-use {
+    @apply flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-none border-0
+           bg-transparent px-3.5 py-3 text-left;
+  }
+
+  .snippet-name { @apply block font-medium; }
+  .snippet-text { @apply block w-full truncate font-mono text-xs leading-tight text-muted; }
+
+  .snippet-remove {
+    @apply w-11 flex-none rounded-none border-0 bg-transparent p-0 text-xl
+           leading-none text-muted;
+  }
 
   /* ── sheet ──────────────────────────────────────────────────────────── */
 

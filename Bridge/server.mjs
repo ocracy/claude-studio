@@ -22,7 +22,8 @@ import { createSecureContext } from "node:tls"
 import { appSupport, tokenFile } from "./lib/paths.mjs"
 import { readChoices } from "./lib/choices.mjs"
 import { assertMatchesSwift } from "./lib/shortid.mjs"
-import { addSession, removeSession, touchSession } from "./lib/sessions.mjs"
+import { addSession, removeSession, renameSession, touchSession } from "./lib/sessions.mjs"
+import { addSnippet, readSnippets, removeSnippet } from "./lib/snippets.mjs"
 import { locate, markSeen, readProjects, snapshot } from "./lib/state.mjs"
 import * as tmux from "./lib/tmux.mjs"
 import * as push from "./lib/push.mjs"
@@ -431,7 +432,46 @@ async function handleAPI(req, res, url) {
     return json(res, 200, { ok: true })
   }
 
+  // ── ready-made phrases ─────────────────────────────────────────────────
+
+  if (req.method === "GET" && path === "/api/snippets") {
+    return json(res, 200, { snippets: readSnippets() })
+  }
+
+  if (req.method === "POST" && path === "/api/snippets") {
+    const body = await readBody(req)
+    const entry = addSnippet(body)
+    if (!entry) return json(res, 400, { error: "a command needs some text" })
+    return json(res, 200, { snippet: entry })
+  }
+
+  const snippet = path.match(/^\/api\/snippets\/([^/]+)$/)
+  if (req.method === "DELETE" && snippet) {
+    if (!removeSnippet(decodeURIComponent(snippet[1]))) {
+      return json(res, 404, { error: "unknown command" })
+    }
+    return json(res, 200, { ok: true })
+  }
+
   const one = path.match(/^\/api\/sessions\/([^/]+)$/)
+
+  // Renaming is a LABEL change and nothing more: the tmux name is derived from
+  // the record's id and every other file keys on it, so touching it would walk a
+  // session away from its own history.
+  if (req.method === "PATCH" && one) {
+    const name = decodeURIComponent(one[1])
+    const found = locate(name)
+    if (!found) return json(res, 404, { error: "unknown session" })
+    const body = await readBody(req)
+    const title = String(body.name ?? "").trim().slice(0, 64)
+    if (!title) return json(res, 400, { error: "a name cannot be empty" })
+    renameSession(found.project.path, name, title)
+    // …and tag tmux, so a session adopted on a later launch still knows what it
+    // is called. Exactly what StudioModel.renameSession does on the Mac.
+    if (tmux.exists(name)) tmux.setOption(name, "@cs_title", title)
+    return json(res, 200, { ok: true, name: title })
+  }
+
   if (req.method === "DELETE" && one) {
     const name = decodeURIComponent(one[1])
     const found = locate(name)

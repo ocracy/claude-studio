@@ -29,6 +29,16 @@ export const tokenFile = join(appSupport, "bridge-token")
  */
 export const seenSessions = join(appSupport, "seen-sessions.json")
 
+/**
+ * Phrases kept ready for the phone — `[{ id, name, text, send }]`.
+ *
+ * Typing is the one thing a phone is bad at, and the things worth saying to a
+ * session from one are short, repeated and always the same: "push what you did
+ * and deploy it". They live beside the Mac's own files rather than in the
+ * browser, so they are the same list from every phone that reaches this Mac.
+ */
+export const snippets = join(appSupport, "phone-snippets.json")
+
 // Fixed socket, never `-L`: the GUI app and a login shell resolve TMUX_TMPDIR
 // differently, which would spawn two separate tmux servers. See Tmux.swift.
 export const tmuxSocket = `/tmp/claude-studio-${userInfo().uid}.sock`

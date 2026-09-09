@@ -51,10 +51,13 @@
 <section id="session" class="view hidden">
   <header class="bar">
     <button id="back" class="icon" aria-label="Back">‹</button>
-    <div class="title">
+    <!-- The title is the rename control. There is nowhere else to put one on a
+         phone, and the name is the only thing about a session you can fix from
+         here — tmux's own name is derived from the record's id and never moves. -->
+    <button id="session-title" class="title" aria-label="Rename this session">
       <span id="session-name"></span>
       <small id="session-project"></small>
-    </div>
+    </button>
     <span id="session-state" class="dot"></span>
     <!-- Shift+Tab is how Claude Code cycles permission modes. -->
     <button id="mode" class="mode" data-key="BTab" title="Cycle mode (Shift+Tab)">mode ⇧⇥</button>
@@ -75,6 +78,10 @@
        cannot use. There is no message box — the terminal takes the keyboard
        directly, so a second place to type would only be in the way. -->
   <div class="keys">
+    <!-- First, because the row scrolls and this is the one button here that is
+         not a key: typing is what a phone is worst at, and these are the phrases
+         you would otherwise type again every day. -->
+    <button id="snippets-open" class="snippet-key">cmds</button>
     <button data-key="Escape">esc</button>
     <button data-key="BSpace" aria-label="Backspace">⌫</button>
     <button data-newline="1" aria-label="New line">⇧⏎</button>
@@ -119,6 +126,46 @@
   </div>
 </div>
 
+<!-- ── Rename ───────────────────────────────────────────────────────────── -->
+<div id="rename" class="sheet hidden">
+  <div class="sheet-body">
+    <h2>Rename session</h2>
+    <label>Name
+      <input id="rename-name" type="text" autocapitalize="sentences">
+    </label>
+    <div class="actions">
+      <button id="rename-cancel">Cancel</button>
+      <button id="rename-save" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Ready-made commands ──────────────────────────────────────────────── -->
+<div id="snippets" class="sheet hidden">
+  <div class="sheet-body">
+    <h2>Commands</h2>
+    <p class="group-note">Tap one to send it to this session.</p>
+    <div id="snippet-list"></div>
+
+    <h2 class="group">Add one</h2>
+    <label>Name <span class="hint">what the button says</span>
+      <input id="snippet-name" type="text" placeholder="deploy" autocapitalize="none">
+    </label>
+    <label>Text <span class="hint">what gets typed</span>
+      <textarea id="snippet-text" rows="3"
+                placeholder="push what you did and deploy it"></textarea>
+    </label>
+    <label class="row">
+      <input id="snippet-send" type="checkbox" checked>
+      <span>Send it straight away<small>Off means it is typed into the box and left there for you to change.</small></span>
+    </label>
+    <div class="actions">
+      <button id="snippet-close">Done</button>
+      <button id="snippet-add" class="primary">Add</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── New session sheet ────────────────────────────────────────────────── -->
 <div id="sheet" class="sheet hidden">
   <div class="sheet-body">
@@ -128,17 +175,21 @@
       <select id="new-project"></select>
     </label>
 
-    <label>Name
-      <input id="new-name" type="text" placeholder="Claude" autocapitalize="sentences">
+    <label>Name <span class="hint">optional</span>
+      <input id="new-name" type="text" placeholder="Claude names it itself"
+             autocapitalize="sentences">
     </label>
 
     <label>First task <span class="hint">optional</span>
       <textarea id="new-prompt" rows="3" placeholder="What should Claude do?"></textarea>
     </label>
 
-    <label class="row">
+    <!-- Only means anything with a first task: without one there is nothing to
+         run in the background, and the checkbox used to accept the tap and do
+         nothing at all. -->
+    <label class="row" id="new-background-row">
       <input id="new-background" type="checkbox">
-      <span>Start now in the background<small>Runs on the Mac without waiting for you to open the terminal.</small></span>
+      <span>Start now in the background<small id="new-background-note">Claude starts on the Mac straight away and you can put the phone down — no terminal is opened.</small></span>
     </label>
 
     <div class="actions">

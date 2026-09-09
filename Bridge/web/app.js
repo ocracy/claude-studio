@@ -66,13 +66,15 @@ let guardArmed = false
 const isOpen = (id) => !$(id).classList.contains("hidden")
 
 const anyLayerOpen = () =>
-  isOpen("menu") || isOpen("actions") || isOpen("sheet") ||
-  isOpen("session") || isOpen("settings")
+  isOpen("menu") || isOpen("actions") || isOpen("sheet") || isOpen("rename") ||
+  isOpen("snippets") || isOpen("session") || isOpen("settings")
 
 /** Closes the topmost open layer. Innermost first — overlays before views. */
 function handleBack() {
   if (isOpen("menu")) return closeMenu()
   if (isOpen("actions")) return closeActions()
+  if (isOpen("rename")) return closeRename()
+  if (isOpen("snippets")) return closeSnippets()
   if (isOpen("sheet")) return closeSheet()
   if (isOpen("session")) return closeSessionView()
   if (isOpen("settings")) return closeSettingsView()
@@ -551,6 +553,141 @@ function closeActions() {
   syncBackGuard()
 }
 
+// ── rename ───────────────────────────────────────────────────────────────
+
+function openRename() {
+  if (!current) return
+  $("rename-name").value = current.name
+  $("rename").classList.remove("hidden")
+  syncBackGuard()
+  // Focused and selected: the reason to open this is almost always to replace
+  // the name outright, not to edit a character of it.
+  setTimeout(() => $("rename-name").select(), 50)
+}
+
+function closeRename() {
+  $("rename").classList.add("hidden")
+  syncBackGuard()
+}
+
+async function saveRename() {
+  const name = $("rename-name").value.trim()
+  if (!current || !name) return closeRename()
+  try {
+    await api(`/api/sessions/${encodeURIComponent(current.tmux)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    })
+    current.name = name
+    $("session-name").textContent = name
+    closeRename()
+    refresh()
+  } catch (error) {
+    toast(error.message)
+  }
+}
+
+// ── ready-made commands ──────────────────────────────────────────────────
+
+/**
+ * Phrases kept on the MAC and pressed from here.
+ *
+ * The one thing a phone is bad at is the thing a session is made of, and what
+ * you want to say from one is short and always the same. They live beside the
+ * Mac's own files rather than in this browser, so the list is the same from
+ * every phone and survives clearing the site data — which an installed web app
+ * gives you no way to undo.
+ */
+let snippets = []
+
+async function openSnippets() {
+  $("snippets").classList.remove("hidden")
+  syncBackGuard()
+  renderSnippets()
+  try {
+    snippets = (await api("/api/snippets")).snippets ?? []
+    renderSnippets()
+  } catch (error) {
+    toast(error.message)
+  }
+}
+
+function closeSnippets() {
+  $("snippets").classList.add("hidden")
+  syncBackGuard()
+}
+
+function renderSnippets() {
+  const list = $("snippet-list")
+  if (!snippets.length) {
+    list.innerHTML = `<p class="group-note">Nothing yet. Add one below.</p>`
+    return
+  }
+  list.replaceChildren(...snippets.map((entry) => {
+    const row = document.createElement("div")
+    row.className = "snippet"
+
+    // Two targets, two siblings — a button inside a button is invalid markup
+    // and the inner one stops receiving taps. Same shape as a session row.
+    const use = document.createElement("button")
+    use.className = "snippet-use"
+    const name = document.createElement("span")
+    name.className = "snippet-name"
+    name.textContent = entry.name
+    const text = document.createElement("span")
+    text.className = "snippet-text"
+    text.textContent = entry.text
+    use.append(name, text)
+    use.onclick = () => useSnippet(entry)
+
+    const remove = document.createElement("button")
+    remove.className = "snippet-remove"
+    remove.setAttribute("aria-label", `Delete ${entry.name}`)
+    remove.textContent = "×"
+    remove.onclick = () => deleteSnippet(entry)
+
+    row.append(use, remove)
+    return row
+  }))
+}
+
+async function useSnippet(entry) {
+  closeSnippets()
+  await sendKeys({ text: entry.text, enter: entry.send !== false })
+  toast(entry.send === false ? `Typed ${entry.name}` : `Sent ${entry.name}`)
+}
+
+async function addSnippet() {
+  const text = $("snippet-text").value.trim()
+  if (!text) return toast("A command needs some text")
+  try {
+    const { snippet } = await api("/api/snippets", {
+      method: "POST",
+      body: JSON.stringify({
+        name: $("snippet-name").value.trim(),
+        text,
+        send: $("snippet-send").checked,
+      }),
+    })
+    snippets.push(snippet)
+    $("snippet-name").value = ""
+    $("snippet-text").value = ""
+    renderSnippets()
+  } catch (error) {
+    toast(error.message)
+  }
+}
+
+async function deleteSnippet(entry) {
+  try {
+    await api(`/api/snippets/${encodeURIComponent(entry.id)}`, { method: "DELETE" })
+    snippets = snippets.filter((one) => one.id !== entry.id)
+    renderSnippets()
+  } catch (error) {
+    toast(error.message)
+  }
+}
+
 // ── new session ──────────────────────────────────────────────────────────
 
 function openSheet() {
@@ -565,8 +702,25 @@ function openSheet() {
   $("new-name").value = ""
   $("new-prompt").value = ""
   $("new-background").checked = false
+  syncBackgroundOption()
   $("sheet").classList.remove("hidden")
   syncBackGuard()
+}
+
+/**
+ * "Start now in the background" only means something with a first task: without
+ * one there is nothing to start. It used to accept the tap and silently do
+ * nothing, which is the worst of the three possible behaviours.
+ */
+function syncBackgroundOption() {
+  const hasTask = Boolean($("new-prompt").value.trim())
+  const box = $("new-background")
+  box.disabled = !hasTask
+  if (!hasTask) box.checked = false
+  $("new-background-row").style.opacity = hasTask ? "1" : "0.45"
+  $("new-background-note").textContent = hasTask
+    ? "Claude starts on the Mac straight away and you can put the phone down — no terminal is opened."
+    : "Write a first task above to use this."
 }
 
 function closeSheet() {
@@ -578,7 +732,11 @@ async function create() {
   const projectPath = $("new-project").value
   const prompt = $("new-prompt").value.trim()
   const background = $("new-background").checked
-  const name = $("new-name").value.trim() || (prompt ? prompt.slice(0, 24) : "Claude")
+  // Left empty on purpose when nothing was typed: "Claude" is the one name the
+  // Mac is allowed to replace with Claude's own title for the conversation
+  // (`SessionRecord.isAutoNamed`), and a name cut from the first task would
+  // count as one you chose and freeze there.
+  const name = $("new-name").value.trim()
 
   try {
     const result = await api("/api/sessions", {
@@ -927,6 +1085,18 @@ $("actions").onclick = (event) => { if (event.target === $("actions")) closeActi
 for (const button of document.querySelectorAll("button[data-key]")) {
   button.onclick = () => sendKeys({ key: button.dataset.key })
 }
+
+$("session-title").onclick = openRename
+$("rename-cancel").onclick = closeRename
+$("rename-save").onclick = saveRename
+$("rename-name").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") { event.preventDefault(); saveRename() }
+})
+
+$("snippets-open").onclick = openSnippets
+$("snippet-close").onclick = closeSnippets
+$("snippet-add").onclick = addSnippet
+$("new-prompt").addEventListener("input", syncBackgroundOption)
 
 // Shift+Enter is not a key tmux can name: the app maps it to a backslash
 // followed by Return, which is what Claude Code reads as "new line, keep

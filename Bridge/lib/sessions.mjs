@@ -68,6 +68,22 @@ export function addSession(projectPath, projectShortID, name) {
   return record
 }
 
+/**
+ * Renames a tab. The tmux session name is NOT touched — it is derived from the
+ * record's id and everything else keys on it, so renaming has to stay a label
+ * change or a session's whole history walks away from it. `@cs_title` is tagged
+ * beside it so a session adopted on another launch still knows what it is
+ * called, exactly as `StudioModel.renameSession` does on the Mac.
+ */
+export function renameSession(projectPath, tmuxName, name) {
+  return mutate(projectPath, (records) => {
+    const record = records.find((r) => r.tmux === tmuxName)
+    if (!record) return false
+    record.name = name
+    return true
+  })
+}
+
 export function removeSession(projectPath, tmuxName) {
   return mutate(projectPath, (records) => {
     const index = records.findIndex((r) => r.tmux === tmuxName)
