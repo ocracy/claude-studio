@@ -17,8 +17,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { extname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { timingSafeEqual } from "node:crypto"
+import { createSecureContext } from "node:tls"
 
 import { appSupport, tokenFile } from "./lib/paths.mjs"
+import { readChoices } from "./lib/choices.mjs"
 import { assertMatchesSwift } from "./lib/shortid.mjs"
 import { addSession, removeSession, touchSession } from "./lib/sessions.mjs"
 import { locate, readProjects, snapshot } from "./lib/state.mjs"
@@ -54,18 +56,40 @@ function buildId() {
 const PORT = Number(process.env.CS_BRIDGE_PORT || 7788)
 const TLS_PORT = Number(process.env.CS_BRIDGE_TLS_PORT || 7443)
 const HOST = process.env.CS_BRIDGE_HOST
+const HOST6 = process.env.CS_BRIDGE_HOST6 || ""
 const TTYD_PORT = Number(process.env.CS_TTYD_PORT || 7789)
 
 const tlsDir = join(appSupport, "tls")
+// The pair is TRIED before it is served.
+//
+// `createSecureContext` throws on a certificate and key that do not match, and it
+// throws where it was called — at the top level, taking the whole process with it.
+// That is not a hypothetical: a half-finished reissue left a new key beside an old
+// certificate and the bridge died on every launch, so there was no HTTPS, no HTTP,
+// and therefore no /ca.crt and no /setup — the two things the phone needs to climb
+// back out. Reading it here turns a fatal pair into a missing one, and HTTP alone
+// is a bridge that can still be fixed from the phone.
 const tls = (() => {
+  let material
   try {
-    return {
+    material = {
       cert: readFileSync(join(tlsDir, "server.crt")),
       key: readFileSync(join(tlsDir, "server.key")),
       ca: readFileSync(join(tlsDir, "ca.crt")),
     }
   } catch {
     return null
+  }
+  try {
+    createSecureContext({ cert: material.cert, key: material.key })
+    return material
+  } catch (error) {
+    console.error(`cs-bridge: the certificate and key do not match (${error.code || error.message}); `
+                  + "serving HTTP only. Delete server.crt and server.key in the tls folder "
+                  + "and restart to reissue them.")
+    // The root is still worth serving: it is what /setup hands out, and it is
+    // untouched by a bad leaf.
+    return { ca: material.ca, broken: true }
   }
 })()
 
@@ -295,6 +319,22 @@ async function handleAPI(req, res, url) {
     return json(res, 200, { session: record, project: project.path })
   }
 
+  // What this session is waiting on, if it is a numbered prompt.
+  //
+  // The reader already existed for the notification, where the platform allows
+  // two buttons on Android and none at all on iOS — so the phone could answer a
+  // three-way permission prompt from the lock screen and NOT from inside the app
+  // it opened, where the same question was a wall of TUI text and a keyboard.
+  // Same `readChoices`, served over HTTP: one reader, one set of rules about
+  // what counts as a question, and no second heuristic to keep in step.
+  const asking = path.match(/^\/api\/sessions\/([^/]+)\/choices$/)
+  if (req.method === "GET" && asking) {
+    const name = decodeURIComponent(asking[1])
+    if (!locate(name)) return json(res, 404, { error: "unknown session" })
+    if (!tmux.exists(name)) return json(res, 200, { choices: null })
+    return json(res, 200, { choices: readChoices(tmux.captureRaw(name)) })
+  }
+
   const keys = path.match(/^\/api\/sessions\/([^/]+)\/keys$/)
   if (req.method === "POST" && keys) {
     const name = decodeURIComponent(keys[1])
@@ -460,8 +500,10 @@ async function handle(req, res) {
     if (url.pathname === "/setup") return serveStatic(res, "setup.html")
 
     if (url.pathname === "/") {
-      // Already on HTTPS, or no certificate to offer: go straight in.
-      if (req.socket.encrypted || !tls) return serveStatic(res, "index.html")
+      // Already on HTTPS, or no certificate to offer: go straight in. `tls.cert`
+      // rather than `tls` — a broken pair still carries the root, and sending the
+      // phone to a setup page for an HTTPS port that is not listening is a loop.
+      if (req.socket.encrypted || !tls?.cert) return serveStatic(res, "index.html")
       return serveStatic(res, "setup.html")
     }
     const name = url.pathname.slice(1)
@@ -501,7 +543,12 @@ function handleUpgrade(req, socket, head) {
 // Netbird address — without 127.0.0.1 the bridge would be unreachable from the
 // machine it runs on, which makes it untestable and blocks the app's status
 // check. Every other interface stays closed.
-for (const host of [HOST, "127.0.0.1"]) {
+// The mesh's IPv6 address belongs in this list because Netbird's DNS answers the
+// mesh NAME with the AAAA record first, and the name is what the phone is pointed
+// at. Binding only to the v4 address meant the phone opened the link, resolved it
+// to v6, and found nothing there — a link that "does not open" with a bridge that
+// is demonstrably up. Loopback's v6 form is included for symmetry with 127.0.0.1.
+for (const host of [HOST, HOST6, "127.0.0.1", "::1"].filter(Boolean)) {
   const server = createServer(handle)
   server.on("upgrade", handleUpgrade)
   server.on("error", (error) => console.error(`cs-bridge: ${host}: ${error.message}`))
@@ -510,7 +557,7 @@ for (const host of [HOST, "127.0.0.1"]) {
   // HTTPS is what unlocks service workers, notifications and installing the
   // page as an app; the HTTP port stays up so the phone can still fetch the
   // root certificate and read the setup page.
-  if (tls) {
+  if (tls?.cert) {
     const secure = createSecureServer({ cert: tls.cert, key: tls.key }, handle)
     secure.on("upgrade", handleUpgrade)
     secure.on("error", (error) => console.error(`cs-bridge: ${host} (tls): ${error.message}`))
@@ -519,7 +566,7 @@ for (const host of [HOST, "127.0.0.1"]) {
   }
 }
 
-if (!tls) {
+if (!tls?.cert) {
   console.warn("cs-bridge: no certificate; notifications and app install stay unavailable.")
 }
 

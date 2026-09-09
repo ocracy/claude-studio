@@ -106,6 +106,7 @@ final class SessionStates: ObservableObject {
     /// re-resolved without waiting for (or forcing) another poll.
     private var lastStates: [String: HookBridge.State] = [:]
     private var lastScreens: [String: PaneReader.Screen] = [:]
+    private var lastLive: Set<String>?
 
     private var activeObserver: Any?
 
@@ -170,7 +171,16 @@ final class SessionStates: ObservableObject {
             // for a tmux that failed as readily as for a tmux with nothing running, and
             // treating that as "everything is gone" would wipe every live session's
             // state.
-            let live: Set<String>? = sweeping && Tmux.isAvailable && !titles.isEmpty
+            //
+            // Read on EVERY tick, not only the sweeping one. The file is what the
+            // hook left behind; the pane list is what is actually running, and
+            // between the two there is a session that has been gone for up to half
+            // a minute and is still being counted as waiting for you. That is not a
+            // cosmetic lag: the island's rows are its own reason to exist, and a
+            // row for a session that no longer exists opens a BRAND NEW one when it
+            // is clicked. Deleting the file stays on the slow path — that is disk
+            // work and can wait — but nothing dead is ever shown.
+            let live: Set<String>? = Tmux.isAvailable && !titles.isEmpty
                 ? Set(titles.keys) : nil
             if sweeping { HookBridge.sweepTemporaries() }
 
@@ -190,11 +200,13 @@ final class SessionStates: ObservableObject {
             let readTitles = titles
             let readLive = live
             let readScreens = screens
+            let readSweeping = sweeping
             await MainActor.run {
                 self.lastStates = readStates
                 self.lastScreens = readScreens
+                self.lastLive = readLive
                 self.apply(readStates, paneTitles: readTitles,
-                           screens: readScreens, live: readLive)
+                           screens: readScreens, live: readLive, sweeping: readSweeping)
                 self.ticking = false
             }
         }
@@ -204,13 +216,15 @@ final class SessionStates: ObservableObject {
     /// — a tab was selected, or the app came forward.
     private func recompute() {
         guard seeded else { return }
-        apply(lastStates, paneTitles: paneTitles, screens: lastScreens, live: nil)
+        apply(lastStates, paneTitles: paneTitles, screens: lastScreens,
+              live: lastLive, sweeping: false)
     }
 
     private func apply(_ states: [String: HookBridge.State],
                        paneTitles titles: [String: String],
                        screens: [String: PaneReader.Screen],
-                       live sweepLive: Set<String>?) {
+                       live alive: Set<String>?,
+                       sweeping: Bool) {
         var next: [String: Attention] = [:]
         var sids: [String: String] = [:]
         var rows: [Live] = []
@@ -222,8 +236,9 @@ final class SessionStates: ObservableObject {
             // "waiting" forever — it inflates the Dock badge and shows a status for
             // something that is not running.
             let tmux = Self.tmuxName(ofTabKey: key)
-            if let sweepLive, let tmux, !sweepLive.contains(tmux) {
-                HookBridge.clearState(key)
+            if let alive, let tmux, !alive.contains(tmux) {
+                // Gone: skip it now, delete the file on the slow path.
+                if sweeping { HookBridge.clearState(key) }
                 seen.removeValue(forKey: key)
                 continue
             }

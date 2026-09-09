@@ -98,12 +98,21 @@ enum PhoneInstaller {
 
     /// This Mac's name — what the phone calls it once two of these are installed.
     ///
-    /// Read once: `scutil` is a process spawn and this is read from a view body,
-    /// which redraws far more often than a Mac is renamed.
+    /// `Host.current().localizedName` IS the ComputerName, and asking for it costs
+    /// nothing. It used to be `scutil --get ComputerName`, and that spawned a
+    /// process from inside a lazy `static let` that is read from a view body —
+    /// which is a crash, not a slow path. `Process.waitUntilExit()` spins the run
+    /// loop on the main thread; the run loop lays out SwiftUI; SwiftUI evaluates
+    /// the very body that asked for this value; the value is still initialising, so
+    /// `dispatch_once` is entered a second time from the same thread and libdispatch
+    /// traps: "trying to lock recursively". Pressing Install in Settings → Phone hit
+    /// exactly that sequence, every time, and the app disappeared.
+    ///
+    /// `Shell.run` no longer pumps the run loop either (see its `wait`), so the same
+    /// shape cannot come back through some other lazy global — but nothing should be
+    /// spawning a process to answer a question AppKit already knows.
     nonisolated static let machineName: String = {
-        let name = Shell.run("/usr/sbin/scutil", ["--get", "ComputerName"]).output
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.nilIfEmpty ?? ProcessInfo.processInfo.hostName
+        Host.current().localizedName?.nilIfEmpty ?? ProcessInfo.processInfo.hostName
     }()
 
     // MARK: - Install
@@ -267,12 +276,30 @@ enum PhoneInstaller {
         #
         # The NAME matters as much as the address. An installed web app is bound to
         # its origin, and a mesh address can change; the name does not.
+        # An address has to LOOK like one. Signed out, `netbird status` prints
+        # "NetBird IP: N/A" — and cutting that at the slash yields the string "N",
+        # which is not empty, so it sailed through every check here and reached
+        # make-cert.sh, where openssl rejected "IP:N" AFTER the new key had
+        # overwritten the old one. That left a key that did not match its
+        # certificate, and the bridge then died on every single launch.
+        is_ipv4() { [[ "$1" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]] }
+
         mesh_ip=""
+        mesh_ip6=""
         mesh_fqdn=""
         nb_status="$(netbird status 2>/dev/null || true)"
         if [[ -n "$nb_status" ]]; then
           mesh_ip="$(print -r -- "$nb_status" | awk '/NetBird IP:/ { print $3 }' | cut -d/ -f1)"
           mesh_fqdn="$(print -r -- "$nb_status" | awk '/FQDN:/ { print $2 }')"
+          is_ipv4 "$mesh_ip" || mesh_ip=""
+          [[ "$mesh_fqdn" == "N/A" ]] && mesh_fqdn=""
+          # Netbird hands out an IPv6 address as well, and its DNS answers the mesh
+          # name with the AAAA record FIRST. A phone therefore tries IPv6 before
+          # IPv4 — and found nothing listening there, because the bridge only ever
+          # bound to the v4 address. The name is what the phone is pointed at, so
+          # whichever family it resolves to has to be answered.
+          mesh_ip6="$(print -r -- "$nb_status" | awk '/NetBird IPv6:/ { print $3 }' | cut -d/ -f1)"
+          [[ "$mesh_ip6" == *:* ]] || mesh_ip6=""
         fi
         if [[ -z "$mesh_ip" ]]; then
           # The Mac App Store build of Tailscale keeps its CLI inside the bundle and
@@ -280,7 +307,7 @@ enum PhoneInstaller {
           for candidate in tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale \\
                            "/Applications/Tailscale.app/Contents/MacOS/Tailscale"; do
             mesh_ip="$("$candidate" ip -4 2>/dev/null | head -1)"
-            [[ -n "$mesh_ip" ]] || continue
+            is_ipv4 "$mesh_ip" || { mesh_ip=""; continue }
             mesh_fqdn="$("$candidate" status --json 2>/dev/null |
                          awk -F'"' '/"DNSName"/ { print $4; exit }' | sed 's/\\.$//')"
             break
@@ -295,7 +322,7 @@ enum PhoneInstaller {
         # TLS for whatever address and name the mesh handed out this time. The root is
         # created once and reused; only the leaf follows the address. Without HTTPS the
         # phone gets a terminal but no notifications and no install.
-        "$bridge/make-cert.sh" "$mesh_ip" "$mesh_fqdn" \\
+        CS_MESH_IP6="$mesh_ip6" "$bridge/make-cert.sh" "$mesh_ip" "$mesh_fqdn" \\
           || print -u2 "cs-bridge: certificate step failed; continuing on HTTP only"
 
         # The icons carry this Mac's colour so two bridges on one phone are not the
@@ -317,7 +344,7 @@ enum PhoneInstaller {
         ttyd_pid=$!
         trap 'kill $ttyd_pid 2>/dev/null' EXIT INT TERM
 
-        CS_BRIDGE_HOST="$mesh_ip" exec node "$bridge/server.mjs"
+        CS_BRIDGE_HOST="$mesh_ip" CS_BRIDGE_HOST6="$mesh_ip6" exec node "$bridge/server.mjs"
         """
 
         do {

@@ -14,11 +14,14 @@ enum Shell {
         p.arguments = ["-l", "-i", "-c", "print -rn -- $PATH"]
         let out = Pipe()
         p.standardOutput = out
+        // Deliberately NOT combined with stdout: an interactive zsh writes job
+        // control chatter to stderr, and it would end up inside PATH.
         p.standardError = Pipe()
         do {
+            let done = barrier(for: p)
             try p.run()
             let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
+            done.wait()
             if let path = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
                 return path
@@ -26,6 +29,26 @@ enum Shell {
         } catch {}
         return ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
     }()
+
+    /// Waits for a process to exit WITHOUT pumping the run loop.
+    ///
+    /// `Process.waitUntilExit()` does pump it, and on the main thread that is not a
+    /// wait at all — it is a re-entry: the run loop lays out AppKit and SwiftUI
+    /// while the caller is still on the stack. A lazy `static let` that spawns a
+    /// process then deadlocks against itself the moment the view being laid out
+    /// reads it (`dispatch_once` → "trying to lock recursively", an instant crash),
+    /// and any code holding a lock across a `Shell.run` is exposed to the same
+    /// thing. The termination handler runs on a queue of Foundation's own, so
+    /// blocking on it here cannot deadlock — it simply blocks, which is what
+    /// "synchronously" was supposed to mean.
+    ///
+    /// Armed BEFORE `run()`: a process that exits first would otherwise never
+    /// signal.
+    private static func barrier(for process: Process) -> DispatchSemaphore {
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
+        return done
+    }
 
     /// First executable candidate.
     static func findExecutable(_ candidates: [String]) -> String? {
@@ -59,10 +82,11 @@ enum Shell {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
+        let done = barrier(for: p)
         do { try p.run() } catch { return (-1, "\(error)") }
-        // Read BEFORE waitUntilExit — a full pipe would block the child.
+        // Read BEFORE waiting — a full pipe would block the child.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        done.wait()
         return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
@@ -96,6 +120,7 @@ enum Shell {
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
+        let done = barrier(for: p)
         do { try p.run() } catch {
             onLine("\(error)")
             return -1
@@ -118,7 +143,7 @@ enum Shell {
         if !buffer.isEmpty, let tail = String(data: buffer, encoding: .utf8), !tail.isEmpty {
             onLine(tail)
         }
-        p.waitUntilExit()
+        done.wait()
         return p.terminationStatus
     }
 

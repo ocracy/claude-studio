@@ -288,9 +288,15 @@ enum Tmux {
         let out = Pipe()
         p.standardOutput = out
         p.standardError = Pipe()
+        // Never `waitUntilExit()`: it pumps the run loop, and `Tmux.exists` is
+        // deliberately called on the main thread — a wait that lays out SwiftUI
+        // underneath its caller is how a lazy global crashed the app in
+        // `PhoneInstaller`. See `Shell.barrier`.
+        let done = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in done.signal() }
         do { try p.run() } catch { return (-1, "") }
         let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        done.wait()
         return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 }

@@ -281,6 +281,19 @@ final class Island: ObservableObject {
         sync()
         WindowManager.shared.reveal(live)
     }
+
+    /// Settings are the application's, not a project's — but the gear lived in a
+    /// project window's top bar, which meant reaching a global preference required
+    /// first choosing a project it has nothing to do with. The island belongs to no
+    /// window either, so it is the right place for it, and the only one that is
+    /// there when every window is showing something else.
+    fileprivate func openSettings() {
+        stopHoverPoll()
+        expanded = false
+        sync()
+        NSApp.activate(ignoringOtherApps: true)
+        SettingsWindow.show()
+    }
 }
 
 /// The top of the screen, measured rather than assumed.
@@ -382,6 +395,7 @@ private struct IslandView: View {
     @ObservedObject private var states = SessionStates.shared
     @ObservedObject private var bridge = PhoneBridge.shared
     @State private var alertHovering = false
+    @State private var settingsHovering = false
 
     var body: some View {
         Group {
@@ -480,9 +494,20 @@ private struct IslandView: View {
                         .foregroundStyle(Color.white.opacity(0.85))
                         .lineLimit(1)
                 },
-                trailing: Text("claude studio")
-                    .font(Theme.ui(9.5))
-                    .foregroundStyle(Color.white.opacity(0.3)))
+                trailing: Button { island.openSettings() } label: {
+                    HStack(spacing: 5) {
+                        Text("settings")
+                            .font(Theme.ui(9.5))
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(Color.white.opacity(settingsHovering ? 0.8 : 0.34))
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(Capsule().fill(Color.white.opacity(settingsHovering ? 0.09 : 0)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .onHover { settingsHovering = $0 })
 
             Rectangle().fill(Color.white.opacity(0.07)).frame(height: 1)
 

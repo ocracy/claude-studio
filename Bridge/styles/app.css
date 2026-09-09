@@ -1,0 +1,287 @@
+/* The phone app's stylesheet SOURCE. Compiled to ../web/style.css by
+   scripts/build-css.sh — edit this file, never the output.
+ *
+ * It lives OUTSIDE web/ on purpose: everything in that folder is served to the
+ * phone as-is and hashed into the buildId, and an uncompiled source sitting
+ * next to its own output is both dead weight over the tunnel and an invitation
+ * to edit the wrong file.
+ *
+ * Restrained and native, the same idea as Theme.swift: system font, system
+ * colours, one accent. Dark by default because the terminal is dark and the two
+ * sit next to each other.
+ *
+ * Two rules hold this together:
+ *
+ *   • The PALETTE is indirect. Every colour token points at a plain custom
+ *     property, and only those properties change between light and dark — so a
+ *     utility like `bg-raised` follows the appearance with no `dark:` variant
+ *     anywhere and no second set of classes to keep in step.
+ *   • Anything app.js BUILDS lives in @layer components. The markup for a
+ *     session row is a template string in JavaScript, and utilities scattered
+ *     through a string are invisible to a reader and to Tailwind's scanner
+ *     alike. Static markup in index.html uses utilities directly; generated
+ *     markup keeps a name.
+ */
+
+@import "tailwindcss";
+
+@source "../web/index.html";
+@source "../web/app.js";
+@source "../web/setup.html";
+
+@theme {
+  --color-surface: var(--app-surface);
+  --color-raised: var(--app-raised);
+  --color-sunken: var(--app-sunken);
+  --color-line: var(--app-line);
+  --color-ink: var(--app-ink);
+  --color-muted: var(--app-muted);
+  --color-accent: #d97757;          /* Claude orange */
+  --color-working: #30d158;
+  --color-waiting: #ff9f0a;
+  --color-idle: var(--app-idle);
+  --color-danger: #ff453a;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+:root {
+  --app-surface: #1c1c1e;
+  --app-raised: #2c2c2e;
+  --app-sunken: #000;
+  --app-line: #38383a;
+  --app-ink: #fff;
+  --app-muted: #8e8e93;
+  --app-idle: #48484a;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --app-surface: #f2f2f7;
+    --app-raised: #fff;
+    --app-sunken: #1c1c1e;
+    --app-line: #d1d1d6;
+    --app-ink: #000;
+    --app-muted: #6c6c70;
+    --app-idle: #c7c7cc;
+  }
+}
+
+@layer base {
+  * { -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    @apply m-0 h-full overflow-hidden bg-surface text-ink font-sans text-base leading-snug;
+    overscroll-behavior: none;
+  }
+
+  /* Kept as a name rather than Tailwind's own `hidden`, and kept !important:
+     `.view` sets `display:flex` at equal specificity, so without the flag the
+     winner would depend on source order — which is exactly the kind of thing
+     that breaks silently when the output is regenerated. */
+  .hidden { display: none !important; }
+}
+
+@layer components {
+  /* Fills the visual viewport so the layout follows the on-screen keyboard
+     instead of being scrolled out from under it. */
+  .view {
+    @apply fixed inset-0 flex flex-col;
+    height: 100dvh;
+  }
+
+  /* ── bars ───────────────────────────────────────────────────────────── */
+
+  .bar {
+    @apply flex flex-none items-center gap-2.5 border-b border-line bg-raised px-3.5 pb-2.5;
+    padding-top: calc(var(--safe-top) + 10px);
+  }
+
+  .bar.bottom {
+    @apply border-t border-b-0 pt-2.5;
+    padding-bottom: calc(var(--safe-bottom) + 10px);
+  }
+
+  .bar h1 { @apply m-0 flex-1 text-[17px] font-semibold; }
+  .bar .title { @apply flex min-w-0 flex-1 flex-col; }
+  .bar .title span { @apply truncate text-base font-semibold; }
+  .bar .title small { @apply text-xs text-muted; }
+  .bar.bottom .primary { @apply w-full p-[13px]; }
+
+  /* `.button` so links can carry the same affordance as real buttons — the
+     setup page uses anchors for the download and the hand-off to HTTPS. */
+  button, .button {
+    @apply cursor-pointer rounded-[9px] border border-line bg-raised px-3.5 py-2.5
+           font-[inherit] text-ink no-underline;
+  }
+  button:active, .button:active { @apply opacity-60; }
+
+  button.primary, .button.primary {
+    @apply border-accent bg-accent font-semibold text-white;
+  }
+
+  /* A thumb needs 44px; the glyph itself has to be big enough to read as a back
+     chevron rather than a stray punctuation mark. The negative margin keeps the
+     title where it was, so the bigger target costs no layout. */
+  button.icon {
+    @apply flex min-h-11 min-w-11 items-center justify-center border-0 bg-transparent
+           p-0 text-[22px] leading-none text-accent;
+    margin: -6px 0;
+  }
+
+  /* The chevron is a single thin glyph: at icon size it reads as stray
+     punctuation. Its own scale, and a negative left margin so the wider tap
+     target does not push the title across. */
+  #back, #settings-back { @apply -ml-3 text-4xl font-light; }
+
+  /* ── project + session list ─────────────────────────────────────────── */
+
+  .scroll { @apply flex-1 overflow-y-auto px-3.5 pt-2 pb-5; -webkit-overflow-scrolling: touch; }
+
+  .project { @apply mt-[18px]; }
+  .project:first-child { @apply mt-1.5; }
+  .project h2 { @apply mt-0 mr-0 mb-2 ml-1 text-[13px] font-semibold tracking-wider text-muted uppercase; }
+
+  .session {
+    @apply mb-2 flex w-full items-stretch overflow-hidden rounded-xl border border-line bg-raised;
+  }
+
+  /* The row's two targets share one card: the wide one opens the session, the
+     narrow one opens its actions. Both are borderless so the card reads as a
+     single object. A button nested in a button is invalid markup and the inner
+     one stops receiving taps — hence two siblings, not one inside the other. */
+  .session-open {
+    @apply flex min-w-0 flex-1 items-center gap-3 rounded-none border-0 bg-transparent
+           py-3 pr-1 pl-3.5 text-left;
+  }
+
+  .session-more {
+    @apply w-[46px] flex-none rounded-none border-0 bg-transparent p-0 text-xl
+           leading-none text-muted;
+  }
+
+  .session .body { @apply min-w-0 flex-1; }
+  .session .name { @apply block font-medium; }
+  .session .preview { @apply mt-[3px] block truncate font-mono text-xs leading-tight text-muted; }
+
+  .dot { @apply size-2.5 flex-none rounded-full bg-idle; }
+  .dot.working { @apply bg-working; animation: pulse 1.4s ease-in-out infinite; }
+  .dot.waiting { @apply bg-waiting; }
+
+  .empty { @apply px-5 py-10 text-center text-[15px] text-muted; }
+
+  /* ── terminal ───────────────────────────────────────────────────────── */
+
+  #term-host { @apply flex min-h-0 flex-1 bg-sunken; }
+  #term { @apply w-full flex-1 border-0 bg-sunken; }
+
+  /* Sits in the title bar: it is the one key you reach for without looking
+     (Shift+Tab cycles Claude's permission modes). */
+  .mode { @apply flex-none bg-surface px-2.5 py-1.5 text-xs text-muted; }
+
+  /* ── what Claude is asking ──────────────────────────────────────────── */
+
+  /* Deliberately the largest touch targets in the app.
+   *
+   * This is the one screen where the phone is not a viewer but the thing making
+   * the decision, and that decision is often the whole session's next move. It
+   * sits ABOVE the terminal for the same reason the key row does: the on-screen
+   * keyboard covers the bottom, and a button you cannot reach while the keyboard
+   * is up is a button you cannot use. */
+  .ask { @apply max-h-[45vh] flex-none overflow-y-auto border-b border-line bg-raised px-3 pt-3 pb-3.5; }
+
+  .ask-option {
+    @apply flex min-h-[52px] w-full items-center gap-2.5 rounded-xl border border-line
+           bg-surface px-3.5 py-2.5 text-left text-[15px] leading-tight;
+  }
+  .ask-option:active { @apply bg-raised; }
+
+  /* The digit the terminal is actually waiting for, shown so the button and the
+     screen underneath visibly agree about what pressing it does. */
+  .ask-number {
+    @apply grid size-[26px] flex-none place-items-center rounded-lg font-mono text-[13px] text-accent;
+    background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  }
+
+  /* ── update banner ──────────────────────────────────────────────────── */
+
+  .banner {
+    @apply w-full flex-none rounded-none border-0 border-b border-line bg-accent
+           px-3.5 py-2.5 text-center text-[13px] font-semibold text-white;
+  }
+
+  /* ── key row ────────────────────────────────────────────────────────── */
+
+  .keys { @apply flex flex-none gap-1.5 overflow-x-auto border-b border-line bg-raised px-2.5 py-2; scrollbar-width: none; }
+  .keys::-webkit-scrollbar { display: none; }
+  .keys button { @apply flex-none bg-surface px-[13px] py-[7px] font-mono text-sm; }
+  .keys button.warn { @apply text-danger; }
+
+  /* ── sheet ──────────────────────────────────────────────────────────── */
+
+  .sheet { @apply fixed inset-0 z-10 flex items-end bg-black/50; }
+
+  .sheet-body {
+    @apply max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl bg-surface px-[18px] pt-5;
+    padding-bottom: calc(var(--safe-bottom) + 18px);
+  }
+
+  .sheet h2 { @apply mt-0 mr-0 mb-4 ml-0 text-[19px]; }
+  .sheet label { @apply mb-3.5 block text-[13px] text-muted; }
+  .sheet .hint { @apply font-normal opacity-70; }
+
+  .sheet input[type=text],
+  .sheet textarea,
+  .sheet select {
+    @apply mt-1.5 block w-full resize-none rounded-[10px] border border-line bg-raised
+           px-3 py-[11px] text-base leading-tight text-ink;
+  }
+
+  .sheet label.row { @apply flex items-start gap-[11px] text-[15px] text-ink; }
+  .sheet label.row input { @apply mt-[3px] size-5 flex-none; accent-color: var(--color-accent); }
+  .sheet label.row small { @apply mt-0.5 block text-xs text-muted; }
+
+  .actions { @apply mt-5 flex gap-2.5; }
+  .actions button { @apply flex-1 p-[13px]; }
+  .actions.vertical { @apply mt-1 flex-col; }
+  .actions button.danger { @apply font-semibold text-danger; }
+
+  /* ── settings ───────────────────────────────────────────────────────── */
+
+  .group { @apply mt-5 mr-0 mb-2 ml-1 text-[13px] font-semibold tracking-wider text-muted uppercase; }
+  .scroll > .group:first-child { @apply mt-1.5; }
+  .group-note { @apply -mt-1 mr-0 mb-2 ml-1 text-xs text-muted; }
+
+  .setting {
+    @apply mb-2 flex items-center gap-3.5 rounded-xl border border-line bg-raised
+           px-3.5 py-[13px] text-[15px];
+  }
+  .setting span { @apply min-w-0 flex-1; }
+  .setting small { @apply mt-[3px] block text-xs text-muted; }
+  .setting input[type=checkbox] { @apply size-[22px] flex-none; accent-color: var(--color-accent); }
+
+  .setting-actions { @apply mt-[18px] flex flex-col gap-2; }
+  .setting-actions button { @apply w-full p-[13px]; }
+
+  /* A failure here is the whole diagnosis, so it stays on screen and wraps
+     instead of being clipped to one line. */
+  #push-note { @apply break-words; }
+
+  /* ── toast ──────────────────────────────────────────────────────────── */
+
+  .toast {
+    @apply fixed left-1/2 z-20 -translate-x-1/2 rounded-[20px] border border-line
+           bg-raised px-4 py-2.5 text-sm text-ink;
+    bottom: calc(var(--safe-bottom) + 90px);
+    box-shadow: 0 6px 24px rgb(0 0 0 / .35);
+  }
+}
+
+@keyframes pulse { 50% { opacity: .35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.working { animation: none; }
+}

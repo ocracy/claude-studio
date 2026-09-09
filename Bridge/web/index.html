@@ -52,6 +52,16 @@
     <button id="mode" class="mode" data-key="BTab" title="Cycle mode (Shift+Tab)">mode ⇧⇥</button>
   </header>
 
+  <!-- What Claude is asking, as buttons.
+       Above the terminal for the same reason the key row is: the keyboard eats
+       the bottom of the screen. It is empty and hidden unless the session is
+       actually sitting on a numbered prompt — see readChoices, which refuses
+       anything it cannot recognise unmistakably. -->
+  <div id="ask" class="ask hidden">
+    <p id="ask-question"></p>
+    <div id="ask-options"></div>
+  </div>
+
   <!-- Above the terminal, not below it: the on-screen keyboard covers the
        bottom of the screen, and keys you cannot reach while typing are keys you
        cannot use. There is no message box — the terminal takes the keyboard

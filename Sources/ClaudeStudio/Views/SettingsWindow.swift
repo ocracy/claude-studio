@@ -335,6 +335,7 @@ struct SettingsView: View {
                         .toggleStyle(.switch)
                         .tint(Theme.accent)
                         .labelsHidden()
+                        .disabled(bridge.busy != nil)
                 } else {
                     // One button, and it does the whole thing. What used to be
                     // here was a paragraph asking for a shell script inside a git
@@ -361,6 +362,21 @@ struct SettingsView: View {
                 }
             }
 
+            // launchd is being asked for something that can take the better part of a
+            // minute. Without this the window looked frozen — which it also WAS, until
+            // these calls moved off the main thread.
+            if let busy = bridge.busy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(busy)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.text2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+
             if bridge.isInstalled && bridge.mesh.isConnected && !bridge.isRunning {
                 row("The service is not listening",
                     note: "The agent waits 30 seconds between attempts, so it lags behind the "
@@ -368,6 +384,7 @@ struct SettingsView: View {
                     SmallButton(title: "Restart", icon: "arrow.clockwise", prominent: true) {
                         bridge.restart()
                     }
+                    .disabled(bridge.busy != nil)
                 }
             }
 
@@ -419,13 +436,33 @@ struct SettingsView: View {
                 .padding(.vertical, 18)
 
                 Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 16)
+            } else if bridge.isInstalled {
+                // The QR code used to simply not be there, with nothing in its place.
+                // It is the one thing this screen exists to hand over, so its absence
+                // has to name what is missing — otherwise the answer looks like a bug
+                // in the code rather than a tunnel that is down.
+                VStack(spacing: 6) {
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 26))
+                        .foregroundStyle(Theme.text3.opacity(0.5))
+                    Text(qrBlockedBy)
+                        .font(Theme.ui(11))
+                        .foregroundStyle(Theme.text3)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+
+                Rectangle().fill(Theme.separator).frame(height: 1).padding(.leading, 16)
             }
 
             row("New link",
                 note: "Replaces the token and restarts the service. Use it if a phone is lost — every device has to scan again.",
                 last: true) {
                 SmallButton(title: "Replace") { bridge.rotateToken(); showToken = false }
-                    .disabled(!bridge.isInstalled)
+                    .disabled(!bridge.isInstalled || bridge.busy != nil)
             }
         }
         .background(card)
@@ -586,6 +623,23 @@ struct SettingsView: View {
                     .lineSpacing(2)
             }
         }
+    }
+
+    /// Why there is no code to scan. In the order the obstacles have to be cleared:
+    /// there is no address to put in a link before the mesh is up, and nothing to
+    /// point it at before the service is listening.
+    private var qrBlockedBy: String {
+        if !bridge.mesh.isConnected {
+            let tool = bridge.mesh.tool?.name ?? "Netbird or Tailscale"
+            return "The link carries this Mac's private address, and \(tool) is not "
+                 + "handing one out yet. Sign in above and the code appears here."
+        }
+        if !bridge.isEnabled { return "Turn the service on to get a code to scan." }
+        if !bridge.isRunning {
+            return "The service is not listening yet. It waits 30 seconds between "
+                 + "attempts, so give it a moment or restart it."
+        }
+        return "No token yet — reinstall phone access to create one."
     }
 
     private var bridgeTitle: String {

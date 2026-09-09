@@ -368,6 +368,36 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   takes the token cookie with it). Second, mixed content: ONE http subresource degrades
   the whole page the same way, so the secure listener sends `upgrade-insecure-requests`
   and the app reports any http resource it loaded to the bridge log.
+- **The phone's CSS is Tailwind, compiled AHEAD of time and committed**
+  (`Bridge/styles/app.css` → `Bridge/web/style.css`, `scripts/build-css.sh`).
+  Neither of the two obvious ways to add Tailwind works here: a CDN link dies
+  the moment the phone is offline — the app is a PWA served off a service worker
+  cache — and it is a request to a host the page must never make; and a build
+  step at run time does not exist, because `Bridge/web` is served straight off
+  disk by a launchd agent. So the compiler is the STANDALONE binary, cached in
+  `~/.cache` and never in the repo (76 MB), and `build.sh`/`dist.sh` recompile
+  only when the source is newer and merely WARN when the binary is missing: the
+  compiled file ships, so a build never requires Tailwind. Two rules keep the
+  stylesheet honest. Colours are indirect — every `@theme` token points at a
+  plain custom property and only those flip between light and dark, so `bg-raised`
+  follows the appearance with no `dark:` variant anywhere. And anything `app.js`
+  BUILDS keeps a class name in `@layer components`: a session row is a template
+  string in JavaScript, where utilities are invisible to a reader and to
+  Tailwind's scanner alike. The source lives outside `web/` because everything in
+  that folder is served as-is and hashed into the `buildId`.
+- **Answering from inside the app**: `readChoices` was written for the
+  notification, where Android allows two buttons and iOS none — so the phone
+  could answer a three-way permission prompt from the lock screen and NOT from
+  the app that notification opened, where the same question was a wall of TUI
+  text and an on-screen keyboard. `GET /api/sessions/<name>/choices` serves the
+  SAME reader (one set of rules about what counts as a question, no second
+  heuristic to keep in step) and `.ask` draws it above the terminal — the key
+  row's reason exactly: the keyboard covers the bottom. It is read once on open
+  rather than on the next tick, because arriving from a notification means the
+  question is already on screen. The panel hides itself the instant a button is
+  tapped instead of waiting to be told: the prompt vanishes from the TUI when
+  answered, so buttons left up until the next poll invite a second tap on a
+  question that no longer exists.
 - **The phone's JavaScript has no compiler**: `scripts/check-bridge-js.sh` runs from
   build.sh and dist.sh, and it checks each file IN THE MODE IT IS LOADED — `app.js` and
   the `.mjs` files as ES modules, `sw.js` as a classic script. `node --check` parses
@@ -491,6 +521,20 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   reference to `NSSound` or nothing plays.
 - **Writes**: all JSON is written atomically (`Paths.writeAtomically`). Never touch a
   `~/.claude/settings.json` that fails to parse.
+- **Never `Process.waitUntilExit()`**: it PUMPS THE RUN LOOP, so on the main thread
+  it is not a wait but a re-entry — AppKit and SwiftUI lay out underneath a caller
+  that is still on the stack. A lazy `static let` whose initializer spawns a process
+  then deadlocks against itself the instant the view being laid out reads it:
+  `dispatch_once` is entered twice from one thread and libdispatch traps with "BUG
+  IN CLIENT OF LIBDISPATCH: trying to lock recursively". That is what `scutil --get
+  ComputerName` inside `PhoneInstaller.machineName` did, and pressing Install in
+  Settings → Phone hit it every time — the app vanished, and the crash report named
+  a view body rather than the shell call two frames further down. `Shell.barrier`
+  (and the same three lines in `Tmux.run`) waits on the termination handler's
+  semaphore instead: it blocks, which is what "synchronously" was supposed to mean,
+  and cannot deadlock because the handler runs on a queue of Foundation's own. The
+  second half of the rule: do not spawn a process to answer something AppKit
+  already knows — the machine name is `Host.current().localizedName`.
 - **Concurrency**: values accumulated inside `Task.detached` are handed to
   `MainActor.run` as immutable copies (an error in the Swift 6 language mode).
 - **Private network**: the bridge binds to a Netbird OR Tailscale address and to
@@ -500,6 +544,40 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   session expires after about a day: a phone that "suddenly stopped working" has
   almost always hit that, which is why Settings → Phone can sign in again and
   restart the agent instead of leaving it to a 30-second launchd throttle.
+- **`N/A` is not empty, and that is how the bridge died for two weeks.** Signed
+  out, `netbird status` prints `NetBird IP: N/A`; the runner cut it at the slash and
+  got the string **`N`**, which passed every `[[ -n … ]]` on the way and reached
+  `make-cert.sh`, where openssl rejected `IP:N` — but only AFTER `server.key` had
+  been overwritten. New key, old certificate: Node's `createSecureContext` throws on
+  that pair at the TOP LEVEL, so the process died on every launch, which took the
+  HTTP listener with it, which took `/ca.crt` and `/setup` with it — the exact two
+  things the phone needs to recover. A signed-out moment left a permanent brick, and
+  every symptom pointed at the mesh. Four separate fixes, because each layer was
+  independently wrong: the runner and `make-cert.sh` both VALIDATE the address
+  (`is_ipv4`, and `MeshStatus.isIPv4` in Swift, which had the same bug and reported a
+  dead mesh as connected); the leaf is built in `.server.*.new` files and moved into
+  place only once both halves exist AND their moduli match, so a failed signature can
+  never again outlive the run; any run that finds a mismatched pair on disk reissues,
+  which is what lets an already-bricked Mac repair itself; and `server.mjs` TRIES the
+  pair before serving it, so a bad certificate costs HTTPS and not the whole bridge.
+  openssl's stderr is captured rather than piped — key generation prints a screenful
+  of progress dots, and this log is the only place any of this is diagnosable from.
+- **`launchctl kickstart` does not return when the job has been signalled — it
+  returns when the job has STARTED.** With `ThrottleInterval` at 30 s and a runner
+  that exits immediately (no mesh means no address to bind to, and it must never
+  fall back to 0.0.0.0), a measured `kickstart -k` took **54 seconds**. Every
+  launchd verb in `PhoneBridge` ran on the calling thread, so Restart with a
+  signed-out tunnel froze the whole app for a minute — the one moment someone is
+  certain to press it. `bootout` blocks on the process actually dying, so the toggle
+  had it too. They all go through `control()` now: off the main thread, one at a
+  time, with `busy` on screen — a button that has already been pressed and looks
+  untouched gets pressed again, and the second press queues another minute behind
+  the first. Same rule as `Tmux.run`, and it reaches every fork+exec the app makes.
+- **An absent QR code has to say what is missing**: the block was simply not drawn
+  while `connectURL` was nil, which is the whole point of the screen quietly
+  vanishing — and it reads as a broken app rather than as a tunnel that is down.
+  `qrBlockedBy` names the obstacles in the order they have to be cleared: no mesh
+  address, then service off, then not listening yet.
 - **A tunnel that dies with nobody watching**: the expiry above is a POLICY, not a
   fault — Netbird's dashboard turns "Login Expiration" off per peer, and that is the
   actual fix for a Mac that stays on a desk (Tailscale's key expiry is the same

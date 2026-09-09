@@ -12,6 +12,14 @@ BIN=".build/release/ClaudeStudio"
 echo "→ checking the bridge's JavaScript…"
 ./scripts/check-bridge-js.sh
 
+# The compiled stylesheet is committed, so a build never REQUIRES Tailwind — it
+# only rebuilds when the source is newer, and says so rather than failing when
+# the compiler is not available. Bridge/web is served straight off disk.
+if [ Bridge/styles/app.css -nt Bridge/web/style.css ]; then
+  echo "→ stylesheet source changed; recompiling…"
+  ./scripts/build-css.sh || echo "  ! could not recompile — shipping the committed style.css"
+fi
+
 echo "→ generating icon…"
 swift scripts/make-icon.swift >/dev/null
 iconutil -c icns AppIcon.iconset -o AppIcon.icns

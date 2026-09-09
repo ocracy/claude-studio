@@ -222,9 +222,80 @@ async function refresh() {
     if (snapshot.machine) $("machine-name").textContent = snapshot.machine
     if (views.list.classList.contains("hidden")) updateBadge()
     else render()
+    if (current) refreshAsk()
   } catch (error) {
     toast(error.message)
   }
+}
+
+// ── what Claude is asking ────────────────────────────────────────────────
+
+/**
+ * The numbered prompt the open session is sitting on, as buttons.
+ *
+ * The notification has carried these for a while, but a notification can hold
+ * two of them on Android and none at all on iOS — so the phone could answer a
+ * permission prompt from the lock screen and NOT from inside the app it opened,
+ * where the same question was a wall of TUI text and an on-screen keyboard. The
+ * reader is the bridge's `readChoices`, unchanged and unduplicated: one set of
+ * rules about what counts as a question, and it returns nothing whenever the
+ * shape is not unmistakable.
+ */
+async function refreshAsk() {
+  const session = current
+  if (!session) return
+  try {
+    const { choices } = await api(`/api/sessions/${encodeURIComponent(session.tmux)}/choices`)
+    // The view may have moved on while this was in flight.
+    if (current?.tmux === session.tmux) renderAsk(choices)
+  } catch {
+    // A session that has gone, or a tab with no terminal open yet. Neither is
+    // worth a toast: this runs on a timer, and it would fire on every tick.
+    if (current?.tmux === session.tmux) renderAsk(null)
+  }
+}
+
+function renderAsk(choices) {
+  const panel = $("ask")
+  if (!choices?.options?.length) {
+    panel.classList.add("hidden")
+    $("ask-options").replaceChildren()
+    return
+  }
+
+  $("ask-question").textContent = choices.question || "Claude is waiting for an answer."
+  $("ask-options").replaceChildren(...choices.options.map((option) => {
+    const button = document.createElement("button")
+    button.className = "ask-option"
+    button.type = "button"
+
+    const number = document.createElement("span")
+    number.className = "ask-number"
+    number.textContent = option.number
+    const label = document.createElement("span")
+    label.textContent = option.label
+
+    button.append(number, label)
+    button.onclick = () => answer(option)
+    return button
+  }))
+  panel.classList.remove("hidden")
+}
+
+/**
+ * Sends the digit — WITHOUT Enter, because Claude's numbered prompts act on the
+ * keypress itself and a stray newline would land in whatever comes next.
+ *
+ * The panel is hidden immediately rather than waiting to be told: the prompt is
+ * gone from the screen the moment it is answered, so leaving the buttons up
+ * until the next poll would invite a second tap on a question that no longer
+ * exists. The re-read a moment later is what catches the NEXT prompt, which
+ * Claude often draws right away.
+ */
+async function answer(option) {
+  renderAsk(null)
+  await sendKeys({ key: String(option.number) })
+  setTimeout(refreshAsk, 700)
 }
 
 function updateBadge() {
@@ -264,6 +335,11 @@ function openSession(session) {
   views.session.classList.remove("hidden")
   syncBackGuard()
   updateBadge()
+  // Read it now, not on the next tick. Arriving here from a notification means
+  // there is almost certainly a question on screen already, and four seconds of
+  // staring at a TUI is exactly the friction the buttons exist to remove.
+  renderAsk(null)
+  refreshAsk()
   poll(4000)
 }
 
@@ -277,6 +353,7 @@ function closeSessionView() {
   // (`destroy-unattached off`), so nothing is lost by dropping the connection.
   $("term-host").replaceChildren()
   current = null
+  renderAsk(null)
   views.session.classList.add("hidden")
   views.list.classList.remove("hidden")
   syncBackGuard()

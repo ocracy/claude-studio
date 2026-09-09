@@ -13,6 +13,12 @@ ZIP="ClaudeStudio.zip"
 echo "→ checking the bridge's JavaScript…"
 ./scripts/check-bridge-js.sh
 
+# See build.sh: the compiled stylesheet ships, the compiler is optional.
+if [ Bridge/styles/app.css -nt Bridge/web/style.css ]; then
+  echo "→ stylesheet source changed; recompiling…"
+  ./scripts/build-css.sh || echo "  ! could not recompile — shipping the committed style.css"
+fi
+
 echo "→ generating icon…"
 swift scripts/make-icon.swift >/dev/null
 iconutil -c icns AppIcon.iconset -o AppIcon.icns

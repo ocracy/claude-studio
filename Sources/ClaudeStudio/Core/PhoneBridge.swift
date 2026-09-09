@@ -67,6 +67,18 @@ struct MeshStatus: Equatable, Sendable {
         }
     }
 
+    /// Four decimal octets and nothing else. The bridge binds to whatever comes back
+    /// from here and a certificate is issued for it, so "non-empty" is not a test —
+    /// it is what let the string "N" through, and a leaf that cannot be issued for
+    /// it takes the whole service down. See `make-cert.sh`, which checks again.
+    static func isIPv4(_ value: String) -> Bool {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            !part.isEmpty && part.allSatisfy(\.isNumber) && (UInt8(part) != nil)
+        }
+    }
+
     static func detect() -> MeshStatus {
         if let netbird = binary(for: .netbird) {
             let result = Shell.run(netbird, ["status"])
@@ -78,10 +90,15 @@ struct MeshStatus: Equatable, Sendable {
                     let value = line.split(separator: ":").last?
                         .trimmingCharacters(in: .whitespaces)
                         .split(separator: "/").first
-                    if let value, !value.isEmpty { status.address = String(value) }
+                    // Validated, not merely non-empty. Signed out, Netbird prints
+                    // "NetBird IP: N/A", and cutting at the slash leaves "N" — which
+                    // read as an address here and reported a dead mesh as connected.
+                    if let value, MeshStatus.isIPv4(String(value)) {
+                        status.address = String(value)
+                    }
                 } else if line.hasPrefix("FQDN:") {
                     let value = line.dropFirst("FQDN:".count).trimmingCharacters(in: .whitespaces)
-                    if !value.isEmpty { status.fqdn = value }
+                    if !value.isEmpty, value != "N/A" { status.fqdn = value }
                 }
             }
             status.detail = summary(of: result.output)
@@ -95,7 +112,7 @@ struct MeshStatus: Equatable, Sendable {
             let result = Shell.run(tailscale, ["ip", "-4"])
             let ip = result.output.split(separator: "\n").first?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let ip, !ip.isEmpty, ip.first?.isNumber == true {
+            if let ip, MeshStatus.isIPv4(ip) {
                 status.address = ip
                 // MagicDNS name, with the trailing dot the JSON carries.
                 let json = Shell.run(tailscale, ["status", "--json"]).output
@@ -163,6 +180,13 @@ final class PhoneBridge: ObservableObject {
     }
     @Published private(set) var checkState = CheckState.idle
 
+    /// What launchd is being asked to do right now, if anything — "Restarting…".
+    ///
+    /// These calls can take the better part of a minute (see `control`), so they
+    /// need to say so. A button that has already been pressed and looks untouched is
+    /// pressed again, and the second press queues another minute behind the first.
+    @Published private(set) var busy: String?
+
     /// Live output of an install in progress, and whether one is running.
     @Published private(set) var installing = false
     @Published private(set) var installLog = ""
@@ -191,7 +215,12 @@ final class PhoneBridge: ObservableObject {
     /// and an `@Published` write invalidates every view that reads it whether or not
     /// the value moved — the same bug `attention` and `serviceStatus` had.
     func refresh() {
-        apply(Self.measure(installed: PhoneInstaller.isInstalled, jobIsLoaded: jobIsLoaded))
+        let installed = PhoneInstaller.isInstalled
+        let loaded = jobIsLoaded
+        Task.detached(priority: .userInitiated) {
+            let reading = Self.measure(installed: installed, jobIsLoaded: loaded)
+            await MainActor.run { self.apply(reading) }
+        }
     }
 
     /// One reading of everything that can change underneath us.
@@ -390,10 +419,34 @@ final class PhoneBridge: ObservableObject {
     /// Restarts the bridge agent. After the network comes up the agent may still
     /// be inside its 30-second throttle, and nobody wants to watch a spinner for
     /// half a minute to find out it would have worked.
-    func restart() {
-        guard isInstalled else { return }
-        Shell.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(Self.label)"])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refresh() }
+    func restart() { control("Restarting…", ["kickstart", "-k", "gui/\(getuid())/\(Self.label)"]) }
+
+    /// Every launchctl verb this class uses, off the main thread and with something
+    /// on screen while it runs.
+    ///
+    /// `kickstart` does not return when the job has been signalled — it returns when
+    /// the job has actually STARTED, and `ThrottleInterval` is 30 seconds. With the
+    /// mesh down the runner exits immediately (there is no address to bind to), so
+    /// launchd throttles, and a measured `kickstart -k` took **54 seconds**. Run on
+    /// the calling thread, as this was, that is the whole app frozen — which is
+    /// exactly what pressing Restart with a signed-out tunnel did. `bootout` blocks
+    /// on the process dying for the same kind of reason.
+    private func control(_ label: String, _ arguments: [String]) {
+        guard isInstalled, busy == nil else { return }
+        busy = label
+        Task.detached(priority: .userInitiated) {
+            Shell.run("/bin/launchctl", arguments)
+            // launchd needs a moment to bring the listener up or tear it down.
+            try? await Task.sleep(for: .seconds(1.5))
+            let reading = await MainActor.run {
+                (installed: PhoneInstaller.isInstalled, loaded: self.jobIsLoaded)
+            }
+            let measured = Self.measure(installed: reading.installed, jobIsLoaded: reading.loaded)
+            await MainActor.run {
+                self.busy = nil
+                self.apply(measured)
+            }
+        }
     }
 
     /// The link the phone opens: address, port and token in one QR code.
@@ -418,15 +471,10 @@ final class PhoneBridge: ObservableObject {
     // MARK: - Control
 
     func setEnabled(_ enabled: Bool) {
-        guard isInstalled else { return }
         let uid = getuid()
-        if enabled {
-            Shell.run("/bin/launchctl", ["bootstrap", "gui/\(uid)", plist.path])
-        } else {
-            Shell.run("/bin/launchctl", ["bootout", "gui/\(uid)/\(Self.label)"])
-        }
-        // launchd takes a moment to bring the listener up or tear it down.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refresh() }
+        control(enabled ? "Starting…" : "Stopping…",
+                enabled ? ["bootstrap", "gui/\(uid)", plist.path]
+                        : ["bootout", "gui/\(uid)/\(Self.label)"])
     }
 
     /// The access token, generated on first use.
@@ -457,11 +505,11 @@ final class PhoneBridge: ObservableObject {
     /// Replace the token and restart the service — how you cut off a lost phone.
     func rotateToken() {
         guard Self.newToken() != nil else { return }
-
+        token = try? String(contentsOf: Paths.bridgeToken, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         // The running service read the old token at startup, so it has to be
         // restarted before the new QR code means anything.
-        Shell.run("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(Self.label)"])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refresh() }
+        control("Replacing the link…", ["kickstart", "-k", "gui/\(getuid())/\(Self.label)"])
     }
 
     // MARK: - QR
