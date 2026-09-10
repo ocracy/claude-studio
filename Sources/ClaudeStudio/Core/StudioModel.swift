@@ -424,19 +424,22 @@ final class StudioModel: ObservableObject {
     /// 208", "Claude 209": naming a session is a thing you have to remember to do
     /// BEFORE there is anything to name it after.
     ///
-    /// Only a name the app itself made up is replaced (`isAutoNamed`), and only
-    /// once — the first title sticks, because a tab whose name changes every turn
-    /// is not a name, it is a status line. Renaming makes the record no longer
-    /// auto-named, which is what stops it.
+    /// It keeps following that title until somebody types a name over it
+    /// (`followsClaudeTitle`), and NOT merely until it has one. A conversation's
+    /// subject only becomes clear once it is under way — Claude titles the first
+    /// minutes of one "Claude Code" and refines it afterwards — so stopping at
+    /// the first title it happened to see is exactly how a tab ends up called
+    /// "Claude Code" for the rest of its life. Typing a name is the thing that
+    /// stops it, because that is a fact rather than a guess about a string.
     private func adoptClaudeTitles() {
         guard AppSettings.shared.autoTitleSessions else { return }
         let titles = SessionStates.shared.paneTitles
-        for record in store.config.sessions where record.isAutoNamed {
+        for record in store.config.sessions where record.followsClaudeTitle {
             guard isOpen(record),
                   let raw = titles[record.tmux],
                   let title = SessionStates.cleanPaneTitle(raw)
             else { continue }
-            renameSession(record, to: String(title.prefix(48)))
+            renameSession(record, to: String(title.prefix(48)), byUser: false)
         }
     }
 
@@ -452,7 +455,11 @@ final class StudioModel: ObservableObject {
     func newSession(name: String? = nil, prompt: String? = nil, autoRun: Bool = false,
                     extraEnv: [String: String] = [:]) -> SessionRecord {
         let title = name ?? nextSessionName()
-        let record = SessionRecord.make(projectShortID: project.shortID, name: title)
+        // No name asked for means Claude gets to choose one later; a name passed
+        // in — a skill run, a slash command, a resumed report — is a decision
+        // already made and is never overwritten.
+        let record = SessionRecord.make(projectShortID: project.shortID, name: title,
+                                        autoNamed: name == nil)
         store.addSession(record)
         open(StudioTab(kind: .session, ref: record.tmux, title: title))
         let (grants, linkSettings) = linkAccess()
@@ -557,9 +564,9 @@ final class StudioModel: ObservableObject {
         return ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid)
     }
 
-    func renameSession(_ record: SessionRecord, to name: String) {
+    func renameSession(_ record: SessionRecord, to name: String, byUser: Bool = true) {
         guard let clean = name.nilIfEmpty, clean != record.name else { return }
-        store.renameSession(tmux: record.tmux, to: clean)
+        store.renameSession(tmux: record.tmux, to: clean, byUser: byUser)
         if let index = tabs.firstIndex(where: { $0.id == record.tabKey }) {
             tabs[index].title = clean
         }

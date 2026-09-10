@@ -451,7 +451,11 @@ final class SessionStates: ObservableObject {
         guard clean.count > 3, clean.count < 120 else { return nil }
         if clean.hasSuffix(".local") || clean.hasSuffix(".lan") { return nil }
         let lower = clean.lowercased()
-        for reject in ["zsh", "bash", "claude", "tmux", "login", "node"] where lower == reject {
+        // "Claude Code" is the PLACEHOLDER Claude shows before the conversation
+        // has a subject. Adopting it names a tab after the program running in it,
+        // which says even less than the number it replaced.
+        for reject in ["zsh", "bash", "claude", "claude code", "tmux", "login", "node"]
+        where lower == reject {
             return nil
         }
         if clean == Host.current().localizedName { return nil }

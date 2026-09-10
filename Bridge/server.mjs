@@ -302,8 +302,11 @@ async function handleAPI(req, res, url) {
     const project = readProjects().find((p) => p.path === body.projectPath)
     if (!project) return json(res, 400, { error: "unknown project" })
 
-    const name = String(body.name || "").trim() || "Claude"
-    const record = addSession(project.path, project.shortID, name)
+    // An empty name is not a missing one: it means Claude may name this itself
+    // once the conversation has a subject, which is what the Mac then does.
+    const typed = String(body.name || "").trim()
+    const name = typed || "Claude"
+    const record = addSession(project.path, project.shortID, name, !typed)
 
     // With a prompt and `background`, start the work now and detach; otherwise
     // the tmux session is born on first attach, so it takes its size from the

@@ -253,10 +253,14 @@ final class ProjectStore: ObservableObject {
         }
     }
 
-    func renameSession(tmux: String, to name: String) {
+    /// `byUser` is the whole point: a name somebody typed stops Claude's own
+    /// title from ever replacing it again, and a title adopted from the pane
+    /// must not claim to be one.
+    func renameSession(tmux: String, to name: String, byUser: Bool = true) {
         mutate {
             guard let i = $0.sessions.firstIndex(where: { $0.tmux == tmux }) else { return }
             $0.sessions[i].name = name
+            $0.sessions[i].autoNamed = !byUser
         }
     }
 

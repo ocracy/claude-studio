@@ -343,11 +343,20 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   anything out.
 - **Sessions name themselves**: Claude sets the conversation's title over OSC
   ("✳ Optimize GROUP BY sorgusu") and tmux has been reporting it as `pane_title`
-  all along, unused, while the sidebar filled up with "Claude 208". Only a name
-  the APP invented is replaced (`SessionRecord.isAutoNamed`), and renaming makes
-  the record no longer auto-named — which is what stops it, because a tab whose
-  name changes every turn is not a name, it is a status line. A pane nobody has
-  run Claude in yet reports the hostname; `cleanPaneTitle` refuses it.
+  all along, unused, while the sidebar filled up with "Claude 208". A session
+  keeps taking that title until somebody TYPES a name over it — not until it has
+  one. `SessionRecord.autoNamed` records that as a fact; it used to be guessed
+  from the name ("Claude 7" is ours, anything else is yours) and the guess broke
+  on Claude's own placeholder: the first minutes of every conversation are titled
+  **"Claude Code"**, the app adopted it, the record then looked user-named, and
+  the tab was called Claude Code for the rest of its life. Two fixes, both
+  needed — `cleanPaneTitle` refuses the placeholder (naming a tab after the
+  program running in it says less than the number it replaced), and the flag
+  replaces the heuristic so a name that is adopted stays adoptable. `nil` means a
+  record predating the field, and the old guess covers it. `renameSession` carries
+  `byUser` for exactly this reason: a title taken from the pane must not claim to
+  be a decision. A pane nobody has run Claude in yet reports the hostname;
+  `cleanPaneTitle` refuses that too.
 - **`SessionRecord` decodes BY HAND**, like `Service` and `ProjectLink` and for the
   identical reason: the synthesized decoder throws on a missing key even where
   there is a default, so adding `saved` would have failed the whole array and

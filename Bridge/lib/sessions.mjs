@@ -61,9 +61,14 @@ function mutate(projectPath, change) {
  * born on first attach (`new-session -A`), so that it takes its geometry from
  * the phone rather than from a detached 80x24 default.
  */
-export function addSession(projectPath, projectShortID, name) {
+/**
+ * @param {boolean} autoNamed  nobody typed this name, so the Mac may replace it
+ *   with Claude's own title for the conversation once there is one.
+ *   See SessionRecord.followsClaudeTitle.
+ */
+export function addSession(projectPath, projectShortID, name, autoNamed = false) {
   const { id, tmux } = newSessionName(projectShortID)
-  const record = { id, name, tmux, lastUsed: nowCocoa() }
+  const record = { id, name, tmux, lastUsed: nowCocoa(), autoNamed }
   mutate(projectPath, (records) => records.push(record))
   return record
 }
@@ -80,6 +85,8 @@ export function renameSession(projectPath, tmuxName, name) {
     const record = records.find((r) => r.tmux === tmuxName)
     if (!record) return false
     record.name = name
+    // Typed by a person, so Claude's own title never replaces it again.
+    record.autoNamed = false
     return true
   })
 }

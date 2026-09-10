@@ -88,27 +88,45 @@ struct SessionRecord: Identifiable, Hashable, Codable {
     /// Kept in the "saved" list: it never falls off the end of "previous
     /// sessions", and reopening it resumes the conversation.
     var saved: Bool = false
+    /// Has nobody named this by hand?
+    ///
+    /// The record of a FACT, replacing a guess. It used to be inferred from the
+    /// name itself — "Claude 7" is ours, anything else is yours — and that guess
+    /// broke the moment Claude's own placeholder title, "Claude Code", was
+    /// adopted: the session then looked user-named and froze there forever, no
+    /// matter what the conversation turned out to be about. `nil` means the
+    /// record predates the field, and the old guess is used for it.
+    var autoNamed: Bool?
 
     /// Tab and hook identifier (`CS_TAB_ID`).
     var tabKey: String { "session:\(tmux)" }
 
-    /// Has this session only ever carried the name the app gave it? Those are the
-    /// ones Claude's own conversation title is allowed to replace — a name the
-    /// user typed is never overwritten.
+    /// Should this session keep taking Claude's own title for the conversation?
+    ///
+    /// Yes until somebody types a name over it. Not "until it has a title": a
+    /// conversation's subject only becomes clear once it is under way, and
+    /// Claude refines its title as that happens — freezing on the first one it
+    /// happened to see is how a tab ends up called "Claude Code" forever.
+    var followsClaudeTitle: Bool { autoNamed ?? isAutoNamed }
+
+    /// The old guess, kept for records written before `autoNamed` existed.
     var isAutoNamed: Bool {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("Claude ") else { return trimmed.isEmpty || trimmed == "Claude" }
+        if trimmed.isEmpty || trimmed == "Claude" || trimmed == "Claude Code" { return true }
+        guard trimmed.hasPrefix("Claude ") else { return false }
         return Int(trimmed.dropFirst("Claude ".count)) != nil
     }
 
     init(id: UUID = UUID(), name: String, tmux: String,
-         claudeSID: String? = nil, lastUsed: Date = Date(), saved: Bool = false) {
+         claudeSID: String? = nil, lastUsed: Date = Date(), saved: Bool = false,
+         autoNamed: Bool? = nil) {
         self.id = id
         self.name = name
         self.tmux = tmux
         self.claudeSID = claudeSID
         self.lastUsed = lastUsed
         self.saved = saved
+        self.autoNamed = autoNamed
     }
 
     /// Decoded by hand for the usual reason: the synthesized decoder throws on a
@@ -126,12 +144,15 @@ struct SessionRecord: Identifiable, Hashable, Codable {
         claudeSID = (try? box.decodeIfPresent(String.self, forKey: .claudeSID)) ?? nil
         lastUsed  = value(.lastUsed, Date())
         saved     = value(.saved, false)
+        autoNamed = (try? box.decodeIfPresent(Bool.self, forKey: .autoNamed)) ?? nil
     }
 
-    static func make(projectShortID: String, name: String) -> SessionRecord {
+    static func make(projectShortID: String, name: String,
+                     autoNamed: Bool? = nil) -> SessionRecord {
         let id = UUID()
         return SessionRecord(id: id, name: name,
-                             tmux: "cs-\(projectShortID)-\(id.uuidString.prefix(8).lowercased())")
+                             tmux: "cs-\(projectShortID)-\(id.uuidString.prefix(8).lowercased())",
+                             autoNamed: autoNamed)
     }
 
     /// The project a tmux session belongs to, read back out of its own name.
