@@ -24,16 +24,28 @@ final class StudioModel: ObservableObject {
             case .terminals: return "terminals"
             }
         }
+        var label: String {
+            switch self {
+            case .sessions:  return "Sessions"
+            case .skills:    return "Skills"
+            case .mcp:       return "MCP servers"
+            case .cron:      return "Scheduled"
+            case .services:  return "Services"
+            case .commands:  return "Commands"
+            case .scripts:   return "Scripts"
+            case .terminals: return "Terminals"
+            }
+        }
         var icon: String {
             switch self {
-            case .sessions:  return "bubble.left.and.bubble.right"
+            case .sessions:  return "bubble.left"
             case .skills:    return "sparkles"
             case .mcp:       return "point.3.connected.trianglepath.dotted"
-            case .cron:      return "clock"
-            case .services:  return "server.rack"
-            case .commands:  return "slash.circle"
-            case .scripts:   return "bolt"
-            case .terminals: return "terminal"
+            case .cron:      return "calendar.badge.clock"
+            case .services:  return "shippingbox"
+            case .commands:  return "command"
+            case .scripts:   return "scroll"
+            case .terminals: return "apple.terminal"
             }
         }
         var help: String {
@@ -96,9 +108,24 @@ final class StudioModel: ObservableObject {
     @Published var activeTabID: String? {
         didSet {
             guard activeTabID != oldValue else { return }
+            if var panes = splitTabs {
+                if let active = activeTabID {
+                    if !panes.contains(active) {
+                        panes[oldValue.flatMap { panes.firstIndex(of: $0) } ?? 1] = active
+                        splitTabs = panes
+                    }
+                } else {
+                    splitTabs = nil
+                }
+            }
             SessionStates.shared.setVisibleTab(activeTabID, for: ObjectIdentifier(self))
+            refreshSessionHeader()
         }
     }
+    @Published private(set) var changes: GitChanges.Summary?
+    @Published private(set) var sessionDetails: [String: SessionDetails] = [:]
+    private var headerTimer: Timer?
+    private var headerRefreshing = false
     /// Session names currently alive in tmux.
     @Published var liveSessions: Set<String> = []
     @Published var sidebarWidth: CGFloat = 260
@@ -106,6 +133,17 @@ final class StudioModel: ObservableObject {
     @Published var selectedRun: [String: String] = [:]
     /// ⌘P palette visibility.
     @Published var paletteOpen = false
+    @Published var conversationsOpen = false
+    @Published var findOpen = false
+    @Published private(set) var pullRequest: PullRequests.Status?
+    @Published private(set) var workPath = ""
+    private var pullRequestChecked: (path: String, at: Date)?
+    @Published var splitTabs: [String]?
+    @Published var splitAxis: SplitAxis = .horizontal
+    @Published var splitMaximized = false
+    @Published var projectSwitcherOpen = false
+    @Published var sidebarHidden = false
+    @Published var changesOpen = false
     /// Appearance sheet visibility. On the model rather than in the view, so the
     /// command palette can open it too.
     @Published var themeSheetOpen = false
@@ -256,6 +294,14 @@ final class StudioModel: ObservableObject {
         }
         engine.refreshExternalStatuses(store.config.services)
 
+        headerTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { _ in
+            Task { @MainActor in
+                guard NSApp.isActive else { return }
+                self.refreshSessionHeader()
+            }
+        }
+        refreshSessionHeader()
+
         for service in store.config.services where service.autoStart {
             engine.startService(service, project: project)
         }
@@ -266,6 +312,7 @@ final class StudioModel: ObservableObject {
     /// is their entire point.
     func stop() {
         refreshTimer?.invalidate()
+        headerTimer?.invalidate()
         runs.stopPolling()
         SessionStates.shared.releaseVisible(for: ObjectIdentifier(self))
         store.mutate {
@@ -453,20 +500,22 @@ final class StudioModel: ObservableObject {
 
     @discardableResult
     func newSession(name: String? = nil, prompt: String? = nil, autoRun: Bool = false,
-                    extraEnv: [String: String] = [:]) -> SessionRecord {
+                    extraEnv: [String: String] = [:], worktree: String? = nil) -> SessionRecord {
         let title = name ?? nextSessionName()
         // No name asked for means Claude gets to choose one later; a name passed
         // in — a skill run, a slash command, a resumed report — is a decision
         // already made and is never overwritten.
-        let record = SessionRecord.make(projectShortID: project.shortID, name: title,
+        var record = SessionRecord.make(projectShortID: project.shortID, name: title,
                                         autoNamed: name == nil)
+        record.worktree = worktree
         store.addSession(record)
         open(StudioTab(kind: .session, ref: record.tmux, title: title))
         let (grants, linkSettings) = linkAccess()
         sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
                             title: title, initialPrompt: prompt, autoRun: autoRun,
-                            extraEnv: extraEnv, linkSettings: linkSettings)
+                            extraEnv: extraEnv, linkSettings: linkSettings,
+                            worktree: worktree)
         liveSessions.insert(record.tmux)
         return record
     }
@@ -495,14 +544,15 @@ final class StudioModel: ObservableObject {
             // The id is kept even when there is no transcript yet: clearing it would
             // permanently forfeit a resume for a conversation that may still be
             // written. The check is one stat call, so it is repeatedevery time.
-            if ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid) { resume = sid }
+            if ClaudeTranscripts.exists(projectPath: record.worktreePath(in: project) ?? project.path,
+                                        sessionID: sid) { resume = sid }
         }
 
         let (grants, linkSettings) = linkAccess()
         sessionGrants[record.tabKey] = Set(grants)
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
                             title: record.name, resumeSID: resume,
-                            linkSettings: linkSettings)
+                            linkSettings: linkSettings, worktree: record.worktree)
         store.touchSession(tmux: record.tmux)
         liveSessions.insert(record.tmux)
     }
@@ -561,7 +611,8 @@ final class StudioModel: ObservableObject {
     /// Can a closed session's conversation be brought back?
     func canResume(_ record: SessionRecord) -> Bool {
         guard let sid = record.claudeSID else { return false }
-        return ClaudeTranscripts.exists(projectPath: project.path, sessionID: sid)
+        return ClaudeTranscripts.exists(projectPath: record.worktreePath(in: project) ?? project.path,
+                                        sessionID: sid)
     }
 
     func renameSession(_ record: SessionRecord, to name: String, byUser: Bool = true) {
@@ -1247,7 +1298,7 @@ final class StudioModel: ObservableObject {
         engine.startSession(key: record.tabKey, session: record.tmux, project: project,
                             title: record.name, resumeSID: sid,
                             initialPrompt: message.nilIfEmpty,
-                            linkSettings: linkSettings)
+                            linkSettings: linkSettings, worktree: record.worktree)
         store.touchSession(tmux: record.tmux)
         liveSessions.insert(record.tmux)
     }
@@ -1284,6 +1335,14 @@ final class StudioModel: ObservableObject {
 
         tabs.remove(at: index)
         if tab.kind == .service || tab.kind == .script { engine.discard(tab.terminalKey) }
+        if let panes = splitTabs, panes.contains(id) {
+            splitTabs = nil
+            splitMaximized = false
+            if activeTabID == id, let other = panes.first(where: { $0 != id }) {
+                activeTabID = other
+                return
+            }
+        }
         if activeTabID == id {
             activeTabID = tabs.indices.contains(index) ? tabs[index].id : tabs.last?.id
         }
@@ -1292,6 +1351,56 @@ final class StudioModel: ObservableObject {
     /// Drag-reorder in the tab bar. The order is this window's, for as long as it
     /// is open — it is not written to `.cs`, because tabs are what you happen to
     /// have open, not part of the project.
+    enum SplitAxis { case horizontal, vertical }
+
+    var splitPanes: [StudioTab]? {
+        guard let ids = splitTabs, ids.count == 2, ids[0] != ids[1] else { return nil }
+        let panes = ids.compactMap { id in tabs.first { $0.id == id } }
+        return panes.count == 2 ? panes : nil
+    }
+
+    func split(_ axis: SplitAxis) {
+        guard let active = activeTabID else { return }
+        splitAxis = axis
+        splitMaximized = false
+        if splitTabs != nil { return }
+        if let other = tabs.last(where: { $0.id != active })?.id {
+            splitTabs = [active, other]
+        } else {
+            newTerminal()
+            guard let created = activeTabID, created != active else { return }
+            splitTabs = [active, created]
+        }
+    }
+
+    func openInSplit(_ id: String) {
+        guard let active = activeTabID, active != id else { return }
+        splitMaximized = false
+        if var panes = splitTabs {
+            guard !panes.contains(id), let other = panes.firstIndex(where: { $0 != active }) else {
+                activeTabID = id
+                return
+            }
+            panes[other] = id
+            splitTabs = panes
+        } else {
+            splitTabs = [active, id]
+        }
+        activeTabID = id
+    }
+
+    func focusOtherPane() {
+        guard let panes = splitPanes, let other = panes.first(where: { $0.id != activeTabID }) else { return }
+        activeTabID = other.id
+    }
+
+    func closePane(_ id: String) {
+        guard let panes = splitTabs, panes.contains(id) else { return }
+        splitTabs = nil
+        splitMaximized = false
+        if let other = panes.first(where: { $0 != id }) { activeTabID = other }
+    }
+
     func moveTab(_ id: String, before other: String) {
         guard id != other, let from = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs.remove(at: from)
@@ -1310,6 +1419,52 @@ final class StudioModel: ObservableObject {
     }
 
     var activeTab: StudioTab? { tabs.first { $0.id == activeTabID } }
+
+    func workPath(for tab: StudioTab?) -> String {
+        guard let tab, tab.kind == .session,
+              let path = store.session(tmux: tab.ref)?.worktreePath(in: project),
+              FileManager.default.fileExists(atPath: path)
+        else { return project.path }
+        return path
+    }
+
+    func refreshSessionHeader() {
+        guard !headerRefreshing else { return }
+        headerRefreshing = true
+        let path = workPath(for: activeTab)
+        if workPath != path { workPath = path }
+        let checkPullRequest = pullRequestChecked.map { $0.path != path || Date().timeIntervalSince($0.at) > 60 } ?? true
+        if checkPullRequest { pullRequestChecked = (path, Date()) }
+        let tab = activeTab.flatMap { $0.kind == .session ? $0 : nil }
+        let key = tab?.terminalKey
+        let sid = key.flatMap { engine.claudeSIDs[$0] } ?? tab.flatMap { store.session(tmux: $0.ref)?.claudeSID }
+        let tmux = Tmux.isAvailable ? tab?.ref : nil
+        let previous = key.flatMap { sessionDetails[$0] }
+        Task.detached(priority: .utility) {
+            let summary = GitChanges.summary(at: path)
+            let pull = checkPullRequest ? PullRequests.status(at: path) : nil
+            let details = key == nil ? nil
+                : SessionDetails.read(projectPath: path, sessionID: sid, tmux: tmux,
+                                      previous: previous)
+            await MainActor.run {
+                if self.changes != summary { self.changes = summary }
+                if checkPullRequest, self.pullRequest != pull { self.pullRequest = pull }
+                if let key, let details, self.sessionDetails[key] != details {
+                    self.sessionDetails[key] = details
+                }
+                self.headerRefreshing = false
+            }
+        }
+    }
+
+    func cycleMode(of tab: StudioTab) {
+        engine.send(key: tab.terminalKey, text: "\u{1B}[Z")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.refreshSessionHeader() }
+    }
+
+    func openModelPicker(in tab: StudioTab) {
+        engine.send(key: tab.terminalKey, text: "/model", enter: true)
+    }
 
     /// ⌘1…⌘9 — jumps to the nth tab if it exists.
     func selectTab(_ index: Int) {

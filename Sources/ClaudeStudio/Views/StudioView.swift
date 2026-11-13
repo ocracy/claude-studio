@@ -14,13 +14,12 @@ struct StudioView: View {
             TopBar(model: model, onClose: onClose, onAppearance: { model.themeSheetOpen = true })
 
             HStack(spacing: 0) {
-                ActivityRail(model: model)
-                Rectangle().fill(theme.separator).frame(width: 1)
+                if !model.sidebarHidden {
+                    Sidebar(model: model)
+                        .frame(width: model.sidebarWidth)
 
-                Sidebar(model: model)
-                    .frame(width: model.sidebarWidth)
-
-                sidebarHandle
+                    sidebarHandle
+                }
 
                 VStack(spacing: 0) {
                     TabBar(model: model)
@@ -35,6 +34,19 @@ struct StudioView: View {
         .background(theme.surface)
         .overlay {
             if model.paletteOpen { CommandPalette(model: model) }
+        }
+        .sheet(isPresented: $model.conversationsOpen) {
+            ConversationsSheet(model: model) { model.conversationsOpen = false }
+        }
+        .sheet(isPresented: $model.changesOpen) {
+            ChangesSheet(model: model, path: model.workPath.isEmpty ? model.project.path : model.workPath) {
+                model.changesOpen = false
+            }
+        }
+        .sheet(isPresented: $model.findOpen) {
+            if let tab = model.activeTab {
+                FindSheet(model: model, tab: tab) { model.findOpen = false }
+            }
         }
         .sheet(isPresented: $model.themeSheetOpen) {
             ThemeEditor(model: model, onDismiss: { model.themeSheetOpen = false })
@@ -52,7 +64,7 @@ struct StudioView: View {
     /// The sidebar width is dragged to size and persisted in `.cs/settings.json`.
     private var sidebarHandle: some View {
         Rectangle()
-            .fill(draggingSidebar ? model.theme.accent : theme.separator)
+            .fill(draggingSidebar ? model.theme.accent : theme.separator.opacity(0.5))
             .frame(width: 1)
             .overlay(Color.clear.frame(width: 7).contentShape(Rectangle()))
             .onHover { inside in
@@ -166,7 +178,6 @@ private struct TopBar: View {
         // Empty header space zooms the window on a double-click, like a title bar;
         // the controls opt out through `headerControl()` (see HeaderDoubleClick).
         .background(theme.chrome)
-        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 }
 
@@ -240,69 +251,6 @@ private struct ProjectMenu: View {
     }
 }
 
-// MARK: - Activity rail
-
-private struct ActivityRail: View {
-    @ObservedObject var model: StudioModel
-    @ObservedObject private var settings = AppSettings.shared
-    @State private var dragging: StudioModel.Pane?
-    @Environment(\.studioTheme) private var theme
-
-    var body: some View {
-        VStack(spacing: 4) {
-            ForEach(StudioModel.orderedPanes) { pane in
-                button(pane)
-                    // Drag to reorder; the context menu does the same without a drag.
-                    .onDrag {
-                        dragging = pane
-                        return NSItemProvider(object: pane.rawValue as NSString)
-                    }
-                    .onDrop(of: [.text], isTargeted: nil) { _ in
-                        guard let source = dragging, source != pane else { return false }
-                        StudioModel.movePane(source, before: pane)
-                        dragging = nil
-                        return true
-                    }
-                    .contextMenu {
-                        Button("Move up") { StudioModel.movePane(pane, by: -1) }
-                        Button("Move down") { StudioModel.movePane(pane, by: 1) }
-                        Divider()
-                        Button("Reset order") { StudioModel.resetPaneOrder() }
-                    }
-            }
-            Spacer()
-        }
-        .padding(.vertical, 8)
-        .frame(width: 46)
-        .frame(maxHeight: .infinity)
-        .background(theme.chrome)
-    }
-
-    private func button(_ pane: StudioModel.Pane) -> some View {
-        let selected = model.pane == pane
-        return Button { model.pane = pane } label: {
-            Image(systemName: pane.icon)
-                .font(.system(size: 16, weight: .light))
-                .foregroundStyle(selected ? theme.text : theme.text3)
-                .frame(width: 46, height: 40)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(selected ? theme.accent : .clear)
-                        .frame(width: 2)
-                }
-                .overlay(alignment: .topTrailing) {
-                    if pane == .sessions && model.attentionCount > 0 {
-                        StatusDot(color: Theme.waiting, size: 5)
-                            .padding(.top, 9).padding(.trailing, 9)
-                    }
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(pane.help)
-    }
-}
-
 // MARK: - Tab bar
 
 private struct TabBar: View {
@@ -317,7 +265,7 @@ private struct TabBar: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 0) {
+            HStack(alignment: .bottom, spacing: 2) {
                 ForEach(model.tabs) { tab in
                     item(tab)
                         .onDrag {
@@ -342,16 +290,24 @@ private struct TabBar: View {
                         return true
                     }
             }
+            .padding(.horizontal, 6)
+            .padding(.top, 4)
         }
         .frame(height: 34)
         .background(theme.chrome)
-        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
     }
 
     private func item(_ tab: StudioTab) -> some View {
         let selected = model.activeTabID == tab.id
+        let visible = selected || (model.splitPanes != nil && !model.splitMaximized
+                                   && model.splitTabs?.contains(tab.id) == true)
         return HStack(spacing: 7) {
-            StatusDot(color: dotColor(tab), size: 5)
+            TabKindIcon(kind: tab.kind)
+                .overlay(alignment: .bottomTrailing) {
+                    StatusDot(color: dotColor(tab), size: 5)
+                        .background(Circle().fill(visible ? theme.surface : theme.chromeBase).padding(-1.5))
+                        .offset(x: 2, y: 2)
+                }
             if renaming == tab.id {
                 // Focused as it appears, or the keystrokes go to the terminal below.
                 TextField("session name", text: $renameText)
@@ -385,12 +341,11 @@ private struct TabBar: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 7)
-        .frame(height: 34)
-        .background(selected ? theme.surface : Color.clear)
-        .overlay(alignment: .top) {
-            Rectangle().fill(selected ? theme.accent : .clear).frame(height: 2)
-        }
-        .overlay(alignment: .trailing) { Rectangle().fill(theme.separator).frame(width: 1) }
+        .frame(height: 30)
+        .background(
+            UnevenRoundedRectangle(topLeadingRadius: 7, topTrailingRadius: 7, style: .continuous)
+                .fill(visible ? theme.surface : Color.clear)
+        )
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { beginRename(tab) }
         .onTapGesture { model.activeTabID = tab.id }
@@ -402,6 +357,13 @@ private struct TabBar: View {
                 }
                 Divider()
             }
+            if model.activeTabID != tab.id {
+                Button("Open in split") { model.openInSplit(tab.id) }
+            }
+            if model.splitTabs?.contains(tab.id) == true {
+                Button("Close pane") { model.closePane(tab.id) }
+            }
+            Divider()
             Button("Close tab") { model.closeTab(id: tab.id) }
         }
     }
@@ -450,24 +412,23 @@ private struct TabBar: View {
 private struct StatusBar: View {
     @ObservedObject var model: StudioModel
     @ObservedObject private var usage = UsageMonitor.shared
+    @ObservedObject private var plan = PlanUsage.shared
     @Environment(\.studioTheme) private var theme
+    @State private var waitingOpen = false
 
     var body: some View {
-        HStack(spacing: 16) {
-            Text(model.project.name).foregroundStyle(theme.text2)
+        HStack(spacing: 14) {
+            if !plan.limits.isEmpty { planUsage }
 
-            // What a session is running right now, and whose capability it is — the
-            // skill may belong to this project, a linked one, or your global set.
             if let running = model.liveUsage.last?.usage {
                 HStack(spacing: 5) {
                     StatusDot(color: theme.accent, size: 5)
                     Text("using \(running.display) · \(model.owner(of: running.name))")
                         .foregroundStyle(theme.text2)
+                        .lineLimit(1)
                 }
             }
 
-            // A skill running with no tab of its own — a scheduled or background run —
-            // is otherwise invisible from here.
             if let skill = model.runs.running.sorted().first {
                 Button { model.openCron(skillNamed: skill) } label: {
                     HStack(spacing: 5) {
@@ -482,21 +443,190 @@ private struct StatusBar: View {
                 .help("Show the live output")
             }
 
-            Spacer()
-            Text("\(model.openSessions.count) sessions")
-            Text("\(model.runningServiceCount)/\(model.store.config.services.count) services")
-            if let next = model.store.nextRun {
-                Text("next: \(next.skill) · \(next.date.shortStamp)")
-            }
+            Spacer(minLength: 8)
+
             if !Tmux.isAvailable {
                 Text("tmux missing — sessions are not persistent").foregroundStyle(Theme.danger)
             }
+            if let next = model.store.nextRun {
+                item("clock", "\(next.skill) · \(next.date.shortStamp)")
+                    .help("Next scheduled run")
+            }
+            item("server.rack", "\(model.runningServiceCount)/\(model.store.config.services.count)")
+                .help("Running services")
+            item("terminal", "\(model.openSessions.count)")
+                .help("Open sessions")
+            if model.attentionCount > 0 {
+                Button { waitingOpen.toggle() } label: {
+                    HStack(spacing: 5) {
+                        StatusDot(color: Theme.waiting, size: 5)
+                        Text("\(model.attentionCount) needs you")
+                            .foregroundStyle(Theme.waiting)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Sessions waiting on you")
+                .popover(isPresented: $waitingOpen, arrowEdge: .top) {
+                    WaitingList(model: model) { waitingOpen = false }
+                }
+            }
         }
-        .font(Theme.mono(10.5))
+        .font(Theme.ui(11))
         .foregroundStyle(theme.text3)
+        .lineLimit(1)
         .padding(.horizontal, 12)
-        .frame(height: 24)
+        .frame(height: 26)
         .background(theme.chrome)
-        .overlay(alignment: .top) { Rectangle().fill(theme.separator).frame(height: 1) }
+    }
+
+    private var planUsage: some View {
+        HStack(spacing: 8) {
+            Text("Used").foregroundStyle(theme.text2)
+            Image(systemName: "asterisk")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Theme.accent)
+            meter(plan.peak)
+            HStack(spacing: 5) {
+                ForEach(Array(plan.limits.enumerated()), id: \.element.id) { index, limit in
+                    if index > 0 { Text("·").foregroundStyle(theme.text3) }
+                    segment(limit)
+                }
+            }
+        }
+        .help(planHelp)
+    }
+
+    private func segment(_ limit: PlanUsage.Limit) -> some View {
+        HStack(spacing: 4) {
+            Text("\(limit.percent)%")
+                .font(Theme.mono(10.5, .medium))
+                .foregroundStyle(tone(limit.percent) ?? theme.text2)
+            switch limit.kind {
+            case .scoped(let name):
+                Text(name)
+            case .session, .weekly:
+                if let left = limit.remaining() { Text(left).font(Theme.mono(10.5)) }
+            }
+        }
+    }
+
+    private func meter(_ percent: Int) -> some View {
+        ZStack(alignment: .leading) {
+            Capsule().fill(theme.separator)
+            Capsule()
+                .fill(tone(percent) ?? theme.text2)
+                .frame(width: max(3, 56 * CGFloat(min(100, percent)) / 100))
+        }
+        .frame(width: 56, height: 4)
+    }
+
+    private func tone(_ percent: Int) -> Color? {
+        if percent >= 90 { return Theme.danger }
+        if percent >= 70 { return Theme.warning }
+        return nil
+    }
+
+    private var planHelp: String {
+        var lines = plan.limits.map { limit in
+            let left = limit.remaining().map { " · resets in \($0)" } ?? ""
+            return "\(limit.title): \(limit.percent)%\(left)"
+        }
+        if let fetchedAt = plan.fetchedAt {
+            lines.append("Updated \(fetchedAt.relative) by Claude Code")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func item(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10, weight: .light))
+            Text(text).font(Theme.mono(10.5))
+        }
+    }
+}
+
+private struct WaitingList: View {
+    @ObservedObject var model: StudioModel
+    let onDismiss: () -> Void
+    @ObservedObject private var states = SessionStates.shared
+    @State private var selected = 0
+
+    private var rows: [(record: SessionRecord, live: SessionStates.Live?)] {
+        let waiting = model.openSessions.filter { model.attention(of: $0).needsAttention }
+        let questions = waiting.filter { model.attention(of: $0).isQuestion }
+        return (questions + waiting.filter { !model.attention(of: $0).isQuestion }).map { record in
+            (record, states.live.first { $0.key == record.tabKey })
+        }
+    }
+
+    var body: some View {
+        let rows = rows
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: "needs you \(rows.count)", icon: "bell")
+                .padding(.horizontal, 8)
+                .padding(.bottom, 2)
+            ForEach(Array(rows.enumerated()), id: \.element.record.id) { index, row in
+                Button { open(row.record) } label: {
+                    HoverRow(selected: index == selected,
+                             padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8), radius: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            let question = model.attention(of: row.record).isQuestion
+                            Image(systemName: question ? "questionmark.circle" : "checkmark.circle")
+                                .font(.system(size: 11, weight: .light))
+                                .foregroundStyle(question ? Theme.waiting : model.theme.text3)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(row.record.name)
+                                        .font(Theme.ui(12.5, .medium))
+                                        .foregroundStyle(model.theme.text)
+                                    Spacer(minLength: 8)
+                                    if let at = row.live?.at {
+                                        Text(at.relative)
+                                            .font(Theme.ui(10.5))
+                                            .foregroundStyle(model.theme.text3)
+                                    }
+                                }
+                                Text(row.live?.headline ?? (question ? "Asking a question" : "Finished"))
+                                    .font(Theme.ui(11.5))
+                                    .foregroundStyle(model.theme.text2)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            Text("↑↓ select · ↩ open · esc close")
+                .font(Theme.ui(10.5))
+                .foregroundStyle(model.theme.text3)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+        }
+        .padding(8)
+        .frame(width: 340)
+        .environment(\.studioTheme, model.theme)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.downArrow) {
+            selected = min(selected + 1, max(rows.count - 1, 0))
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            selected = max(selected - 1, 0)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            if rows.indices.contains(selected) { open(rows[selected].record) }
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            onDismiss()
+            return .handled
+        }
+    }
+
+    private func open(_ record: SessionRecord) {
+        model.openSession(record)
+        onDismiss()
     }
 }

@@ -10,16 +10,22 @@ import SwiftTerm
 struct TerminalHost: NSViewRepresentable {
     let key: String
     let engine: TerminalEngine
+    var focused = true
+    var onFocus: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> TerminalContainer {
         let container = TerminalContainer()
         container.autoresizingMask = [.width, .height]
+        container.onMouseDown = onFocus
         container.attach(engine.view(for: key))
+        container.setFocused(focused)
         return container
     }
 
     func updateNSView(_ container: TerminalContainer, context: Context) {
+        container.onMouseDown = onFocus
         container.attach(engine.view(for: key))
+        container.setFocused(focused)
     }
 }
 
@@ -35,6 +41,32 @@ final class TerminalContainer: NSView {
     /// laid out, and a terminal started at that width draws at the wrong column
     /// count until something resizes it.
     private var startDebounce: DispatchWorkItem?
+    var onMouseDown: (() -> Void)?
+    private var focused = true
+    private var monitor: Any?
+
+    func setFocused(_ value: Bool) {
+        defer { focused = value }
+        guard value, !focused, let terminal = current else { return }
+        DispatchQueue.main.async { [weak terminal] in
+            guard let view = terminal, let window = view.window else { return }
+            window.makeFirstResponder(view)
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        guard window != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            if let self, event.window === self.window,
+               self.bounds.contains(self.convert(event.locationInWindow, from: nil)) {
+                self.onMouseDown?()
+            }
+            return event
+        }
+    }
 
     func attach(_ terminal: LocalProcessTerminalView) {
         if current === terminal { return }
@@ -52,7 +84,7 @@ final class TerminalContainer: NSView {
         DispatchQueue.main.async { [weak terminal, weak self] in
             guard let view = terminal, let self, let window = view.window else { return }
             if bounds.width > 0 && bounds.height > 0 { view.setFrameSize(self.bounds.size) }
-            window.makeFirstResponder(view)
+            if self.focused { window.makeFirstResponder(view) }
             let term = view.getTerminal()
             term.refresh(startRow: 0, endRow: term.rows)
             view.needsDisplay = true

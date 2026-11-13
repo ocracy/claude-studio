@@ -12,12 +12,13 @@
 import { snapshot } from "./state.mjs"
 import { notify } from "./push.mjs"
 import * as tmux from "./tmux.mjs"
-import { choiceActions, readChoices } from "./choices.mjs"
+import { choiceActions, lastSpokenLine, readChoices } from "./choices.mjs"
 
 const INTERVAL = 2500
 
 /** tmux name → last state seen, so only changes are acted on. */
 const lastSeen = new Map()
+const turnStarted = new Map()
 
 let timer = null
 
@@ -51,6 +52,9 @@ async function tick() {
       alive.add(session.tmux)
       const previous = lastSeen.get(session.tmux)
       lastSeen.set(session.tmux, session.state)
+      if (session.state === "working" && previous !== "working") {
+        turnStarted.set(session.tmux, Date.now())
+      }
 
       // Only the moment of handing the turn back, and only from a session that
       // was actually working — an idle tab that gets opened reports "waiting"
@@ -60,13 +64,18 @@ async function tick() {
         // choice: answering it should not cost an app launch, a terminal
         // attach and a keyboard. Read once, here — the pane is a tmux call and
         // this loop runs every 2.5 seconds for every session.
-        const choices = readChoices(tmux.captureRaw(session.tmux))
+        const raw = tmux.captureRaw(session.tmux)
+        const choices = readChoices(raw)
+        const asking = session.asking || Boolean(choices?.options?.length)
+        const started = turnStarted.get(session.tmux)
         await notify({
-          title: `${session.name} is waiting`,
-          body: choices?.question || `${project.name} — Claude finished and needs you.`,
+          title: asking ? `${session.name} is waiting` : `${session.name} finished`,
+          body: choices?.question || lastSpokenLine(raw) || `${project.name} — Claude finished and needs you.`,
           tmux: session.tmux,
           project: project.path,
           actions: choiceActions(choices),
+          finished: !asking,
+          elapsed: started ? (Date.now() - started) / 1000 : 0,
         }).catch(() => {})
       }
     }
@@ -74,5 +83,9 @@ async function tick() {
 
   for (const name of lastSeen.keys()) {
     if (!alive.has(name)) lastSeen.delete(name)
+  }
+  for (const [name] of turnStarted) {
+    const state = lastSeen.get(name)
+    if (state !== "working" && state !== "waiting") turnStarted.delete(name)
   }
 }

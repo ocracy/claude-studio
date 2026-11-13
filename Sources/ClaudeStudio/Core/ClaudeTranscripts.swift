@@ -107,6 +107,128 @@ enum ClaudeTranscripts {
         return line.count > 90 ? String(line.prefix(90)) + "…" : line
     }
 
+    struct Message: Identifiable, Hashable {
+        enum Role { case user, claude, tools }
+        var id: Int
+        var role: Role
+        var text: String
+    }
+
+    static func messages(of url: URL, limit: Int = 400) -> [Message] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let window: UInt64 = 24 * 1024 * 1024
+        try? handle.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? handle.readToEnd() else { return [] }
+
+        var out: [Message] = []
+        func append(_ role: Message.Role, _ text: String) {
+            if let last = out.last, last.role == role {
+                out[out.count - 1].text += role == .tools ? " · " + text : "\n\n" + text
+            } else {
+                out.append(Message(id: out.count, role: role, text: text))
+            }
+        }
+
+        for line in data.split(separator: UInt8(ascii: "\n")) {
+            guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  let type = object["type"] as? String, type == "user" || type == "assistant",
+                  object["isSidechain"] as? Bool != true,
+                  object["isMeta"] as? Bool != true,
+                  let message = object["message"] as? [String: Any]
+            else { continue }
+
+            if let content = message["content"] as? String {
+                if let text = readable(content) { append(type == "user" ? .user : .claude, text) }
+                continue
+            }
+            guard let blocks = message["content"] as? [[String: Any]] else { continue }
+            for block in blocks {
+                switch block["type"] as? String {
+                case "text":
+                    if let value = block["text"] as? String, let text = readable(value) {
+                        append(type == "user" ? .user : .claude, text)
+                    }
+                case "tool_use":
+                    if let name = block["name"] as? String { append(.tools, name) }
+                default:
+                    break
+                }
+            }
+        }
+        return Array(out.suffix(limit))
+    }
+
+    static func search(projectPath: String, query: String) -> Set<String> {
+        var needle = Array(query.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        guard !needle.isEmpty else { return [] }
+        fold(&needle)
+        let files = directories(for: projectPath).flatMap { directory in
+            ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension == "jsonl" }
+        }
+        let matches = Matches()
+        DispatchQueue.concurrentPerform(iterations: files.count) { index in
+            guard let data = try? Data(contentsOf: files[index], options: .alwaysMapped) else { return }
+            var haystack = [UInt8](data)
+            fold(&haystack)
+            let found = haystack.withUnsafeBytes { hay in
+                needle.withUnsafeBytes { pin in
+                    memmem(hay.baseAddress, hay.count, pin.baseAddress, pin.count) != nil
+                }
+            }
+            if found { matches.add([files[index].deletingPathExtension().lastPathComponent]) }
+        }
+        return matches.ids
+    }
+
+    static func fold(_ bytes: inout [UInt8]) {
+        bytes.withUnsafeMutableBufferPointer { buffer in
+            let count = buffer.count
+            var index = 0
+            while index < count {
+                let byte = buffer[index]
+                if byte >= 0x41, byte <= 0x5A {
+                    buffer[index] = byte | 0x20
+                } else if byte >= 0xC3, byte <= 0xC5, index + 1 < count {
+                    let next = buffer[index + 1]
+                    if byte == 0xC3, next >= 0x80, next <= 0x9E, next != 0x97 {
+                        buffer[index + 1] = next + 0x20
+                    } else if byte != 0xC3, next == 0x9E {
+                        buffer[index + 1] = 0x9F
+                    }
+                    index += 1
+                }
+                index += 1
+            }
+        }
+    }
+
+    private final class Matches: @unchecked Sendable {
+        private let lock = NSLock()
+        private var found: Set<String> = []
+
+        func add(_ ids: [String]) { lock.withLock { found.formUnion(ids) } }
+        var ids: Set<String> { lock.withLock { found } }
+    }
+
+    private static func readable(_ raw: String) -> String? {
+        if let start = raw.range(of: "<command-name>"), let end = raw.range(of: "</command-name>"),
+           start.upperBound <= end.lowerBound {
+            let name = String(raw[start.upperBound..<end.lowerBound])
+            var arguments = ""
+            if let open = raw.range(of: "<command-args>"), let close = raw.range(of: "</command-args>"),
+               open.upperBound <= close.lowerBound {
+                arguments = String(raw[open.upperBound..<close.lowerBound])
+            }
+            return (name + " " + arguments).trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !text.hasPrefix("<") else { return nil }
+        return text.count > 4000 ? String(text.prefix(4000)) + "…" : text
+    }
+
     /// Is there a resumable conversation for this project?
     static func exists(projectPath: String, sessionID: String) -> Bool {
         guard !sessionID.isEmpty else { return false }

@@ -171,6 +171,64 @@ struct CommandPalette: View {
                                title: "New terminal", shortcut: "⇧⌘T") {
             model.newTerminal()
         })
+        out.append(PaletteItem(id: "new-worktree-session", icon: "arrow.triangle.branch", group: "Action",
+                               title: "New session in a worktree", subtitle: "claude --worktree") {
+            let suffix = String(UUID().uuidString.prefix(4)).lowercased()
+            model.newSession(worktree: "session-\(suffix)")
+        })
+
+        if let tab = model.activeTab {
+            if tab.kind.isTerminal {
+                out.append(PaletteItem(id: "find", icon: "magnifyingglass", group: "Terminal",
+                                       title: "Find in terminal", shortcut: "⌘F") {
+                    model.findOpen = true
+                })
+            }
+            if let panes = model.splitPanes {
+                out.append(PaletteItem(id: "split-maximize", icon: "arrow.up.left.and.arrow.down.right",
+                                       group: "Pane",
+                                       title: model.splitMaximized ? "Restore split" : "Maximize pane") {
+                    model.splitMaximized.toggle()
+                })
+                out.append(PaletteItem(id: "split-close", icon: "xmark.square", group: "Pane",
+                                       title: "Close pane") {
+                    model.closePane(panes.contains { $0.id == tab.id } ? tab.id : panes[1].id)
+                })
+            } else {
+                out.append(PaletteItem(id: "split-right", icon: "rectangle.split.2x1", group: "Pane",
+                                       title: "Split right", shortcut: "⌘D") {
+                    model.split(.horizontal)
+                })
+                out.append(PaletteItem(id: "split-down", icon: "rectangle.split.1x2", group: "Pane",
+                                       title: "Split down", shortcut: "⇧⌘D") {
+                    model.split(.vertical)
+                })
+            }
+            if tab.kind == .session {
+                out.append(PaletteItem(id: "cycle-mode", icon: "arrow.triangle.2.circlepath",
+                                       group: "Claude", title: "Cycle mode",
+                                       subtitle: "default · accept edits · plan", shortcut: "⇧⇥") {
+                    model.cycleMode(of: tab)
+                })
+                out.append(PaletteItem(id: "change-model", icon: "cpu", group: "Claude",
+                                       title: "Change model", subtitle: "/model") {
+                    model.openModelPicker(in: tab)
+                })
+            }
+        }
+
+        out.append(PaletteItem(id: "changes", icon: "plusminus", group: "Action",
+                               title: "Changes", subtitle: "uncommitted diff") {
+            model.changesOpen = true
+        })
+        out.append(PaletteItem(id: "conversations", icon: "clock.arrow.circlepath", group: "Action",
+                               title: "Conversations", subtitle: "every transcript of this project") {
+            model.conversationsOpen = true
+        })
+        out.append(PaletteItem(id: "switch-project", icon: "square.stack", group: "Workspace",
+                               title: "Switch project", shortcut: "⇧⌘O") {
+            model.projectSwitcherOpen = true
+        })
 
         for record in model.openSessions {
             out.append(PaletteItem(id: "s-\(record.tmux)", icon: "bubble.left.and.bubble.right",

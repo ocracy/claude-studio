@@ -987,6 +987,7 @@ async function openSettings() {
   $("push-enabled").checked = on
   $("push-projects-wrap").classList.toggle("hidden", !on)
   $("push-silent-row").classList.toggle("hidden", !on)
+  $("push-finished-row").classList.toggle("hidden", !on)
 
   if (!on) {
     $("push-note").textContent = window.matchMedia("(display-mode: standalone)").matches
@@ -1018,6 +1019,7 @@ async function openSettings() {
   }
 
   $("push-silent").checked = Boolean(status.preferences?.silent)
+  $("push-finished").value = String(status.preferences?.finishedAfter ?? -1)
   renderProjectChoices(status.preferences?.projects ?? [])
 }
 
@@ -1161,6 +1163,18 @@ $("push-silent").onchange = async (event) => {
     body: JSON.stringify({
       endpoint: subscription.endpoint,
       preferences: { silent: event.target.checked },
+    }),
+  }).catch((error) => toast(error.message))
+}
+
+$("push-finished").onchange = async (event) => {
+  const subscription = await currentSubscription()
+  if (!subscription) return
+  await api("/api/push/preferences", {
+    method: "POST",
+    body: JSON.stringify({
+      endpoint: subscription.endpoint,
+      preferences: { finishedAfter: Number(event.target.value) },
     }),
   }).catch((error) => toast(error.message))
 }

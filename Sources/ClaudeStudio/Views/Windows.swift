@@ -40,6 +40,10 @@ final class WindowManager: NSObject, NSWindowDelegate {
         window.window.makeKeyAndOrderFront(nil)
     }
 
+    func isOpen(_ project: Project) -> Bool {
+        controllers.contains { $0.project?.path == project.path }
+    }
+
     func forget(_ controller: StudioWindow) {
         controllers.removeAll { $0 === controller }
     }
@@ -106,7 +110,14 @@ final class WindowManager: NSObject, NSWindowDelegate {
             else { controllers.first(where: \.isKey)?.window.performClose(nil) }
         case let .selectTab(index): model.selectTab(index)
         case .palette:      model.paletteOpen.toggle()
-        case .nextTab:      model.selectNextTab(1)
+        case .switchProject: model.projectSwitcherOpen.toggle()
+        case .splitRight:   model.split(.horizontal)
+        case .splitDown:    model.split(.vertical)
+        case .find:         if model.activeTab?.kind.isTerminal == true { model.findOpen = true }
+        case .zoomPane:     if model.splitPanes != nil { model.splitMaximized.toggle() }
+        case .otherPane:    model.focusOtherPane()
+        case .toggleSidebar: model.sidebarHidden.toggle()
+        case .nextTab:     model.selectNextTab(1)
         case .previousTab:  model.selectNextTab(-1)
         case .openFolder:   break
         }

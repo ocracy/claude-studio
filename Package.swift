@@ -21,5 +21,10 @@ let package = Package(
             name: "StudioBridge",
             path: "Sources/StudioBridge"
         ),
+        .testTarget(
+            name: "ClaudeStudioTests",
+            dependencies: ["ClaudeStudio"],
+            path: "Tests/ClaudeStudioTests"
+        ),
     ]
 )

@@ -15,6 +15,7 @@ The app's language is **English** — user-facing strings, code and comments ali
 
 ```bash
 swift build      # fast compile check
+swift test       # unit tests (Tests/ClaudeStudioTests): parsing and pure logic only
 ./build.sh       # release build + "Claude Studio.app" bundle
 ./install.sh     # build + install into /Applications + launch
 ./dist.sh        # release artifact: ClaudeStudio.zip (asset name the updater expects)
@@ -24,6 +25,16 @@ Release flow: bump `VERSION` → `./dist.sh` → commit and push →
 `gh release create v<VERSION> ClaudeStudio.zip --title "Claude Studio v<VERSION>" --notes "…"`.
 `VERSION` is the single source of truth; `build.sh` and `dist.sh` both read it, and
 `Updater` compares the installed `CFBundleShortVersionString` against the release tag.
+The repository it asks is `CSUpdateRepository` in `Info.plist`, which `build.sh`
+takes from `git remote get-url origin` (falling back to `ocracy/claude-studio`): a
+build made from a fork follows the fork's releases, so an upstream release can never
+offer to replace a fork's build with upstream's.
+
+Tests cover what can be checked without a window or tmux: transcript tail parsing,
+model names, mode footers, context limits, diff numbering, `gh` and usage JSON, the
+search case-fold. Logic that needs testing is pulled out of views into `Core` as a
+static function taking plain values (`GitChanges.numbered`, `PullRequests.parse`,
+`PlanUsage.parse`, `SessionDetails.parseTail`).
 
 ## Layout
 
@@ -52,6 +63,10 @@ Sources/ClaudeStudio/
 │   ├── HookBridge.swift       # Claude Code hooks → session state
 │   ├── SessionStates.swift    # the app-wide reader: state files, pane titles, screens
 │   ├── PaneReader.swift       # what a session is waiting FOR, read off its screen
+│   ├── SessionDetails.swift   # session header: model + context (transcript), mode (screen)
+│   ├── GitChanges.swift       # uncommitted changes: header counts + the diff sheet
+│   ├── PlanUsage.swift        # plan limits (5h / week / scoped) for the status bar
+│   ├── PullRequests.swift     # `gh pr view` for the branch: number, state, checks
 │   ├── ClaudeTranscripts.swift# resume availability check
 │   ├── Settings.swift         # user preferences (sound, notifications, terminal)
 │   ├── Updater.swift          # GitHub release self-updater
@@ -59,6 +74,7 @@ Sources/ClaudeStudio/
 │   └── StudioModel.swift      # all state for one window
 └── Views/                 # Windows, RootView, WelcomeView, StudioView, Sidebar, Detail,
                            # Sheets, SettingsWindow, CommandPalette, Markdown, TerminalHost,
+                           # ChangesSheet, ConversationsSheet, ProjectSwitcher, FindSheet,
                            # Island (the panel above every app, owned by no window)
 
 Sources/StudioBridge/       # second executable: the MCP server the app registers with
@@ -236,9 +252,112 @@ Bridge/                     # cs-bridge: phone access over a private mesh. Shipp
   is proof. The hook only gets a say when tmux cannot be read, and even then the
   sixty-second idle Notification is refused by its message text — it fires on
   every finished turn left alone for a minute and would put all of them back into
-  orange permanently. `Tmux.capturePanes` reads every waiting session in ONE
+  orange permanently. The hook script drops that reminder before writing anything
+  (`idle_prompt` or "waiting for your input"): rewriting the file bumped `ts` past
+  the `seen` mark, so a turn already read came back as `done` and announced itself
+  a second time. `Tmux.capturePanes` reads every waiting session in ONE
   chained call, and only sessions `list-panes` just confirmed: a `capture-pane` on
   a session that has gone takes the whole batch's output with it.
+- **Session header** (`SessionDetails`, `GitChanges`, polled every 2.5 s for the
+  visible session tab only): the MODE is read off the TUI footer ("accept edits on",
+  "plan mode on", "auto mode on", "bypass permissions on"; none of them is the default
+  mode) — but while a numbered prompt covers the footer the previous mode is kept, or
+  the chip would flip to "Default" under every question. MODEL and CONTEXT come from
+  the transcript's tail (last 512 KB): the newest non-sidechain assistant entry,
+  context = `input_tokens` + both cache counts. It is shown as tokens, never a
+  percentage — the window size is not in the transcript and guessing it is worse
+  than not saying. The mode chip sends Shift+Tab (`ESC [ Z`); the model chip types
+  `/model` + Enter and is DISABLED while the session is working, because the text
+  would land in the middle of a turn. Changes are `git diff HEAD --relative
+  --no-renames` plus untracked files: `--relative` so tracked and untracked paths
+  agree when the project is a subdirectory of its repository, `--no-renames` because
+  numstat writes a rename as `old => new` and it would match no patch.
+- **Conversation search** (`ClaudeTranscripts.search`, the clock button in Sessions):
+  every transcript of the project, including ones started outside Claude Studio. NOT
+  `grep`, for two reasons. `Process` passes its arguments through the file-system
+  representation, which DECOMPOSES Unicode (NFD): "ü" arrives as "u" plus a combining
+  mark and never matches the NFC text in the file — Turkish searches silently found
+  nothing. And BSD `grep -i` ran at ~80 MB/s, nine seconds over 680 MB of transcripts.
+  Instead each file is mapped, case-folded in place (ASCII, Latin-1, Ğ/Ş) and searched
+  with `memmem`, files in parallel: about half a second. Turkish dotless ı and dotted
+  İ are not folded — both sides must keep their length.
+- **Visual language**: grey does the work, colour only means something. Selection is
+  a neutral label-colour wash (not the accent, not macOS blue); the accent marks the
+  project, orange means "on you", green means running. Planes are separated by tone
+  and spacing, not lines: no rule under the top bar, tab bar or sidebar footer, tabs
+  are rounded and the active one is the content surface. Section headings are
+  sentence case with an icon (`SectionLabel(text:icon:)`), never uppercase. Unread is
+  a dot at the right edge of the row, not bold text. The panes are a menu at the top
+  of the sidebar (icon + name, right-click to reorder); there is no activity rail.
+  The project row at the very top of the sidebar is the project switcher (⌘⇧O):
+  other recent projects with their live session counts from `SessionStates`, ⌘1–9 to
+  jump, Enter for the highlighted one; each still opens in its own window.
+- **Split panes** (`StudioModel.splitTabs`, ⌘D right, ⌘⇧D down, "Open in split" on a
+  tab): two tabs side by side, each a rounded card on the chrome. `activeTabID` is
+  always the FOCUSED pane; choosing any other tab replaces the focused pane, never
+  the other one. A click inside a terminal focuses its pane through a local
+  mouse-down monitor in `TerminalContainer` (SwiftUI gestures never see clicks that
+  land in an NSView), and keyboard focus moves only on a false→true transition of
+  `focused`, so a text field in a pane header keeps its focus while you type.
+  Closing a tab that is in a pane ends the split; "Close pane" ends it and keeps the
+  tab. Tabs carry a kind icon (Claude's asterisk in its orange) with the state dot
+  on its corner.
+  Icons are outline SF Symbols at light weight in the tertiary text colour (12–13 pt
+  in rows and buttons); filled glyphs only for state (bell, bookmark).
+- **Worktree sessions** (`SessionRecord.worktree`, the checkbox in the "+" popover):
+  a new one starts as `claude --worktree <name>`, which creates
+  `<project>/.claude/worktrees/<name>` on branch `worktree-<name>`. Every later start
+  (reopen, resume) `cd`s into that folder instead, because Claude stores the
+  transcript under the worktree's path — resuming from the project root finds
+  nothing. `StudioModel.workPath(for:)` is what the header, Changes and the PR badge
+  read, so a worktree session shows ITS diff and ITS pull request.
+- **Session header extras**: the PR badge is `gh pr view` in the work path, at most
+  once a minute (nil without `gh`, a remote or a PR). Tasks are the last `TodoWrite`
+  in the transcript; without one, the last `ExitPlanMode` plan. Context is shown
+  against 1M unless the model is a Haiku without `[1m]` and has never gone past
+  200k; amber at 60%, red at 80% with a hint to `/compact`.
+- **Diff comments** (Changes sheet): click a line, write, Add; "Send to Claude" (⌘↩)
+  types every comment as one message into the active session — or the first open
+  one — WITHOUT pressing Enter, so it can be read before it goes.
+- **Find (⌘F)**: searches `tmux capture-pane` history (10,000 lines), not SwiftTerm's
+  buffer — tmux redraws the screen, so the terminal's own scrollback is nearly empty.
+- **Copy needs `allowMouseReporting = false`**: with it on (SwiftTerm's default)
+  every linefeed clears the selection (`linefeed` → `selectNone`), and Claude and
+  tmux redraw constantly — the selection vanished before ⌘C, whose menu item is
+  enabled only while a selection is active, so ⌘C just beeped. Nothing is lost by
+  turning it off: tmux runs with `mouse off`, so no program inside ever receives
+  mouse events, and the wheel is routed to copy-mode by the app.
+- **Terminal appearance** (Settings → Terminal): font family (any fixed-pitch
+  family installed), size, line spacing (SwiftTerm `lineSpacing`, 1.0–1.6), cursor
+  shape and blink (`setCursorStyle`; a program can still override it), bold as
+  bright, and SwiftTerm's Metal renderer (off by default). Every change is applied
+  to all open terminals through `AppSettings.terminalAppearanceChanged`.
+- **Paste (⌘V)**: file URLs on the clipboard are typed as escaped paths; image data
+  with no text is written to `dropped/` and typed as its path, same as a drop.
+- **Polling costs**: the session header refresh (2.5 s) is skipped while the app is
+  not active; the transcript tail is re-read only when its size or mtime changed
+  (`SessionDetails.transcriptStamp`); the header's git summary counts lines of at
+  most 200 untracked files of up to 256 KB each; ⌘F waits 150 ms after typing.
+  `SessionStates` keeps its own pace regardless — notifications depend on it.
+- **Plan usage** (`PlanUsage`, the "Used" meter at the left of the status bar): read
+  from `cachedUsageUtilization.utilization.limits` in `~/.claude.json`, the cache
+  Claude Code itself refreshes. Only that key is read and only when the file's mtime
+  changes (checked every 30 s); the app never calls the usage API and never touches
+  the OAuth token. The statusLine `rate_limits` payload is not used: the statusLine
+  command belongs to the user. Kinds: `session` (5h), `weekly_all`, `weekly_scoped`
+  (shown by its model name). 70% turns amber, 90% red.
+- **What gets announced**: a QUESTION (`waiting`) always. A finished turn (`done`)
+  only when the turn ran at least as long as the user's threshold:
+  `notify.finishedAfterMinutes` on the Mac, `preferences.finishedAfter` per device on
+  the phone; `-1` is never (the default on both), `0` is always. A banner for every
+  finished turn ("Finished — nothing to answer.") was most of the noise and buried
+  the one that needed an answer. The turn's clock starts on every transition INTO
+  `working` — including the one out of a question, so the time the user took to
+  answer is not counted — and is dropped once the session is neither working nor
+  waiting, so a turn too short for the poll to see measures zero instead of
+  inheriting the previous turn's start. The body is the session's last spoken line
+  (`PaneReader.lastSpokenLine` / `lastSpokenLine` in `choices.mjs`). The test push
+  carries no `finished` flag, so it is never filtered.
 - **Green is checked against the screen too.** `Stop` only fires when Claude
   finishes cleanly, so a session killed mid-turn — or one whose client went away —
   keeps a state file that says `working` forever, and the dot stayed green over a

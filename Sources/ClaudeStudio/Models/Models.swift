@@ -97,6 +97,11 @@ struct SessionRecord: Identifiable, Hashable, Codable {
     /// matter what the conversation turned out to be about. `nil` means the
     /// record predates the field, and the old guess is used for it.
     var autoNamed: Bool?
+    var worktree: String?
+
+    func worktreePath(in project: Project) -> String? {
+        worktree.map { project.path + "/.claude/worktrees/" + $0 }
+    }
 
     /// Tab and hook identifier (`CS_TAB_ID`).
     var tabKey: String { "session:\(tmux)" }
@@ -145,6 +150,7 @@ struct SessionRecord: Identifiable, Hashable, Codable {
         lastUsed  = value(.lastUsed, Date())
         saved     = value(.saved, false)
         autoNamed = (try? box.decodeIfPresent(Bool.self, forKey: .autoNamed)) ?? nil
+        worktree  = (try? box.decodeIfPresent(String.self, forKey: .worktree)) ?? nil
     }
 
     static func make(projectShortID: String, name: String,
@@ -515,10 +521,39 @@ extension Date {
         return f.localizedString(for: self, relativeTo: Date())
     }
 
+    var compactAge: String {
+        let seconds = max(0, Int(Date().timeIntervalSince(self)))
+        if seconds < 60 { return "now" }
+        if seconds < 3600 { return "\(seconds / 60)m" }
+        if seconds < 86400 { return "\(seconds / 3600)h" }
+        return "\(seconds / 86400)d"
+    }
+
     var shortStamp: String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US")
         f.dateFormat = "d MMM HH:mm"
         return f.string(from: self)
+    }
+}
+
+extension StudioTab.Kind {
+    var isTerminal: Bool {
+        switch self {
+        case .session, .terminal, .service, .script: return true
+        case .command, .skill, .cron:                return false
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .session:  return "asterisk"
+        case .terminal: return "apple.terminal"
+        case .service:  return "shippingbox"
+        case .script:   return "scroll"
+        case .command:  return "command"
+        case .skill:    return "sparkles"
+        case .cron:     return "calendar.badge.clock"
+        }
     }
 }

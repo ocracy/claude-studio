@@ -5,24 +5,97 @@ import AppKit
 struct ContentArea: View {
     @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
+    @State private var fraction: CGFloat = 0.5
+    @State private var dragStart: CGFloat?
 
     var body: some View {
         Group {
-            if let tab = model.activeTab {
-                content(for: tab)
+            if let panes = model.splitPanes, !model.splitMaximized {
+                split(panes)
+            } else if let tab = model.activeTab {
+                card(tab, split: false)
             } else {
                 EmptyStudio(model: model)
             }
         }
+        .padding(.horizontal, 6)
+        .padding(.bottom, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.surface)
+        .background(theme.chromeBase)
+    }
+
+    private func split(_ panes: [StudioTab]) -> some View {
+        GeometryReader { geometry in
+            let horizontal = model.splitAxis == .horizontal
+            let total = (horizontal ? geometry.size.width : geometry.size.height) - 6
+            let first = max(180, min(total - 180, total * fraction))
+            if horizontal {
+                HStack(spacing: 0) {
+                    card(panes[0], split: true).frame(width: first)
+                    divider(horizontal: true, first: first, total: total)
+                    card(panes[1], split: true)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    card(panes[0], split: true).frame(height: first)
+                    divider(horizontal: false, first: first, total: total)
+                    card(panes[1], split: true)
+                }
+            }
+        }
+    }
+
+    private func divider(horizontal: Bool, first: CGFloat, total: CGFloat) -> some View {
+        Color.clear
+            .frame(width: horizontal ? 6 : nil, height: horizontal ? nil : 6)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside {
+                    (horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let start = dragStart ?? first
+                        dragStart = start
+                        let moved = horizontal ? value.translation.width : value.translation.height
+                        fraction = max(0.15, min(0.85, (start + moved) / max(total, 1)))
+                    }
+                    .onEnded { _ in dragStart = nil }
+            )
+    }
+
+    private func card(_ tab: StudioTab, split: Bool) -> some View {
+        let focused = model.activeTabID == tab.id
+        return content(for: tab, focused: focused, split: split)
+            .overlay(alignment: .bottomTrailing) {
+                if split && !tab.kind.isTerminal {
+                    PaneControls(model: model, tab: tab)
+                        .padding(4)
+                        .background(Capsule().fill(theme.chromeBase))
+                        .padding(8)
+                }
+            }
+            .background(theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(split && focused ? theme.accent.opacity(0.45) : theme.separator.opacity(0.45))
+            )
+            .simultaneousGesture(TapGesture().onEnded {
+                if model.activeTabID != tab.id { model.activeTabID = tab.id }
+            })
+            .id(tab.id)
     }
 
     @ViewBuilder
-    private func content(for tab: StudioTab) -> some View {
+    private func content(for tab: StudioTab, focused: Bool, split: Bool) -> some View {
         switch tab.kind {
         case .session, .terminal, .service, .script:
-            TerminalPane(model: model, tab: tab)
+            TerminalPane(model: model, tab: tab, focused: focused, split: split)
         case .command:
             if let command = model.claudeCommands.command(named: tab.ref) {
                 ClaudeCommandPane(model: model, command: command)
@@ -59,31 +132,96 @@ private struct EmptyStudio: View {
     @ObservedObject var model: StudioModel
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 30, weight: .ultraLight))
-                .foregroundStyle(theme.text3)
-            Text("Pick a session, skill, schedule, service or terminal on the left")
-                .font(Theme.ui(12.5))
-                .foregroundStyle(theme.text3)
-            HStack(spacing: 8) {
-                SmallButton(title: "Claude session", icon: "plus", prominent: true) {
-                    model.newSession()
-                }
-                SmallButton(title: "Terminal", icon: "plus") { model.newTerminal() }
+        VStack(alignment: .leading, spacing: 2) {
+            option("plus.bubble", "New session", "Start Claude in \(model.project.name)") {
+                model.newSession()
+            }
+            option("clock.arrow.circlepath", "Conversations", "Search, read and resume past transcripts") {
+                model.conversationsOpen = true
+            }
+            option("plusminus", "Changes", changesDetail) {
+                model.changesOpen = true
+            }
+            option("terminal", "Terminal", "Open a shell that belongs to this project") {
+                model.newTerminal()
+            }
+            option("command", "Command palette", "Every session, skill and service by name · ⌘P") {
+                model.paletteOpen = true
             }
         }
+        .frame(width: 340)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var changesDetail: String {
+        guard let changes = model.changes, changes.files > 0 else { return "No uncommitted edits" }
+        return "\(changes.files) \(changes.files == 1 ? "file" : "files") · +\(changes.added) −\(changes.removed)"
+    }
+
+    private func option(_ icon: String, _ title: String, _ detail: String,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HoverRow(padding: EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10), radius: 8) {
+                HStack(alignment: .top, spacing: 11) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.text3)
+                        .frame(width: 16, height: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(Theme.ui(13))
+                            .foregroundStyle(theme.text)
+                        Text(detail)
+                            .font(Theme.ui(11.5))
+                            .foregroundStyle(theme.text3)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
 // MARK: - Terminal
 
+struct PaneControls: View {
+    @ObservedObject var model: StudioModel
+    let tab: StudioTab
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if model.splitPanes != nil {
+                IconButton(icon: model.splitMaximized ? "arrow.down.right.and.arrow.up.left"
+                                                      : "arrow.up.left.and.arrow.down.right",
+                           help: model.splitMaximized ? "Restore split" : "Maximize pane") {
+                    model.activeTabID = tab.id
+                    model.splitMaximized.toggle()
+                }
+                IconButton(icon: "xmark", help: "Close pane (keeps the tab)") {
+                    model.closePane(tab.id)
+                }
+            } else {
+                IconButton(icon: "rectangle.split.2x1", help: "Split right (⌘D)") {
+                    model.activeTabID = tab.id
+                    model.split(.horizontal)
+                }
+                IconButton(icon: "rectangle.split.1x2", help: "Split down (⌘⇧D)") {
+                    model.activeTabID = tab.id
+                    model.split(.vertical)
+                }
+            }
+        }
+    }
+}
+
 private struct TerminalPane: View {
     @Environment(\.studioTheme) private var theme
     @ObservedObject var model: StudioModel
     let tab: StudioTab
+    var focused = true
+    var split = false
     @State private var editingTitle = false
+    @State private var showingTasks = false
     @State private var draftTitle = ""
     @FocusState private var titleFocused: Bool
 
@@ -93,7 +231,11 @@ private struct TerminalPane: View {
             if tab.kind == .session, model.sessionNeedsReopen(tab.terminalKey) {
                 linkNotice
             }
-            TerminalHost(key: tab.terminalKey, engine: model.engine)
+            TerminalHost(key: tab.terminalKey, engine: model.engine, focused: focused) {
+                if model.activeTabID != tab.id { model.activeTabID = tab.id }
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
         }
     }
 
@@ -120,6 +262,7 @@ private struct TerminalPane: View {
 
     private var header: some View {
         HStack(spacing: 10) {
+            TabKindIcon(kind: tab.kind, size: 12)
             if editingTitle {
                 // The field must take focus the moment it appears; otherwise your
                 // keystrokes go to the terminal and renaming "does not work".
@@ -164,6 +307,8 @@ private struct TerminalPane: View {
                 .background(Capsule().fill(theme.field))
             }
 
+            if tab.kind == .session { sessionChips }
+
             Spacer(minLength: 8)
 
             Text(meta)
@@ -173,11 +318,12 @@ private struct TerminalPane: View {
                 .truncationMode(.head)
 
             actions
+            PaneControls(model: model, tab: tab)
         }
         .padding(.horizontal, 12)
-        .frame(height: 34)
+        .frame(height: 36)
         .background(theme.surface)
-        .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
+        .opacity(split && !focused ? 0.7 : 1)
     }
 
     @ViewBuilder private var actions: some View {
@@ -192,6 +338,21 @@ private struct TerminalPane: View {
                 }
             }
         case .session:
+            pullRequestChip
+            if let changes = model.changes, changes.files > 0 {
+                Button { model.changesOpen = true } label: {
+                    HStack(spacing: 5) {
+                        Text("+\(changes.added)").foregroundStyle(Theme.running)
+                        Text("−\(changes.removed)").foregroundStyle(Theme.danger)
+                    }
+                    .font(Theme.mono(11))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.field))
+                }
+                .buttonStyle(.plain)
+                .help("\(changes.files) changed \(changes.files == 1 ? "file" : "files") — show the diff")
+            }
             IconButton(icon: "pencil", help: "Rename", action: beginRename)
             IconButton(icon: "xmark.circle", help: "Close session") {
                 model.closeTab(id: tab.id)
@@ -218,6 +379,119 @@ private struct TerminalPane: View {
     }
 
     private var renameable: Bool { tab.kind == .session || tab.kind == .terminal }
+
+    @ViewBuilder private var sessionChips: some View {
+        let details = model.sessionDetails[tab.terminalKey]
+        let working = model.engine.attention[tab.terminalKey] == .working
+        if let mode = details?.mode {
+            chip(mode.label, icon: modeIcon(mode),
+                 tint: mode == .bypass ? Theme.danger : nil,
+                 help: "Switch permission mode (⇧⇥)") { model.cycleMode(of: tab) }
+        }
+        if let name = details?.model {
+            chip(name, icon: "cpu",
+                 help: working ? "Change the model once Claude is done" : "Change model (/model)") {
+                model.openModelPicker(in: tab)
+            }
+            .disabled(working)
+        }
+        if let progress = details?.todoProgress, let todos = details?.todos {
+            chip(progress, icon: "checklist", help: "Claude's task list") { showingTasks = true }
+                .popover(isPresented: $showingTasks, arrowEdge: .bottom) { TaskListView(todos: todos) }
+        } else if let plan = details?.plan {
+            chip("Plan", icon: "list.bullet.clipboard", help: "The plan Claude proposed last") { showingTasks = true }
+                .popover(isPresented: $showingTasks, arrowEdge: .bottom) { PlanView(plan: plan) }
+        }
+        if let label = details?.contextLabel, let fraction = details?.contextFraction {
+            HStack(spacing: 6) {
+                ZStack(alignment: .leading) {
+                    Capsule().fill(theme.separator)
+                    Capsule()
+                        .fill(fraction >= 0.8 ? Theme.danger : fraction >= 0.6 ? Theme.warning : theme.text3)
+                        .frame(width: max(2, 34 * fraction))
+                }
+                .frame(width: 34, height: 4)
+                Text(label)
+                    .font(Theme.ui(11))
+                    .foregroundStyle(fraction >= 0.8 ? Theme.danger : theme.text3)
+                    .lineLimit(1)
+            }
+            .help(fraction >= 0.8
+                  ? "Context is filling up — /compact keeps the conversation going with a summary"
+                  : "Context used of \((details?.contextLimit ?? 0) / 1000)k")
+        }
+    }
+
+    @ViewBuilder private var pullRequestChip: some View {
+        if model.activeTabID == tab.id, let pull = model.pullRequest {
+            Button { NSWorkspace.shared.open(pull.url) } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: pull.state == .merged ? "arrow.triangle.merge" : "arrow.triangle.pull")
+                        .font(.system(size: 10, weight: .light))
+                        .foregroundStyle(pull.state == .merged ? Color.purple : pull.state == .closed ? Theme.danger : theme.text2)
+                    Text("#\(pull.number)")
+                        .font(Theme.ui(11))
+                        .foregroundStyle(theme.text2)
+                    switch pull.checks {
+                    case .passed:  Image(systemName: "checkmark").foregroundStyle(Theme.running)
+                    case .failed:  Image(systemName: "xmark").foregroundStyle(Theme.danger)
+                    case .pending: Image(systemName: "circle.dotted").foregroundStyle(Theme.warning)
+                    case .none:    EmptyView()
+                    }
+                }
+                .font(.system(size: 9.5, weight: .semibold))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(theme.field))
+            }
+            .buttonStyle(.plain)
+            .help(pullRequestHelp(pull))
+        }
+    }
+
+    private func pullRequestHelp(_ pull: PullRequests.Status) -> String {
+        let state: String
+        switch pull.state {
+        case .open: state = "open"
+        case .draft: state = "draft"
+        case .merged: state = "merged"
+        case .closed: state = "closed"
+        }
+        let checks: String
+        switch pull.checks {
+        case .none: checks = "no checks"
+        case .pending: checks = "checks running"
+        case .passed: checks = "\(pull.total) checks passed"
+        case .failed: checks = "\(pull.failing) of \(pull.total) checks failing"
+        }
+        return "#\(pull.number) \(pull.title) — \(state), \(checks). Click to open on GitHub."
+    }
+
+    private func chip(_ title: String, icon: String, tint: Color? = nil, help: String,
+                      action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 9.5))
+                Text(title).font(Theme.ui(11)).lineLimit(1)
+            }
+            .foregroundStyle(tint ?? theme.text2)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.field))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private func modeIcon(_ mode: SessionDetails.Mode) -> String {
+        switch mode {
+        case .standard:    return "hand.raised"
+        case .acceptEdits: return "pencil.line"
+        case .plan:        return "list.bullet.clipboard"
+        case .auto:        return "wand.and.stars"
+        case .bypass:      return "exclamationmark.shield"
+        }
+    }
 
     private func beginRename() {
         guard renameable else { return }
@@ -905,5 +1179,48 @@ struct PaneHeader<Actions: View>: View {
         .frame(height: 34)
         .background(theme.surface)
         .overlay(alignment: .bottom) { Rectangle().fill(theme.separator).frame(height: 1) }
+    }
+}
+
+private struct TaskListView: View {
+    @Environment(\.studioTheme) private var theme
+    let todos: [SessionDetails.Todo]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tasks")
+                .font(Theme.ui(12.5, .semibold))
+                .foregroundStyle(theme.text)
+                .padding(.bottom, 2)
+            ForEach(todos) { todo in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: todo.status == .completed ? "checkmark.circle.fill"
+                          : todo.status == .inProgress ? "circle.dotted" : "circle")
+                        .font(.system(size: 11, weight: .light))
+                        .foregroundStyle(todo.status == .completed ? Theme.running
+                                         : todo.status == .inProgress ? theme.accent : theme.text3)
+                        .frame(width: 14)
+                    Text(todo.content)
+                        .font(Theme.ui(12))
+                        .foregroundStyle(todo.status == .completed ? theme.text3 : theme.text)
+                        .strikethrough(todo.status == .completed, color: theme.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 340, alignment: .leading)
+    }
+}
+
+private struct PlanView: View {
+    let plan: String
+
+    var body: some View {
+        ScrollView {
+            MarkdownView(text: plan)
+                .padding(16)
+        }
+        .frame(width: 520, height: 480)
     }
 }

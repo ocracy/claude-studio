@@ -48,6 +48,12 @@ cp -R "Bridge" "$APP/Contents/Resources/Bridge"
 chmod +x "$APP/Contents/Resources/Bridge/cs-attach.sh" \
          "$APP/Contents/Resources/Bridge/make-cert.sh"
 
+UPDATE_REPO="$(git remote get-url origin 2>/dev/null | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#\.git$##')"
+case "$UPDATE_REPO" in
+  */*) ;;
+  *) UPDATE_REPO="ocracy/claude-studio" ;;
+esac
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -61,6 +67,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CSUpdateRepository</key><string>${UPDATE_REPO}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSUIElement</key><false/>

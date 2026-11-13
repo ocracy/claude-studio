@@ -117,6 +117,7 @@ final class SessionStates: ObservableObject {
     private var lastStates: [String: HookBridge.State] = [:]
     private var lastScreens: [String: PaneReader.Screen] = [:]
     private var lastLive: Set<String>?
+    private var turnStarted: [String: Date] = [:]
 
     private var activeObserver: Any?
 
@@ -299,14 +300,28 @@ final class SessionStates: ObservableObject {
         // inside a single interval, so requiring a previously recorded `working` was
         // exactly how the quickest answers announced nothing at all.
         if seeded {
+            let after = AppSettings.shared.notifyFinishedAfterMinutes
             for row in rows where row.attention.needsAttention
             && !(attention[row.key]?.needsAttention ?? false) {
+                let elapsed = turnStarted[row.key].map { Date().timeIntervalSince($0) } ?? 0
+                guard row.attention.isQuestion || (after >= 0 && elapsed >= Double(after) * 60)
+                else { continue }
                 AppSettings.shared.announceWaiting(
                     session: row.name, project: row.project,
-                    question: row.attention.isQuestion ? row.question : nil)
+                    question: row.attention.isQuestion ? row.question : nil,
+                    summary: row.detail)
             }
         }
         seeded = true
+
+        for (key, value) in next {
+            if value == .working {
+                if attention[key] != .working { turnStarted[key] = Date() }
+            } else if value != .waiting {
+                turnStarted.removeValue(forKey: key)
+            }
+        }
+        for key in turnStarted.keys where next[key] == nil { turnStarted.removeValue(forKey: key) }
 
         // Publishing an unchanged value still invalidates every view that reads it.
         // At 1.5 s intervals that was a full SwiftUI pass — and a repaint of every

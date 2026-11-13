@@ -15,7 +15,7 @@ enum Theme {
     /// Sidebar, top bar and status bar.
     static let chrome      = Color(nsColor: .windowBackgroundColor)
     /// Selected row / active tab fill.
-    static let selection   = Color(nsColor: .selectedContentBackgroundColor).opacity(0.16)
+    static let selection   = Color(nsColor: .labelColor).opacity(0.09)
     static let hover       = Color(nsColor: .labelColor).opacity(0.06)
     static let separator   = Color(nsColor: .separatorColor)
     /// Card and input field background.
@@ -84,6 +84,12 @@ struct ThemePreset: Identifiable, Equatable, Sendable {
     /// The palettes offered in the picker, default first.
     static let all: [ThemePreset] = [
         claude,
+        ThemePreset(id: "graphite", name: "Graphite", accentHex: "#E8A33D",
+                    bgHex: "#141414", fgHex: "#D4D4D4", ansi: [
+                        "#2A2A2A", "#F14C4C", "#23C483", "#E8A33D",
+                        "#4FA1F0", "#C586C0", "#4EC9B0", "#CCCCCC",
+                        "#6B6B6B", "#FF6B6B", "#3DDC97", "#F5C25B",
+                        "#6CB6FF", "#D7A0D3", "#7FDDC9", "#F2F2F2"]),
         ThemePreset(id: "tokyo-night", name: "Tokyo Night", accentHex: "#7AA2F7",
                     bgHex: "#1A1B26", fgHex: "#C0CAF5", ansi: [
                         "#15161E", "#F7768E", "#9ECE6A", "#E0AF68",
@@ -264,7 +270,7 @@ struct StudioTheme: Equatable {
     /// Selected row. Themed palettes tint it with the accent — that is the whole
     /// point of an accent — while the default keeps macOS's own selection color.
     var selection: Color {
-        isThemed ? accent.opacity(0.20) : Theme.selection
+        isThemed ? Color(nsColor: terminalFG).opacity(0.10) : Theme.selection
     }
 
     /// The "nothing is happening" dot. The status colors stay fixed — they are
@@ -341,12 +347,19 @@ extension NSColor {
 /// Sidebar section heading.
 struct SectionLabel: View {
     let text: String
+    var icon: String? = nil
     @Environment(\.studioTheme) private var studio
     var body: some View {
-        Text(text.uppercased())
-            .font(Theme.sectionLabel())
-            .tracking(0.6)
-            .foregroundStyle(studio.text3)
+        HStack(spacing: 6) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .light))
+                    .frame(width: 16)
+            }
+            Text(text.prefix(1).uppercased() + text.dropFirst())
+                .font(Theme.ui(11.5, .medium))
+        }
+        .foregroundStyle(studio.text3)
     }
 }
 
@@ -393,7 +406,7 @@ struct SmallButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if let icon { Image(systemName: icon).font(.system(size: 9.5, weight: .semibold)) }
+                if let icon { Image(systemName: icon).font(.system(size: 10.5, weight: .regular)) }
                 Text(title).font(Theme.ui(11.5))
             }
             .padding(.horizontal, 10)
@@ -426,8 +439,8 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(hovering ? theme.text : (tint ?? theme.text2))
+                .font(.system(size: 12, weight: .light))
+                .foregroundStyle(hovering ? theme.text : (tint ?? theme.text3))
                 .frame(width: 22, height: 22)
                 .background(RoundedRectangle(cornerRadius: 5).fill(hovering ? theme.hover : .clear))
                 .contentShape(Rectangle())
@@ -435,5 +448,18 @@ struct IconButton: View {
         .buttonStyle(.plain)
         .help(help)
         .onHover { hovering = $0 }
+    }
+}
+
+struct TabKindIcon: View {
+    let kind: StudioTab.Kind
+    var size: CGFloat = 11
+    @Environment(\.studioTheme) private var theme
+
+    var body: some View {
+        Image(systemName: kind.icon)
+            .font(.system(size: size, weight: kind == .session ? .semibold : .light))
+            .foregroundStyle(kind == .session ? Theme.accent : theme.text3)
+            .frame(width: size + 4, height: size + 4)
     }
 }

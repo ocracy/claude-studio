@@ -18,10 +18,44 @@ final class AppSettings: ObservableObject {
     @AppStorage("sound.onRunFinish")   var soundOnRunFinish = true
     /// Show a notification banner.
     @AppStorage("notify.enabled")      var notifyEnabled = true
+    @AppStorage("notify.finishedAfterMinutes") var notifyFinishedAfterMinutes = -1
     /// Show the number of waiting sessions on the Dock icon.
     @AppStorage("notify.badge")        var badgeEnabled = true
     /// Terminal font size.
     @AppStorage("terminal.fontSize")   var terminalFontSize = 12.5
+    @AppStorage("terminal.fontFamily") var terminalFontFamily = ""
+    @AppStorage("terminal.lineSpacing") var terminalLineSpacing = 1.0
+    @AppStorage("terminal.cursor")     var terminalCursor = TerminalCursor.block.rawValue
+    @AppStorage("terminal.cursorBlink") var terminalCursorBlink = true
+    @AppStorage("terminal.boldBright") var terminalBoldBright = true
+    @AppStorage("terminal.gpu")        var terminalGPU = false
+
+    enum TerminalCursor: String, CaseIterable, Identifiable {
+        case block, bar, underline
+        var id: String { rawValue }
+        var label: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+
+    static let terminalAppearanceChanged = Notification.Name("terminalAppearanceChanged")
+
+    static let monospacedFamilies: [String] = NSFontManager.shared.availableFontFamilies.filter { family in
+        guard let font = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: 12) else { return false }
+        return font.isFixedPitch
+            || font.fontDescriptor.symbolicTraits.contains(.monoSpace)
+    }.sorted()
+
+    var terminalFont: NSFont {
+        let size = CGFloat(terminalFontSize)
+        if !terminalFontFamily.isEmpty,
+           let font = NSFontManager.shared.font(withFamily: terminalFontFamily, traits: [], weight: 5, size: size) {
+            return font
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    func terminalAppearanceDidChange() {
+        NotificationCenter.default.post(name: Self.terminalAppearanceChanged, object: nil)
+    }
     /// Reattach to the most recent session when a project opens.
     @AppStorage("session.autoAttach")  var autoAttachLastSession = true
     /// The island at the top of the screen: every project's sessions in one place,
@@ -38,6 +72,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("rail.order")          var railOrder = ""
 
     /// Selectable system sounds — all ship with macOS.
+    static let finishedAfterChoices = [-1, 0, 2, 5, 10, 15]
+
     static let sounds = ["Glass", "Ping", "Pop", "Submarine", "Blow", "Bottle",
                          "Frog", "Funk", "Hero", "Morse", "Purr", "Sosumi", "Tink"]
 
@@ -49,11 +85,13 @@ final class AppSettings: ObservableObject {
     /// for a finished report and for a permission prompt alike, which is the same
     /// flattening the orange dot used to do: the banner that actually needs you
     /// read exactly like the twelve that did not.
-    func announceWaiting(session: String, project: String, question: String? = nil) {
+    func announceWaiting(session: String, project: String,
+                         question: String? = nil, summary: String? = nil) {
         if soundEnabled { Notify.play(soundName) }
         if notifyEnabled {
             Notify.post(title: project, subtitle: session,
-                        body: question?.nilIfEmpty ?? "Finished — nothing to answer.",
+                        body: question?.nilIfEmpty ?? summary?.nilIfEmpty
+                            ?? "Finished — nothing to answer.",
                         sound: nil)
         }
     }

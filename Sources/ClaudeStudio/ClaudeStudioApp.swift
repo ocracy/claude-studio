@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // window and then announced the same session finishing once per window, each
         // time under that window's project name.
         SessionStates.shared.start()
+        PlanUsage.shared.start()
         // The one surface that is not inside a window, and the only one that can
         // answer "which of my eighteen sessions wants something?" while the app is
         // not even in front.
@@ -73,7 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Commands routed from the menu to the key window; applied by `WindowManager.perform`.
 enum StudioCommand {
-    case openFolder, newSession, newTerminal, newTab, closeTab, nextTab, previousTab, palette
+    case openFolder, newSession, newTerminal, newTab, closeTab, nextTab, previousTab, palette, switchProject
+    case splitRight, splitDown, find, zoomPane, otherPane, toggleSidebar
     case selectTab(Int)
 }
 
@@ -115,6 +117,9 @@ enum MainMenuBuilder {
         fileMenu.addItem(action(title: "Open Folder…", key: "o", modifiers: .command) {
             WindowManager.shared.perform(.openFolder)
         })
+        fileMenu.addItem(action(title: "Switch Project…", key: "o", modifiers: [.command, .shift]) {
+            WindowManager.shared.perform(.switchProject)
+        })
         fileMenu.addItem(.separator())
         fileMenu.addItem(action(title: "New Claude Session", key: "n", modifiers: .command) {
             WindowManager.shared.perform(.newSession)
@@ -154,6 +159,31 @@ enum MainMenuBuilder {
             WindowManager.shared.perform(.palette)
         })
         viewMenu.addItem(.separator())
+        viewMenu.addItem(action(title: "Find in Terminal…", key: "f", modifiers: .command) {
+            WindowManager.shared.perform(.find)
+        })
+        viewMenu.addItem(action(title: "Split Right", key: "d", modifiers: .command) {
+            WindowManager.shared.perform(.splitRight)
+        })
+        viewMenu.addItem(action(title: "Split Down", key: "d", modifiers: [.command, .shift]) {
+            WindowManager.shared.perform(.splitDown)
+        })
+        viewMenu.addItem(action(title: "Zoom Pane", key: "\r", modifiers: [.command, .shift]) {
+            WindowManager.shared.perform(.zoomPane)
+        })
+        let arrows = [NSRightArrowFunctionKey, NSLeftArrowFunctionKey, NSDownArrowFunctionKey, NSUpArrowFunctionKey]
+        for (index, arrow) in arrows.enumerated() {
+            let item = action(title: "Other Pane", key: String(Character(UnicodeScalar(arrow)!)),
+                              modifiers: [.command, .option]) {
+                WindowManager.shared.perform(.otherPane)
+            }
+            item.isHidden = index > 0
+            item.allowsKeyEquivalentWhenHidden = true
+            viewMenu.addItem(item)
+        }
+        viewMenu.addItem(action(title: "Toggle Sidebar", key: "/", modifiers: .command) {
+            WindowManager.shared.perform(.toggleSidebar)
+        })
         viewMenu.addItem(action(title: "Next Tab", key: "]", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.nextTab)
         })

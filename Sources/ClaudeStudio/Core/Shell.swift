@@ -69,11 +69,12 @@ enum Shell {
 
     /// Runs synchronously; returns stdout and stderr combined.
     @discardableResult
-    static func run(_ launchPath: String, _ args: [String],
+    static func run(_ launchPath: String, _ args: [String], cwd: String? = nil,
                     env: [String: String]? = nil) -> (status: Int32, output: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: launchPath)
         p.arguments = args
+        if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
         if let env {
             var merged = ProcessInfo.processInfo.environment
             for (k, v) in env { merged[k] = v }

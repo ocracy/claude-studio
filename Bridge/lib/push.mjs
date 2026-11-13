@@ -221,6 +221,10 @@ export async function notify(message) {
 function wants(subscription, message) {
   const preferences = subscription.preferences ?? {}
   if (preferences.enabled === false) return false
+  if (message.finished) {
+    const after = preferences.finishedAfter
+    if (typeof after !== "number" || after < 0 || (message.elapsed ?? 0) < after * 60) return false
+  }
   // An empty list means every project; the phone only sends one once the user
   // narrows it down.
   const projects = preferences.projects

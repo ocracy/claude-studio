@@ -108,6 +108,10 @@ enum HookBridge {
       exit 0
     fi
 
+    if [ "$kind" = "notify" ]; then
+      case "$input" in *'"idle_prompt"'*|*'waiting for your input'*) exit 0 ;; esac
+    fi
+
     mkdir -p "$dir" 2>/dev/null
     sid=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([0-9a-fA-F-]*\\)".*/\\1/p' | head -1)
     # A Notification carries WHY it fired. "needs your permission to use Bash" is a

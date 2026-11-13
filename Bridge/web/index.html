@@ -232,6 +232,21 @@
       <input id="push-silent" type="checkbox">
     </label>
 
+    <label class="setting" id="push-finished-row">
+      <span>
+        Finished turns
+        <small>A question always notifies. A finished turn shows Claude's last line.</small>
+      </span>
+      <select id="push-finished" class="list-filter">
+        <option value="-1">Never</option>
+        <option value="0">Always</option>
+        <option value="2">After 2 min</option>
+        <option value="5">After 5 min</option>
+        <option value="10">After 10 min</option>
+        <option value="15">After 15 min</option>
+      </select>
+    </label>
+
     <div id="push-projects-wrap" class="hidden">
       <h2 class="group">Which projects</h2>
       <p class="group-note">All of them, unless you pick.</p>

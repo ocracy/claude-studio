@@ -16,15 +16,17 @@ struct Sidebar: View {
     @State private var mcpAddMenu = false
     @State private var scheduleSheet: Schedule?
     @State private var sessionMenu = false
-    @State private var transcriptMenu = false
     @State private var maker: MakerRequest?
     @State private var sessionManager = false
     @State private var renaming: String?
     @State private var renameText = ""
+    @State private var sessionFilter = ""
     @FocusState private var renameFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
+            ProjectSwitcherButton(model: model)
+            navigation
             header
 
             ScrollView {
@@ -100,18 +102,17 @@ struct Sidebar: View {
 
     private var header: some View {
         HStack(spacing: 2) {
-            SectionLabel(text: model.pane.title)
+            Text(model.pane.label)
+                .font(Theme.ui(12.5, .medium))
+                .foregroundStyle(theme.text2)
             Spacer()
             if model.pane == .sessions {
                 IconButton(icon: "list.bullet.rectangle", help: "Session manager") {
                     sessionManager = true
                 }
                 IconButton(icon: "clock.arrow.circlepath",
-                           help: "Claude conversations — resume one") {
-                    transcriptMenu = true
-                }
-                .popover(isPresented: $transcriptMenu, arrowEdge: .bottom) {
-                    TranscriptOpener(model: model) { transcriptMenu = false }
+                           help: "Claude conversations — search, read, resume") {
+                    model.conversationsOpen = true
                 }
                 IconButton(icon: "plus", help: "New session / previous sessions") {
                     sessionMenu = true
@@ -175,23 +176,99 @@ struct Sidebar: View {
                 IconButton(icon: "plus", help: addHelp, action: add)
             }
         }
-        .padding(.leading, 12)
+        .padding(.leading, 14)
         .padding(.trailing, 6)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+    }
+
+    private var navigation: some View {
+        VStack(spacing: 1) {
+            Button { model.newSession() } label: {
+                HoverRow(padding: EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 8), radius: 6) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .light))
+                            .foregroundStyle(theme.text2)
+                            .frame(width: 16)
+                        Text("New session")
+                            .font(Theme.ui(12.5))
+                            .foregroundStyle(theme.text)
+                        Spacer(minLength: 4)
+                        Text("⌘N")
+                            .font(Theme.ui(10.5))
+                            .foregroundStyle(theme.text3)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 4)
+            ForEach(StudioModel.orderedPanes) { pane in
+                Button { model.pane = pane } label: {
+                    HoverRow(selected: model.pane == pane,
+                             padding: EdgeInsets(top: 5, leading: 8, bottom: 5, trailing: 8),
+                             radius: 6) {
+                        HStack(spacing: 9) {
+                            Image(systemName: pane.icon)
+                                .font(.system(size: 13, weight: .light))
+                                .foregroundStyle(model.pane == pane ? theme.text : theme.text3)
+                                .frame(width: 16)
+                            Text(pane.label)
+                                .font(Theme.ui(12.5))
+                                .foregroundStyle(model.pane == pane ? theme.text : theme.text2)
+                            Spacer(minLength: 4)
+                            navigationBadge(pane)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(pane.help)
+                .contextMenu {
+                    Button("Move up") { StudioModel.movePane(pane, by: -1) }
+                    Button("Move down") { StudioModel.movePane(pane, by: 1) }
+                    Divider()
+                    Button("Reset order") { StudioModel.resetPaneOrder() }
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder private func navigationBadge(_ pane: StudioModel.Pane) -> some View {
+        switch pane {
+        case .sessions where model.attentionCount > 0:
+            HStack(spacing: 4) {
+                StatusDot(color: Theme.waiting, size: 5)
+                Text("\(model.attentionCount)")
+            }
+            .font(Theme.mono(10.5))
+            .foregroundStyle(theme.text3)
+        case .services where model.runningServiceCount > 0:
+            HStack(spacing: 4) {
+                StatusDot(color: Theme.running, size: 5)
+                Text("\(model.runningServiceCount)")
+            }
+            .font(Theme.mono(10.5))
+            .foregroundStyle(theme.text3)
+        default:
+            EmptyView()
+        }
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 6) {
+            IconButton(icon: "gearshape", help: "Settings (⌘,)") { SettingsWindow.show() }
+            IconButton(icon: "paintpalette", help: "Appearance") { model.themeSheetOpen = true }
             Text(footerText)
-                .font(Theme.mono(10.5))
+                .font(Theme.ui(10.5))
                 .foregroundStyle(theme.text3)
                 .lineLimit(1)
             Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .overlay(alignment: .top) { Rectangle().fill(theme.separator).frame(height: 1) }
+        .padding(.leading, 6)
+        .padding(.trailing, 12)
+        .padding(.vertical, 6)
     }
 
     private var footerText: String {
@@ -284,88 +361,234 @@ struct Sidebar: View {
 
     // MARK: - Sessions
 
+    private var trimmedFilter: String { sessionFilter.trimmingCharacters(in: .whitespaces) }
+
+    private func matches(_ record: SessionRecord) -> Bool {
+        trimmedFilter.isEmpty
+            || record.name.localizedCaseInsensitiveContains(trimmedFilter)
+            || meta(for: record).localizedCaseInsensitiveContains(trimmedFilter)
+    }
+
+    private var sessionSearch: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(theme.text3)
+            TextField("Search sessions", text: $sessionFilter)
+                .textFieldStyle(.plain)
+                .font(Theme.ui(12.5))
+            if !sessionFilter.isEmpty {
+                Button { sessionFilter = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.text3)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.field))
+        .padding(.horizontal, 2)
+        .padding(.bottom, 8)
+    }
+
+    private struct StateGroup: Identifiable {
+        var id: String { title }
+        let title: String
+        let urgent: Bool
+        let records: [SessionRecord]
+    }
+
+    private func stateGroups(_ open: [SessionRecord]) -> [StateGroup] {
+        let order: [(title: String, members: Set<Attention>)] = [
+            ("needs you", [.waiting]), ("finished", [.done]), ("working", [.working]), ("ready", [.seen, .idle]),
+        ]
+        return order.compactMap { entry in
+            let records = open.filter { entry.members.contains(model.attention(of: $0)) }
+            return records.isEmpty ? nil
+                : StateGroup(title: entry.title, urgent: entry.title == "needs you", records: records)
+        }
+    }
+
     @ViewBuilder private var sessionsList: some View {
+        sessionSearch
+
+        let open = model.openSessions.filter(matches)
         if model.openSessions.isEmpty {
-            // No call to action: "+" sits right above, and repeating it here only
-            // made the pane look emptier than it is.
             Text("No open sessions.")
                 .font(Theme.ui(12))
                 .foregroundStyle(theme.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 12)
+        } else if !open.isEmpty {
+            VStack(spacing: 1) {
+                HStack {
+                    SectionLabel(text: "open \(open.count)", icon: "circle.dotted")
+                    Spacer()
+                }
+                .padding(.horizontal, 6)
+                .padding(.top, 2)
+                .padding(.bottom, 3)
+                let groups = stateGroups(open)
+                ForEach(groups) { group in
+                    if groups.count > 1 {
+                        Text("\(group.title) \(group.records.count)")
+                            .font(Theme.ui(10.5, .medium))
+                            .foregroundStyle(group.urgent ? Theme.waiting : theme.text3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.top, group.id == groups.first?.id ? 0 : 6)
+                            .padding(.bottom, 2)
+                    }
+                    ForEach(group.records) { record in
+                        openSession(record)
+                    }
+                }
+            }
+            .padding(5)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.hover.opacity(0.6))
+            )
         }
-        ForEach(model.openSessions) { record in
-            if renaming == record.tmux {
-                renameField(record)
-            } else {
-                // Single click opens, double click renames — the Finder/VS Code reflex.
-                HoverRow(selected: model.activeTabID == record.tabKey,
-                         padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 6)) {
-                    HStack(spacing: 8) {
-                        StatusDot(color: color(for: model.attention(of: record)))
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 4) {
-                                if record.saved {
-                                    Image(systemName: "bookmark.fill")
-                                        .font(.system(size: 8))
-                                        .foregroundStyle(theme.accent)
-                                }
-                                Text(record.name)
-                                    .font(Theme.ui(12.5))
-                                    .foregroundStyle(theme.text)
-                                    .lineLimit(1)
+
+        let saved = model.savedClosedSessions.filter(matches)
+        if !saved.isEmpty {
+            SectionLabel(text: "pinned \(saved.count)", icon: "pin")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+            ForEach(saved) { record in
+                closedSession(record)
+            }
+        }
+
+        let past = model.pastSessions.filter(matches).prefix(trimmedFilter.isEmpty ? 8 : 40)
+        if !past.isEmpty {
+            SectionLabel(text: "recent", icon: "clock")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+            ForEach(Array(past)) { record in
+                closedSession(record)
+            }
+        }
+
+        if !trimmedFilter.isEmpty && open.isEmpty && saved.isEmpty && past.isEmpty {
+            Text("Nothing matches.")
+                .font(Theme.ui(12))
+                .foregroundStyle(theme.text3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder private func openSession(_ record: SessionRecord) -> some View {
+        if renaming == record.tmux {
+            renameField(record)
+        } else {
+            let state = model.attention(of: record)
+            HoverRow(selected: model.activeTabID == record.tabKey,
+                     padding: EdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 4),
+                     radius: 7) {
+                HStack(alignment: .top, spacing: 8) {
+                    statusGlyph(state)
+                        .frame(width: 14, height: 15)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            if record.saved {
+                                Image(systemName: "bookmark.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(theme.accent)
                             }
-                            // What it is waiting FOR, when it is waiting for
-                            // something — the state on its own ("waiting") was true
-                            // of every row and told them apart from nothing.
+                            Text(record.name)
+                                .font(Theme.ui(12.5))
+                                .foregroundStyle(theme.text)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(trailingMeta(for: record))
+                                .font(Theme.mono(10))
+                                .foregroundStyle(theme.text3)
+                                .lineLimit(1)
+                                .fixedSize()
+                            if state.needsAttention {
+                                StatusDot(color: Theme.waiting, size: 6)
+                                    .padding(.leading, 2)
+                            }
+                        }
+                        HStack(spacing: 5) {
+                            if let worktree = record.worktree {
+                                worktreeChip(worktree)
+                            }
                             Text(meta(for: record))
-                                .font(Theme.ui(10.5))
+                                .font(Theme.ui(11))
                                 .foregroundStyle(theme.text3)
                                 .lineLimit(1)
                         }
-                        Spacer(minLength: 4)
-                        IconButton(icon: "xmark", help: "Close session") {
-                            model.closeSession(record)
-                        }
                     }
-                }
-                .onTapGesture(count: 2) { beginRename(record) }
-                .onTapGesture { model.openSession(record) }
-                .contextMenu {
-                    Button("Rename") { beginRename(record) }
-                    Button(record.saved ? "Remove from saved" : "Save session") {
-                        model.setSaved(record, saved: !record.saved)
+                    IconButton(icon: "xmark", help: "Close session") {
+                        model.closeSession(record)
                     }
-                    Button("Close session") { model.closeSession(record) }
-                    Divider()
-                    Button("Delete record") { model.deleteSession(record) }
+                    .opacity(model.activeTabID == record.tabKey ? 1 : 0.55)
                 }
             }
-        }
-
-        // Saved sessions are listed in full and before the rest: "previous" is
-        // capped at eight because it is a tail nobody reads, and a session you
-        // deliberately kept must never fall off the end of it.
-        if !model.savedClosedSessions.isEmpty {
-            SectionLabel(text: "saved")
-                .padding(.horizontal, 8)
-                .padding(.top, 14)
-                .padding(.bottom, 4)
-            ForEach(model.savedClosedSessions) { record in
-                closedSession(record)
+            .onTapGesture(count: 2) { beginRename(record) }
+            .onTapGesture { model.openSession(record) }
+            .contextMenu {
+                Button("Rename") { beginRename(record) }
+                Button(record.saved ? "Remove from saved" : "Save session") {
+                    model.setSaved(record, saved: !record.saved)
+                }
+                Button("Close session") { model.closeSession(record) }
+                Divider()
+                Button("Delete record") { model.deleteSession(record) }
             }
         }
+    }
 
-        if !model.pastSessions.isEmpty {
-            SectionLabel(text: "previous sessions")
-                .padding(.horizontal, 8)
-                .padding(.top, 14)
-                .padding(.bottom, 4)
-            ForEach(model.pastSessions.prefix(8)) { record in
-                closedSession(record)
-            }
+    private func worktreeChip(_ name: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 8.5, weight: .regular))
+            Text(name)
+                .font(Theme.ui(10))
+                .lineLimit(1)
         }
+        .foregroundStyle(theme.text2)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(theme.hover))
+        .fixedSize()
+        .help("Runs in the worktree .claude/worktrees/\(name)")
+    }
+
+    @ViewBuilder private func statusGlyph(_ state: Attention) -> some View {
+        switch state {
+        case .working:
+            ProgressView()
+                .controlSize(.mini)
+                .scaleEffect(0.7)
+                .tint(theme.accent)
+        case .waiting:
+            Image(systemName: "bell.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.waiting)
+        case .done, .seen, .idle:
+            Circle()
+                .strokeBorder(theme.text3, style: StrokeStyle(lineWidth: 1, dash: state == .idle ? [1.5, 1.5] : []))
+                .frame(width: 9, height: 9)
+        }
+    }
+
+    private func trailingMeta(for record: SessionRecord) -> String {
+        let age = record.lastUsed.compactAge
+        guard let name = model.sessionDetails[record.tabKey]?.model else { return age }
+        return "\(name.lowercased()) \(age)"
     }
 
     /// The line under an open session's name.
@@ -375,12 +598,12 @@ struct Sidebar: View {
     /// ("waiting", eighteen times) and so distinguished nothing.
     private func meta(for record: SessionRecord) -> String {
         let state = model.attention(of: record)
-        if state.needsAttention,
+        if state.needsAttention || state == .working,
            let headline = SessionStates.shared.live
             .first(where: { $0.key == record.tabKey })?.headline {
             return headline
         }
-        return "\(state.label) · \(record.lastUsed.relative)"
+        return state.label
     }
 
     /// A session with no tab: saved, or simply previous.
@@ -397,7 +620,8 @@ struct Sidebar: View {
         } else {
             HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 6)) {
                 HStack(spacing: 8) {
-                    StatusDot(color: theme.idle)
+                    statusGlyph(.idle)
+                        .frame(width: 14)
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 4) {
                             if record.saved {
@@ -410,12 +634,15 @@ struct Sidebar: View {
                                 .foregroundStyle(theme.text)
                                 .lineLimit(1)
                         }
-                        Text(model.canResume(record)
-                             ? "resumes conversation · \(record.lastUsed.relative)"
-                             : "starts fresh · \(record.lastUsed.relative)")
-                            .font(Theme.ui(10.5))
-                            .foregroundStyle(theme.text3)
-                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            Image(systemName: model.canResume(record) ? "arrow.uturn.backward" : "sparkle")
+                                .font(.system(size: 9, weight: .light))
+                            Text(record.lastUsed.relative)
+                                .font(Theme.ui(10.5))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(theme.text3)
+                        .help(model.canResume(record) ? "Resumes the conversation" : "Starts fresh")
                     }
                     Spacer(minLength: 4)
                 }
@@ -904,6 +1131,7 @@ private struct SessionOpener: View {
     @ObservedObject var model: StudioModel
     let onDismiss: () -> Void
     @State private var name = ""
+    @State private var inWorktree = false
     /// Focused as the popover appears. Without it the field looked ready to type
     /// into and was not: Enter went nowhere, and "+ , Enter" — the fastest way to
     /// start an unnamed session, and the one everybody reaches for — did nothing
@@ -930,7 +1158,21 @@ private struct SessionOpener: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 4)
 
-            Text("Leave it empty and Claude names the session itself.")
+            Toggle(isOn: $inWorktree) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("In a new worktree").font(Theme.ui(12)).foregroundStyle(theme.text)
+                    Text("Its own branch and folder, so parallel sessions never touch the same files.")
+                        .font(Theme.ui(10.5))
+                        .foregroundStyle(theme.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .padding(.horizontal, 10)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
+
+            Text("Leave the name empty and Claude names the session itself.")
                 .font(Theme.ui(10))
                 .foregroundStyle(theme.text3)
                 .padding(.horizontal, 10)
@@ -1011,93 +1253,19 @@ private struct SessionOpener: View {
     }
 
     private func create() {
-        model.newSession(name: name.nilIfEmpty)
+        model.newSession(name: name.nilIfEmpty, worktree: inWorktree ? worktreeName : nil)
         onDismiss()
     }
-}
 
-// MARK: - Claude's own conversations
-
-/// Claude Code's transcripts for this project, straight off disk — including
-/// conversations that were never started from Claude Studio. Picking one resumes
-/// it (`claude --resume <sid>`) in a session of its own.
-private struct TranscriptOpener: View {
-    @Environment(\.studioTheme) private var theme
-    @ObservedObject var model: StudioModel
-    let onDismiss: () -> Void
-    @State private var transcripts: [ClaudeTranscripts.Transcript] = []
-    @State private var loading = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionLabel(text: "claude conversations")
-                .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 4)
-
-            if loading {
-                Text("Reading transcripts…")
-                    .font(Theme.ui(11.5))
-                    .foregroundStyle(theme.text3)
-                    .padding(.horizontal, 10).padding(.vertical, 12)
-            } else if transcripts.isEmpty {
-                Text("Claude has not recorded a conversation in this project yet.")
-                    .font(Theme.ui(11.5))
-                    .foregroundStyle(theme.text3)
-                    .padding(.horizontal, 10).padding(.vertical, 12)
-            } else {
-                ScrollView {
-                    VStack(spacing: 1) {
-                        ForEach(transcripts) { transcript in
-                            Button {
-                                model.resumeTranscript(transcript)
-                                onDismiss()
-                            } label: {
-                                row(transcript)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 8)
-                }
-                .frame(maxHeight: 320)
-            }
-        }
-        .frame(width: 360)
-        .onAppear {
-            // Reading dozens of transcript heads is disk work, not UI work — the
-            // path is taken here so the detached task never touches the model.
-            let path = model.project.path
-            Task.detached(priority: .userInitiated) {
-                let found = ClaudeTranscripts.list(projectPath: path)
-                await MainActor.run {
-                    transcripts = found
-                    loading = false
-                }
-            }
-        }
-    }
-
-    private func row(_ transcript: ClaudeTranscripts.Transcript) -> some View {
-        let live = model.sessions.first { $0.claudeSID == transcript.id }
-            .map { model.isOpen($0) } ?? false
-        return HoverRow(padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)) {
-            HStack(spacing: 8) {
-                Image(systemName: live ? "bubble.left.fill" : "arrow.uturn.backward")
-                    .font(.system(size: 10))
-                    .foregroundStyle(live ? Theme.running : theme.text3)
-                    .frame(width: 14)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(transcript.title)
-                        .font(Theme.ui(12.5))
-                        .foregroundStyle(theme.text)
-                        .lineLimit(1)
-                    Text("\(live ? "open" : "resume") · \(transcript.modified.relative) · \(transcript.id.prefix(8))")
-                        .font(Theme.mono(10))
-                        .foregroundStyle(theme.text3)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-            }
-        }
+    private var worktreeName: String {
+        let slug = String((name.nilIfEmpty ?? "")
+            .lowercased()
+            .folding(options: .diacriticInsensitive, locale: .current)
+            .map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+            .split(separator: "-")
+            .joined(separator: "-")
+        let suffix = String(UUID().uuidString.prefix(4)).lowercased()
+        return slug.isEmpty ? "session-\(suffix)" : "\(slug.prefix(40))-\(suffix)"
     }
 }
+

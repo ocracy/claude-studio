@@ -12,7 +12,7 @@ import AppKit
 final class Updater: ObservableObject {
     static let shared = Updater()
 
-    static let repository = "ocracy/claude-studio"
+    static let repository = Bundle.main.infoDictionary?["CSUpdateRepository"] as? String ?? "ocracy/claude-studio"
     static let assetName = "ClaudeStudio.zip"
 
     enum State: Equatable {
