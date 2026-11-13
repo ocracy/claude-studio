@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Commands routed from the menu to the key window; applied by `WindowManager.perform`.
 enum StudioCommand {
     case openFolder, newSession, newTerminal, newTab, closeTab, nextTab, previousTab, palette, switchProject
-    case splitRight, splitDown, find
+    case splitRight, splitDown, find, zoomPane, otherPane, toggleSidebar
     case selectTab(Int)
 }
 
@@ -167,6 +167,22 @@ enum MainMenuBuilder {
         })
         viewMenu.addItem(action(title: "Split Down", key: "d", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.splitDown)
+        })
+        viewMenu.addItem(action(title: "Zoom Pane", key: "\r", modifiers: [.command, .shift]) {
+            WindowManager.shared.perform(.zoomPane)
+        })
+        let arrows = [NSRightArrowFunctionKey, NSLeftArrowFunctionKey, NSDownArrowFunctionKey, NSUpArrowFunctionKey]
+        for (index, arrow) in arrows.enumerated() {
+            let item = action(title: "Other Pane", key: String(Character(UnicodeScalar(arrow)!)),
+                              modifiers: [.command, .option]) {
+                WindowManager.shared.perform(.otherPane)
+            }
+            item.isHidden = index > 0
+            item.allowsKeyEquivalentWhenHidden = true
+            viewMenu.addItem(item)
+        }
+        viewMenu.addItem(action(title: "Toggle Sidebar", key: "/", modifiers: .command) {
+            WindowManager.shared.perform(.toggleSidebar)
         })
         viewMenu.addItem(action(title: "Next Tab", key: "]", modifiers: [.command, .shift]) {
             WindowManager.shared.perform(.nextTab)

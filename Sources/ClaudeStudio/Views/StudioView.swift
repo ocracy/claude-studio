@@ -14,10 +14,12 @@ struct StudioView: View {
             TopBar(model: model, onClose: onClose, onAppearance: { model.themeSheetOpen = true })
 
             HStack(spacing: 0) {
-                Sidebar(model: model)
-                    .frame(width: model.sidebarWidth)
+                if !model.sidebarHidden {
+                    Sidebar(model: model)
+                        .frame(width: model.sidebarWidth)
 
-                sidebarHandle
+                    sidebarHandle
+                }
 
                 VStack(spacing: 0) {
                     TabBar(model: model)
@@ -412,6 +414,7 @@ private struct StatusBar: View {
     @ObservedObject private var usage = UsageMonitor.shared
     @ObservedObject private var plan = PlanUsage.shared
     @Environment(\.studioTheme) private var theme
+    @State private var waitingOpen = false
 
     var body: some View {
         HStack(spacing: 14) {
@@ -453,9 +456,8 @@ private struct StatusBar: View {
                 .help("Running services")
             item("terminal", "\(model.openSessions.count)")
                 .help("Open sessions")
-            if let next = model.openSessions.first(where: { model.attention(of: $0) == .waiting })
-                ?? model.openSessions.first(where: { model.attention(of: $0).needsAttention }) {
-                Button { model.openSession(next) } label: {
+            if model.attentionCount > 0 {
+                Button { waitingOpen.toggle() } label: {
                     HStack(spacing: 5) {
                         StatusDot(color: Theme.waiting, size: 5)
                         Text("\(model.attentionCount) needs you")
@@ -463,7 +465,10 @@ private struct StatusBar: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Open \(next.name)")
+                .help("Sessions waiting on you")
+                .popover(isPresented: $waitingOpen, arrowEdge: .top) {
+                    WaitingList(model: model) { waitingOpen = false }
+                }
             }
         }
         .font(Theme.ui(11))
@@ -537,5 +542,91 @@ private struct StatusBar: View {
             Image(systemName: icon).font(.system(size: 10, weight: .light))
             Text(text).font(Theme.mono(10.5))
         }
+    }
+}
+
+private struct WaitingList: View {
+    @ObservedObject var model: StudioModel
+    let onDismiss: () -> Void
+    @ObservedObject private var states = SessionStates.shared
+    @State private var selected = 0
+
+    private var rows: [(record: SessionRecord, live: SessionStates.Live?)] {
+        let waiting = model.openSessions.filter { model.attention(of: $0).needsAttention }
+        let questions = waiting.filter { model.attention(of: $0).isQuestion }
+        return (questions + waiting.filter { !model.attention(of: $0).isQuestion }).map { record in
+            (record, states.live.first { $0.key == record.tabKey })
+        }
+    }
+
+    var body: some View {
+        let rows = rows
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: "needs you \(rows.count)", icon: "bell")
+                .padding(.horizontal, 8)
+                .padding(.bottom, 2)
+            ForEach(Array(rows.enumerated()), id: \.element.record.id) { index, row in
+                Button { open(row.record) } label: {
+                    HoverRow(selected: index == selected,
+                             padding: EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8), radius: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            let question = model.attention(of: row.record).isQuestion
+                            Image(systemName: question ? "questionmark.circle" : "checkmark.circle")
+                                .font(.system(size: 11, weight: .light))
+                                .foregroundStyle(question ? Theme.waiting : model.theme.text3)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(row.record.name)
+                                        .font(Theme.ui(12.5, .medium))
+                                        .foregroundStyle(model.theme.text)
+                                    Spacer(minLength: 8)
+                                    if let at = row.live?.at {
+                                        Text(at.relative)
+                                            .font(Theme.ui(10.5))
+                                            .foregroundStyle(model.theme.text3)
+                                    }
+                                }
+                                Text(row.live?.headline ?? (question ? "Asking a question" : "Finished"))
+                                    .font(Theme.ui(11.5))
+                                    .foregroundStyle(model.theme.text2)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            Text("↑↓ select · ↩ open · esc close")
+                .font(Theme.ui(10.5))
+                .foregroundStyle(model.theme.text3)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+        }
+        .padding(8)
+        .frame(width: 340)
+        .environment(\.studioTheme, model.theme)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.downArrow) {
+            selected = min(selected + 1, max(rows.count - 1, 0))
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            selected = max(selected - 1, 0)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            if rows.indices.contains(selected) { open(rows[selected].record) }
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            onDismiss()
+            return .handled
+        }
+    }
+
+    private func open(_ record: SessionRecord) {
+        model.openSession(record)
+        onDismiss()
     }
 }

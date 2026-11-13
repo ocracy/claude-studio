@@ -114,7 +114,10 @@ final class WindowManager: NSObject, NSWindowDelegate {
         case .splitRight:   model.split(.horizontal)
         case .splitDown:    model.split(.vertical)
         case .find:         if model.activeTab?.kind.isTerminal == true { model.findOpen = true }
-        case .nextTab:      model.selectNextTab(1)
+        case .zoomPane:     if model.splitPanes != nil { model.splitMaximized.toggle() }
+        case .otherPane:    model.focusOtherPane()
+        case .toggleSidebar: model.sidebarHidden.toggle()
+        case .nextTab:     model.selectNextTab(1)
         case .previousTab:  model.selectNextTab(-1)
         case .openFolder:   break
         }

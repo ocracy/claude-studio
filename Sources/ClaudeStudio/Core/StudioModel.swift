@@ -142,6 +142,7 @@ final class StudioModel: ObservableObject {
     @Published var splitAxis: SplitAxis = .horizontal
     @Published var splitMaximized = false
     @Published var projectSwitcherOpen = false
+    @Published var sidebarHidden = false
     @Published var changesOpen = false
     /// Appearance sheet visibility. On the model rather than in the view, so the
     /// command palette can open it too.
@@ -1386,6 +1387,11 @@ final class StudioModel: ObservableObject {
             splitTabs = [active, id]
         }
         activeTabID = id
+    }
+
+    func focusOtherPane() {
+        guard let panes = splitPanes, let other = panes.first(where: { $0.id != activeTabID }) else { return }
+        activeTabID = other.id
     }
 
     func closePane(_ id: String) {
